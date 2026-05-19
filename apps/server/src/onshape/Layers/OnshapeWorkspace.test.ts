@@ -24,7 +24,9 @@ import {
 import { OnshapeWorkspace } from "../Services/OnshapeWorkspace.ts";
 import {
   OnshapeWorkspaceLive,
+  onshape3mfTranslationRequestBody,
   onshapeObjExportRequestBody,
+  onshapeStlTranslationRequestBody,
   onshapeStepTranslationRequestBody,
 } from "./OnshapeWorkspace.ts";
 
@@ -210,6 +212,76 @@ it("onshapeStepTranslationRequestBody flattens assembly STEP exports", () => {
   );
 });
 
+it("onshapeStlTranslationRequestBody requests binary preview STL exports", () => {
+  const baseRef = { baseUrl: "https://cad.onshape.com" as const };
+  assert.deepStrictEqual(
+    onshapeStlTranslationRequestBody({
+      entityKind: "assembly",
+      reference: baseRef,
+    }),
+    {
+      formatName: "STL",
+      storeInDocument: false,
+      notifyUser: false,
+      stlMode: "BINARY",
+      unit: "METER",
+      resolution: "MEDIUM",
+      grouping: true,
+      allowFaultyParts: true,
+    },
+  );
+  assert.deepStrictEqual(
+    onshapeStlTranslationRequestBody({
+      entityKind: "part",
+      reference: { ...baseRef, partId: "JHD" },
+    }),
+    {
+      formatName: "STL",
+      storeInDocument: false,
+      notifyUser: false,
+      stlMode: "BINARY",
+      unit: "METER",
+      resolution: "MEDIUM",
+      grouping: true,
+      partIds: "JHD",
+    },
+  );
+});
+
+it("onshape3mfTranslationRequestBody requests color-preserving preview exports", () => {
+  const baseRef = { baseUrl: "https://cad.onshape.com" as const };
+  assert.deepStrictEqual(
+    onshape3mfTranslationRequestBody({
+      entityKind: "assembly",
+      reference: baseRef,
+    }),
+    {
+      formatName: "3MF",
+      storeInDocument: false,
+      notifyUser: false,
+      unit: "METER",
+      resolution: "coarse",
+      grouping: true,
+      allowFaultyParts: true,
+    },
+  );
+  assert.deepStrictEqual(
+    onshape3mfTranslationRequestBody({
+      entityKind: "part",
+      reference: { ...baseRef, partId: "JHD" },
+    }),
+    {
+      formatName: "3MF",
+      storeInDocument: false,
+      notifyUser: false,
+      unit: "METER",
+      resolution: "coarse",
+      grouping: true,
+      partIds: "JHD",
+    },
+  );
+});
+
 it.effect("OnshapeWorkspaceLive refreshIndex indexes connection documents", () =>
   Effect.gen(function* () {
     const requests = yield* Ref.make<string[]>([]);
@@ -286,7 +358,68 @@ it.effect("OnshapeWorkspaceLive importUrl indexes document elements from pasted 
   }),
 );
 
-it.effect("OnshapeWorkspaceLive syncProject writes the translated OBJ into the workspace", () =>
+it.effect(
+  "OnshapeWorkspaceLive syncProject translates a color-preserving part studio 3MF into the workspace",
+  () =>
+    Effect.gen(function* () {
+      const requests = yield* Ref.make<string[]>([]);
+      yield* Effect.gen(function* () {
+        const workspace = yield* OnshapeWorkspace;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "cadsense-onshape-sync-",
+        });
+        const result = yield* workspace.syncProject({
+          cwd: tempDir,
+          context: {
+            connectionId,
+            entityId: "onshape_test:element:doc-3:w:ws-3:el-3",
+            entityKind: "element",
+            name: "Part Studio",
+            breadcrumb: ["Robot", "Part Studio"],
+            reference: {
+              baseUrl: "https://cad.onshape.com",
+              documentId: "doc-3",
+              wvmKind: "w",
+              wvmId: "ws-3",
+              elementId: "el-3",
+            },
+          },
+        });
+        const recordedRequests = yield* Ref.get(requests);
+        const contents = yield* fileSystem.readFileString(
+          path.join(tempDir, "onshape-sync/current.3mf"),
+        );
+
+        assert.equal(result.relativePath, "onshape-sync/current.3mf");
+        assert.equal(result.format, "3mf");
+        assert.equal(contents, "3MF-DATA");
+        assert.deepStrictEqual(recordedRequests, [
+          "/api/v10/partstudios/d/doc-3/w/ws-3/e/el-3/translations",
+          "/api/v10/documents/d/doc-3/externaldata/external-3mf",
+        ]);
+      }).pipe(
+        Effect.provide(
+          makeLayer((url) => {
+            if (url.pathname.endsWith("/translations")) {
+              return {
+                id: "translation-3mf",
+                requestState: "DONE",
+                resultExternalDataIds: ["external-3mf"],
+              };
+            }
+            if (url.pathname === "/api/v10/documents/d/doc-3/externaldata/external-3mf") {
+              return new Response("3MF-DATA");
+            }
+            return {};
+          }, requests),
+        ),
+      );
+    }),
+);
+
+it.effect("OnshapeWorkspaceLive syncProject translates an assembly 3MF before OBJ fallback", () =>
   Effect.gen(function* () {
     const requests = yield* Ref.make<string[]>([]);
     yield* Effect.gen(function* () {
@@ -294,50 +427,49 @@ it.effect("OnshapeWorkspaceLive syncProject writes the translated OBJ into the w
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const tempDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "cadsense-onshape-sync-",
+        prefix: "cadsense-onshape-sync-assembly-3mf-",
       });
       const result = yield* workspace.syncProject({
         cwd: tempDir,
         context: {
           connectionId,
-          entityId: "onshape_test:part:doc-3:w:ws-3:el-3:part-3",
-          entityKind: "part",
-          name: "Bracket",
-          breadcrumb: ["Gearbox", "Bracket"],
+          entityId: "onshape_test:assembly:doc-asm:w:ws-asm:el-asm",
+          entityKind: "assembly",
+          name: "Robot",
+          breadcrumb: ["Robot"],
           reference: {
             baseUrl: "https://cad.onshape.com",
-            documentId: "doc-3",
+            documentId: "doc-asm",
             wvmKind: "w",
-            wvmId: "ws-3",
-            elementId: "el-3",
-            partId: "part-3",
+            wvmId: "ws-asm",
+            elementId: "el-asm",
           },
         },
       });
-      const recordedRequests = yield* Ref.get(requests);
       const contents = yield* fileSystem.readFileString(
-        path.join(tempDir, "onshape-sync/current.obj"),
+        path.join(tempDir, "onshape-sync/current.3mf"),
       );
+      const recordedRequests = yield* Ref.get(requests);
 
-      assert.equal(result.relativePath, "onshape-sync/current.obj");
-      assert.equal(result.format, "obj");
-      assert.equal(contents, "OBJ-DATA");
+      assert.equal(result.relativePath, "onshape-sync/current.3mf");
+      assert.equal(result.format, "3mf");
+      assert.equal(contents, "ASSEMBLY-3MF");
       assert.deepStrictEqual(recordedRequests, [
-        "/api/v10/partstudios/d/doc-3/w/ws-3/e/el-3/export/obj",
-        "/api/v10/documents/d/doc-3/externaldata/external-1",
+        "/api/v10/assemblies/d/doc-asm/w/ws-asm/e/el-asm/translations",
+        "/api/v10/documents/d/doc-asm/externaldata/external-3mf",
       ]);
     }).pipe(
       Effect.provide(
         makeLayer((url) => {
-          if (url.pathname.endsWith("/export/obj")) {
+          if (url.pathname.endsWith("/translations")) {
             return {
-              id: "translation-1",
+              id: "translation-3mf",
               requestState: "DONE",
-              resultExternalDataIds: ["external-1"],
+              resultExternalDataIds: ["external-3mf"],
             };
           }
-          if (url.pathname === "/api/v10/documents/d/doc-3/externaldata/external-1") {
-            return new Response("OBJ-DATA");
+          if (url.pathname === "/api/v10/documents/d/doc-asm/externaldata/external-3mf") {
+            return new Response("ASSEMBLY-3MF");
           }
           return {};
         }, requests),
@@ -384,12 +516,16 @@ it.effect("OnshapeWorkspaceLive syncProject unpacks OBJ zip exports into onshape
       assert.equal(mtl, "newmtl m\n");
       const recordedRequests = yield* Ref.get(requests);
       assert.deepStrictEqual(recordedRequests, [
+        "/api/v10/partstudios/d/doc-zip/w/ws-zip/e/el-zip/translations",
         "/api/v10/partstudios/d/doc-zip/w/ws-zip/e/el-zip/export/obj",
         "/api/v10/documents/d/doc-zip/externaldata/external-zip",
       ]);
     }).pipe(
       Effect.provide(
         makeLayer((url) => {
+          if (url.pathname.endsWith("/translations")) {
+            return new Response("unsupported", { status: 404 });
+          }
           if (url.pathname.endsWith("/export/obj")) {
             return {
               id: "translation-zip",

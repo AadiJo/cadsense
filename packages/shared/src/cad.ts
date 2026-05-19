@@ -40,9 +40,11 @@ const CAD_MODEL_EXTENSION_SET = new Set<string>(CAD_MODEL_EXTENSIONS);
 export const CAD_SYNC_DIRECTORY = "onshape-sync";
 /** Bytes of OBJ text scanned for `mtllib` (library lines may follow long comment / vertex blocks). */
 export const OBJ_MTLLIB_SCAN_MAX_BYTES = 2 * 1024 * 1024;
-/** Default Onshape preview artifact (OBJ mesh; faster export than glTF on many assemblies). */
-export const DEFAULT_ONSHAPE_SYNC_MODEL_PATH = `${CAD_SYNC_DIRECTORY}/current.obj`;
-// STEP default (CAD-accurate, slower previews): `${CAD_SYNC_DIRECTORY}/current.step`;
+/** Default Onshape preview artifact (color-preserving 3MF mesh). */
+export const DEFAULT_ONSHAPE_SYNC_MODEL_PATH = `${CAD_SYNC_DIRECTORY}/current.3mf`;
+// STL fallback (geometry-only, no colors): `${CAD_SYNC_DIRECTORY}/current.stl`;
+// OBJ fallback (materials, async translation): `${CAD_SYNC_DIRECTORY}/current.obj`;
+// STEP fallback (CAD-accurate, slower previews): `${CAD_SYNC_DIRECTORY}/current.step`;
 export const SUPPORTED_CAD_MODEL_EXTENSIONS: readonly string[] = CAD_MODEL_EXTENSIONS;
 
 export function getCadModelExtension(path: string): string | null {

@@ -25,6 +25,7 @@ import { OnshapeIndexRepository } from "../../persistence/Services/OnshapeIndex.
 import {
   OnshapeWorkspace,
   OnshapeWorkspaceFailure,
+  type OnshapeWorkspaceError,
   type OnshapeWorkspaceShape,
 } from "../Services/OnshapeWorkspace.ts";
 import {
@@ -52,11 +53,25 @@ interface RequestMetrics {
 
 const textEncoder = new TextEncoder();
 const DEFAULT_DOCUMENT_LIST_LIMIT = "100";
-const SYNC_RELATIVE_PATH = "onshape-sync/current.obj";
-// STEP CAD output (slower web previews): "onshape-sync/current.step";
-// ~half as many poll round-trips as 2s×60 while keeping ~120s worst-case wait.
-const TRANSLATION_POLL_INTERVAL = Duration.seconds(4);
-const TRANSLATION_MAX_POLLS = 30;
+const THREE_MF_SYNC_RELATIVE_PATH = "onshape-sync/current.3mf";
+const STL_SYNC_RELATIVE_PATH = "onshape-sync/current.stl";
+const OBJ_SYNC_RELATIVE_PATH = "onshape-sync/current.obj";
+const STEP_SYNC_RELATIVE_PATH = "onshape-sync/current.step";
+// Color-capable assembly exports are async. Back off quickly to keep large translations from turning into
+// dozens of status requests while still allowing slow OBJ fallbacks to finish.
+const TRANSLATION_MAX_POLLS = 36;
+const TRANSLATION_MAX_POLL_DELAY_SECONDS = 10;
+const TRANSLATION_FALLBACK_STATUSES = new Set([400, 404, 405, 415, 422]);
+
+type TranslationExportTarget = {
+  readonly kind: "partstudio" | "assembly";
+  readonly path: string;
+  readonly body: Record<string, unknown>;
+  readonly documentId: string;
+  readonly wvmKind: "w" | "v" | "m";
+  readonly wvmId: string;
+  readonly formatName: "3MF" | "STL" | "OBJ";
+};
 
 function stableJsonHash(value: unknown): string {
   return Crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -210,6 +225,62 @@ function getResultExternalDataId(body: unknown): string | null {
   return null;
 }
 
+function getResultElementId(body: unknown): string | null {
+  if (body === null || typeof body !== "object") {
+    return null;
+  }
+  const record = body as Record<string, unknown>;
+  const direct = record.resultElementId;
+  if (typeof direct === "string" && direct.trim().length > 0) {
+    return direct;
+  }
+  const ids = record.resultElementIds;
+  if (Array.isArray(ids)) {
+    const first = ids.find((id) => typeof id === "string" && id.trim().length > 0);
+    return typeof first === "string" ? first : null;
+  }
+  return null;
+}
+
+function getFailureStatus(cause: unknown): number | null {
+  if (
+    cause !== null &&
+    typeof cause === "object" &&
+    "status" in cause &&
+    typeof (cause as { readonly status: unknown }).status === "number"
+  ) {
+    return (cause as { readonly status: number }).status;
+  }
+  return null;
+}
+
+function shouldFallbackFromTranslation(error: unknown, formatName: string): boolean {
+  if (!(error instanceof OnshapeWorkspaceFailure)) {
+    return false;
+  }
+  const status = getFailureStatus(error.cause);
+  if (status !== null) {
+    return TRANSLATION_FALLBACK_STATUSES.has(status);
+  }
+  const escapedFormatName = formatName.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  return new RegExp(
+    `${escapedFormatName} export (failed|cancelled)|translation id|downloadable file id`,
+    "iu",
+  ).test(error.message);
+}
+
+function getTranslationPollDelay(attempt: number): Duration.Duration {
+  const seconds = Math.min(
+    TRANSLATION_MAX_POLL_DELAY_SECONDS,
+    Math.max(1, 2 ** Math.min(attempt, 4)),
+  );
+  return Duration.seconds(seconds);
+}
+
+function isRedirectStatus(status: number): boolean {
+  return status === 301 || status === 302 || status === 303 || status === 307 || status === 308;
+}
+
 /** JSON body for STEP export via POST …/translations (retained for CAD-accurate workflows; previews use OBJ mesh). */
 export function onshapeStepTranslationRequestBody(
   context: Pick<OnshapeContext, "entityKind" | "reference">,
@@ -225,6 +296,52 @@ export function onshapeStepTranslationRequestBody(
   if (entityKind === "assembly") {
     // Fewer PRODUCT / assembly-instance records; web STEP parsers spend less time on metadata.
     body.flattenAssemblies = true;
+    body.allowFaultyParts = true;
+  }
+  return body;
+}
+
+/** JSON body for STL export via POST .../translations when no synchronous endpoint exists. */
+export function onshapeStlTranslationRequestBody(
+  context: Pick<OnshapeContext, "entityKind" | "reference">,
+): Record<string, unknown> {
+  const { entityKind, reference } = context;
+  const body: Record<string, unknown> = {
+    formatName: "STL",
+    storeInDocument: false,
+    notifyUser: false,
+    stlMode: "BINARY",
+    unit: "METER",
+    resolution: "MEDIUM",
+    grouping: true,
+  };
+  if (reference.partId) {
+    body.partIds = reference.partId;
+  }
+  if (entityKind === "assembly") {
+    body.allowFaultyParts = true;
+  }
+  return body;
+}
+
+/** JSON body for color-preserving 3MF preview exports. */
+export function onshape3mfTranslationRequestBody(
+  context: Pick<OnshapeContext, "entityKind" | "reference">,
+): Record<string, unknown> {
+  const { entityKind, reference } = context;
+  const body: Record<string, unknown> = {
+    formatName: "3MF",
+    storeInDocument: false,
+    notifyUser: false,
+    unit: "METER",
+    // Onshape's generic translation endpoint expects lower-case resolution values for 3MF.
+    resolution: "coarse",
+    grouping: true,
+  };
+  if (reference.partId) {
+    body.partIds = reference.partId;
+  }
+  if (entityKind === "assembly") {
     body.allowFaultyParts = true;
   }
   return body;
@@ -257,19 +374,38 @@ export function onshapeObjExportRequestBody(
   return body;
 }
 
-function resolveExportTarget(context: OnshapeContext):
-  | {
-      readonly kind: "partstudio";
-      readonly path: string;
-      readonly body: Record<string, unknown>;
-      readonly documentId: string;
-    }
-  | {
-      readonly kind: "assembly";
-      readonly path: string;
-      readonly body: Record<string, unknown>;
-      readonly documentId: string;
-    } {
+function resolve3mfTranslationTarget(context: OnshapeContext): TranslationExportTarget {
+  const { reference } = context;
+  if (!reference.documentId || !reference.wvmKind || !reference.wvmId || !reference.elementId) {
+    throw new Error("Onshape sync requires document, workspace/version, and element ids.");
+  }
+  const documentId = encodeURIComponent(reference.documentId);
+  const wvmId = encodeURIComponent(reference.wvmId);
+  const elementId = encodeURIComponent(reference.elementId);
+  const body = onshape3mfTranslationRequestBody(context);
+  if (context.entityKind === "assembly") {
+    return {
+      kind: "assembly",
+      path: `/api/v10/assemblies/d/${documentId}/${reference.wvmKind}/${wvmId}/e/${elementId}/translations`,
+      body,
+      documentId: reference.documentId,
+      wvmKind: reference.wvmKind,
+      wvmId: reference.wvmId,
+      formatName: "3MF",
+    };
+  }
+  return {
+    kind: "partstudio",
+    path: `/api/v10/partstudios/d/${documentId}/${reference.wvmKind}/${wvmId}/e/${elementId}/translations`,
+    body,
+    documentId: reference.documentId,
+    wvmKind: reference.wvmKind,
+    wvmId: reference.wvmId,
+    formatName: "3MF",
+  };
+}
+
+function resolveObjExportTarget(context: OnshapeContext): TranslationExportTarget {
   const { reference } = context;
   if (!reference.documentId || !reference.wvmKind || !reference.wvmId || !reference.elementId) {
     throw new Error("Onshape sync requires document, workspace/version, and element ids.");
@@ -286,6 +422,9 @@ function resolveExportTarget(context: OnshapeContext):
       path: `/api/v10/assemblies/d/${documentId}/${reference.wvmKind}/${wvmId}/e/${elementId}/export/obj`,
       body,
       documentId: reference.documentId,
+      wvmKind: reference.wvmKind,
+      wvmId: reference.wvmId,
+      formatName: "OBJ",
     };
   }
   return {
@@ -293,6 +432,9 @@ function resolveExportTarget(context: OnshapeContext):
     path: `/api/v10/partstudios/d/${documentId}/${reference.wvmKind}/${wvmId}/e/${elementId}/export/obj`,
     body,
     documentId: reference.documentId,
+    wvmKind: reference.wvmKind,
+    wvmId: reference.wvmId,
+    formatName: "OBJ",
   };
 }
 
@@ -492,9 +634,9 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const resolveSyncOutputPath = (cwd: string) => {
+  const resolveSyncOutputPath = (cwd: string, relativePath: string) => {
     const workspaceRoot = path.resolve(expandHomePath(cwd));
-    const outputPath = path.resolve(workspaceRoot, SYNC_RELATIVE_PATH);
+    const outputPath = path.resolve(workspaceRoot, relativePath);
     const relative = path.relative(workspaceRoot, outputPath);
     if (relative.length === 0 || relative.startsWith("..") || path.isAbsolute(relative)) {
       throw new Error("Onshape sync output path escaped the workspace root.");
@@ -521,12 +663,14 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
     readonly query: string;
     readonly accessKeyId: string;
     readonly secretKey: string;
+    readonly accept?: string;
+    readonly contentType?: string;
     readonly body?: string;
   }) => {
     // @effect-diagnostics-next-line globalDate:off
     const date = new Date().toUTCString();
     const nonce = Crypto.randomBytes(16).toString("hex");
-    const contentType = "application/json";
+    const contentType = input.contentType ?? "application/json";
     const signingString = [
       input.method,
       nonce,
@@ -545,7 +689,7 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
       Authorization: `On ${input.accessKeyId.trim()}:HmacSHA256:${signature}`,
       Date: date,
       "On-Nonce": nonce,
-      Accept: contentType,
+      Accept: input.accept ?? contentType,
       "Content-Type": contentType,
     };
   };
@@ -622,37 +766,70 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
     readonly secretKey: string;
     readonly path: string;
     readonly endpoint: string;
+    readonly accept?: string;
+    readonly contentType?: string;
   }) =>
     Effect.gen(function* () {
-      const url = new URL(`${input.connection.baseUrl.replace(/\/+$/u, "")}${input.path}`);
-      const headers = signRequest({
-        method: "GET",
-        path: url.pathname,
-        query: url.search.length > 0 ? url.search.slice(1) : "",
-        accessKeyId: input.connection.accessKeyId,
-        secretKey: input.secretKey,
-      });
-      const response = yield* httpClient.execute(
-        HttpClientRequest.get(url.toString()).pipe(HttpClientRequest.setHeaders(headers)),
-      );
-      if (response.status === 429) {
-        return yield* new OnshapeWorkspaceFailure({
-          message: "Onshape rate limit reached.",
-          cause: {
+      const baseUrl = input.connection.baseUrl.replace(/\/+$/u, "");
+      const baseOrigin = new URL(baseUrl).origin;
+      const initialUrl = new URL(`${baseUrl}${input.path}`);
+      const accept = input.accept ?? "application/octet-stream";
+      // Onshape rejects several signed GET endpoints with 415 when Content-Type is
+      // octet-stream; keep the signed request content type JSON and ask for bytes via Accept.
+      const contentType = input.contentType ?? "application/json";
+      const fetchUrl = (
+        url: URL,
+        redirectsRemaining: number,
+      ): Effect.Effect<Uint8Array, OnshapeWorkspaceError> =>
+        Effect.gen(function* () {
+          const sameOrigin = url.origin === baseOrigin;
+          const headers = sameOrigin
+            ? signRequest({
+                method: "GET",
+                path: url.pathname,
+                query: url.search.length > 0 ? url.search.slice(1) : "",
+                accessKeyId: input.connection.accessKeyId,
+                secretKey: input.secretKey,
+                accept,
+                contentType,
+              })
+            : { Accept: accept };
+          const response = yield* httpClient.execute(
+            HttpClientRequest.get(url.toString()).pipe(HttpClientRequest.setHeaders(headers)),
+          );
+          const metrics: RequestMetrics = {
             endpoint: input.endpoint,
             status: response.status,
             rateLimitRemaining: response.headers["x-rate-limit-remaining"] ?? null,
             retryAfter: response.headers["retry-after"] ?? null,
-          } satisfies RequestMetrics,
+          };
+          if (isRedirectStatus(response.status)) {
+            const location = response.headers.location;
+            if (!location || redirectsRemaining <= 0) {
+              return yield* new OnshapeWorkspaceFailure({
+                message: "Onshape download redirect could not be followed.",
+                cause: metrics,
+              });
+            }
+            return yield* fetchUrl(new URL(location, url), redirectsRemaining - 1);
+          }
+          if (response.status === 429) {
+            return yield* new OnshapeWorkspaceFailure({
+              message: "Onshape rate limit reached.",
+              cause: metrics,
+            });
+          }
+          if (response.status < 200 || response.status >= 300) {
+            const responseBody = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")));
+            return yield* new OnshapeWorkspaceFailure({
+              message: `Onshape download failed (${response.status}): ${responseBody}`,
+              cause: metrics,
+            });
+          }
+          return yield* response.arrayBuffer.pipe(Effect.map((buffer) => new Uint8Array(buffer)));
         });
-      }
-      if (response.status < 200 || response.status >= 300) {
-        const responseBody = yield* response.text.pipe(Effect.catch(() => Effect.succeed("")));
-        return yield* new OnshapeWorkspaceFailure({
-          message: `Onshape download failed (${response.status}): ${responseBody}`,
-        });
-      }
-      return yield* response.arrayBuffer.pipe(Effect.map((buffer) => new Uint8Array(buffer)));
+
+      return yield* fetchUrl(initialUrl, 3);
     });
 
   const saveRun = (run: OnshapeIndexRun) => repository.upsertIndexRun(run).pipe(Effect.as(run));
@@ -899,89 +1076,10 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
       })
       .pipe(Effect.map((entities) => ({ entities: Array.from(entities) })));
 
-  const syncProject: OnshapeWorkspaceShape["syncProject"] = (input) =>
+  const prepareSyncOutput = (input: { readonly cwd: string; readonly relativePath: string }) =>
     Effect.gen(function* () {
-      const connection = yield* repository.getConnection(input.context.connectionId);
-      if (Option.isNone(connection)) {
-        return yield* new OnshapeWorkspaceFailure({
-          message: `Unknown Onshape connection '${input.context.connectionId}'.`,
-        });
-      }
-
-      const target = resolveExportTarget(input.context);
-      const secretKey = yield* getSecret(input.context.connectionId);
-      const persistedConnection = publicOnshapeConnection(connection.value);
-      const translation = yield* requestJson({
-        connection: persistedConnection,
-        secretKey,
-        method: "POST",
-        path: target.path,
-        body: target.body,
-        endpoint: `${target.kind}.CreateTranslation`,
-      });
-      const translationId = getTranslationId(translation.body);
-      if (!translationId) {
-        return yield* new OnshapeWorkspaceFailure({
-          message: "Onshape did not return a translation id for OBJ export.",
-          cause: translation.body,
-        });
-      }
-
-      let statusBody = translation.body;
-      for (let attempt = 0; attempt < TRANSLATION_MAX_POLLS; attempt += 1) {
-        const status = getTranslationStatus(statusBody);
-        if (status === "DONE") {
-          break;
-        }
-        if (status === "FAILED" || status === "CANCELLED") {
-          const detail = getTranslationFailureReason(statusBody);
-          return yield* new OnshapeWorkspaceFailure({
-            message: detail
-              ? `Onshape OBJ export ${status.toLowerCase()}: ${detail}`
-              : `Onshape OBJ export ${status.toLowerCase()}.`,
-            cause: statusBody,
-          });
-        }
-        yield* Effect.sleep(TRANSLATION_POLL_INTERVAL);
-        const nextStatus = yield* requestJson({
-          connection: persistedConnection,
-          secretKey,
-          path: `/api/v10/translations/${encodeURIComponent(translationId)}`,
-          endpoint: `${target.kind}.GetTranslationStatus`,
-        });
-        statusBody = nextStatus.body;
-      }
-
-      if (getTranslationStatus(statusBody) !== "DONE") {
-        return yield* new OnshapeWorkspaceFailure({
-          message: "Onshape OBJ export timed out before the translated file was ready.",
-          cause: statusBody,
-        });
-      }
-
-      const externalDataId = getResultExternalDataId(statusBody);
-      if (!externalDataId) {
-        return yield* new OnshapeWorkspaceFailure({
-          message: "Onshape OBJ export completed without a downloadable file id.",
-          cause: statusBody,
-        });
-      }
-
-      const bytes = yield* requestBinary({
-        connection: persistedConnection,
-        secretKey,
-        path: `/api/v10/documents/d/${encodeURIComponent(target.documentId)}/externaldata/${encodeURIComponent(externalDataId)}`,
-        endpoint: `${target.kind}.DownloadTranslation`,
-      });
-      const payload = compactDownloadedBytes(bytes);
-      yield* Effect.logInfo("onshape.syncProject.download", {
-        byteLength: payload.length,
-        headHex: formatBytesHeadHex(payload),
-        documentId: target.documentId,
-        externalDataId,
-      });
       const output = yield* Effect.try({
-        try: () => resolveSyncOutputPath(input.cwd),
+        try: () => resolveSyncOutputPath(input.cwd, input.relativePath),
         catch: (cause) =>
           new OnshapeWorkspaceFailure({
             message: cause instanceof Error ? cause.message : "Failed to resolve sync output path.",
@@ -1002,11 +1100,227 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
           resolved === syncRootResolved || resolved.startsWith(`${syncRootResolved}${path.sep}`)
         );
       };
+      const removeRelativeIfPresent = (relativePath: string) => {
+        const absolutePath = path.resolve(path.join(output.workspaceRoot, relativePath));
+        if (!isWithinSyncTree(absolutePath)) {
+          return Effect.fail(
+            new OnshapeWorkspaceFailure({
+              message: "Onshape sync cleanup path escaped the sync directory.",
+            }),
+          );
+        }
+        return removeIfPresent(absolutePath);
+      };
       const mapFsFailure = (cause: { message: string }) =>
         new OnshapeWorkspaceFailure({
           message: cause.message,
           cause,
         });
+
+      return {
+        output,
+        syncRootResolved,
+        bundleDirResolved,
+        removeIfPresent,
+        removeRelativeIfPresent,
+        isWithinSyncTree,
+        mapFsFailure,
+      };
+    });
+
+  const runTranslationExport = (input: {
+    readonly connection: OnshapeConnection;
+    readonly secretKey: string;
+    readonly target: TranslationExportTarget;
+  }) =>
+    Effect.gen(function* () {
+      const { target } = input;
+      const translation = yield* requestJson({
+        connection: input.connection,
+        secretKey: input.secretKey,
+        method: "POST",
+        path: target.path,
+        body: target.body,
+        endpoint: `${target.kind}.Create${target.formatName}Translation`,
+      });
+      const translationId = getTranslationId(translation.body);
+      if (!translationId) {
+        return yield* new OnshapeWorkspaceFailure({
+          message: `Onshape did not return a translation id for ${target.formatName} export.`,
+          cause: translation.body,
+        });
+      }
+
+      let statusBody = translation.body;
+      for (let attempt = 0; attempt < TRANSLATION_MAX_POLLS; attempt += 1) {
+        const status = getTranslationStatus(statusBody);
+        if (status === "DONE") {
+          break;
+        }
+        if (status === "FAILED" || status === "CANCELLED") {
+          const detail = getTranslationFailureReason(statusBody);
+          return yield* new OnshapeWorkspaceFailure({
+            message: detail
+              ? `Onshape ${target.formatName} export ${status.toLowerCase()}: ${detail}`
+              : `Onshape ${target.formatName} export ${status.toLowerCase()}.`,
+            cause: statusBody,
+          });
+        }
+        yield* Effect.sleep(getTranslationPollDelay(attempt));
+        const nextStatus = yield* requestJson({
+          connection: input.connection,
+          secretKey: input.secretKey,
+          path: `/api/v10/translations/${encodeURIComponent(translationId)}`,
+          endpoint: `${target.kind}.Get${target.formatName}TranslationStatus`,
+        });
+        statusBody = nextStatus.body;
+      }
+
+      if (getTranslationStatus(statusBody) !== "DONE") {
+        return yield* new OnshapeWorkspaceFailure({
+          message: `Onshape ${target.formatName} export timed out before the translated file was ready.`,
+          cause: statusBody,
+        });
+      }
+
+      const externalDataId = getResultExternalDataId(statusBody);
+      if (externalDataId) {
+        const bytes = yield* requestBinary({
+          connection: input.connection,
+          secretKey: input.secretKey,
+          path: `/api/v10/documents/d/${encodeURIComponent(target.documentId)}/externaldata/${encodeURIComponent(externalDataId)}`,
+          endpoint: `${target.kind}.Download${target.formatName}ExternalData`,
+        });
+        return {
+          payload: compactDownloadedBytes(bytes),
+          externalDataId,
+          resultElementId: null,
+        };
+      }
+
+      const resultElementId = getResultElementId(statusBody);
+      if (resultElementId) {
+        const bytes = yield* requestBinary({
+          connection: input.connection,
+          secretKey: input.secretKey,
+          path: `/api/v10/blobelements/d/${encodeURIComponent(target.documentId)}/${target.wvmKind}/${encodeURIComponent(target.wvmId)}/e/${encodeURIComponent(resultElementId)}`,
+          endpoint: `${target.kind}.Download${target.formatName}BlobElement`,
+        });
+        return {
+          payload: compactDownloadedBytes(bytes),
+          externalDataId: null,
+          resultElementId,
+        };
+      }
+
+      return yield* new OnshapeWorkspaceFailure({
+        message: `Onshape ${target.formatName} export completed without a downloadable file id.`,
+        cause: statusBody,
+      });
+    });
+
+  const syncProject: OnshapeWorkspaceShape["syncProject"] = (input) =>
+    Effect.gen(function* () {
+      const connection = yield* repository.getConnection(input.context.connectionId);
+      if (Option.isNone(connection)) {
+        return yield* new OnshapeWorkspaceFailure({
+          message: `Unknown Onshape connection '${input.context.connectionId}'.`,
+        });
+      }
+
+      const secretKey = yield* getSecret(input.context.connectionId);
+      const persistedConnection = publicOnshapeConnection(connection.value);
+
+      const writeBinaryModelResult = (model: {
+        readonly payload: Uint8Array;
+        readonly documentId: string;
+        readonly relativePath: string;
+        readonly format: string;
+        readonly externalDataId?: string | null;
+        readonly resultElementId?: string | null;
+      }) =>
+        Effect.gen(function* () {
+          yield* Effect.logInfo("onshape.syncProject.download", {
+            byteLength: model.payload.length,
+            headHex: formatBytesHeadHex(model.payload),
+            documentId: model.documentId,
+            format: model.format,
+            externalDataId: model.externalDataId ?? null,
+            resultElementId: model.resultElementId ?? null,
+          });
+          const sync = yield* prepareSyncOutput({
+            cwd: input.cwd,
+            relativePath: model.relativePath,
+          });
+          yield* sync.removeIfPresent(sync.bundleDirResolved);
+          yield* sync.removeRelativeIfPresent(THREE_MF_SYNC_RELATIVE_PATH);
+          yield* sync.removeRelativeIfPresent(STL_SYNC_RELATIVE_PATH);
+          yield* sync.removeRelativeIfPresent(OBJ_SYNC_RELATIVE_PATH);
+          yield* sync.removeRelativeIfPresent(STEP_SYNC_RELATIVE_PATH);
+          yield* fileSystem
+            .makeDirectory(path.dirname(sync.output.path), { recursive: true })
+            .pipe(Effect.mapError(sync.mapFsFailure));
+          yield* fileSystem
+            .writeFile(sync.output.path, model.payload)
+            .pipe(Effect.mapError(sync.mapFsFailure));
+
+          return {
+            relativePath: model.relativePath,
+            absolutePath: sync.output.path,
+            syncedAt: yield* DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+            format: model.format,
+          };
+        });
+
+      const colorTarget = resolve3mfTranslationTarget(input.context);
+      const translated3mf = yield* runTranslationExport({
+        connection: persistedConnection,
+        secretKey,
+        target: colorTarget,
+      }).pipe(
+        Effect.catch((error) =>
+          shouldFallbackFromTranslation(error, colorTarget.formatName)
+            ? Effect.succeed(null)
+            : Effect.fail(error),
+        ),
+      );
+      if (translated3mf !== null) {
+        return yield* writeBinaryModelResult({
+          payload: translated3mf.payload,
+          documentId: colorTarget.documentId,
+          relativePath: THREE_MF_SYNC_RELATIVE_PATH,
+          format: "3mf",
+          externalDataId: translated3mf.externalDataId,
+          resultElementId: translated3mf.resultElementId,
+        });
+      }
+
+      const target = resolveObjExportTarget(input.context);
+      const translatedObj = yield* runTranslationExport({
+        connection: persistedConnection,
+        secretKey,
+        target,
+      });
+      const { payload, externalDataId } = translatedObj;
+      yield* Effect.logInfo("onshape.syncProject.download", {
+        byteLength: payload.length,
+        headHex: formatBytesHeadHex(payload),
+        documentId: target.documentId,
+        externalDataId,
+        resultElementId: translatedObj.resultElementId,
+      });
+      const sync = yield* prepareSyncOutput({
+        cwd: input.cwd,
+        relativePath: OBJ_SYNC_RELATIVE_PATH,
+      });
+      const {
+        output,
+        bundleDirResolved,
+        removeIfPresent,
+        removeRelativeIfPresent,
+        isWithinSyncTree,
+        mapFsFailure,
+      } = sync;
 
       const extracted = isZipArchive(payload) ? tryExtractObjBundle(payload) : null;
       if (extracted === null && isZipArchive(payload)) {
@@ -1019,6 +1333,9 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
       if (extracted !== null) {
         yield* removeIfPresent(bundleDirResolved);
         yield* removeIfPresent(output.path);
+        yield* removeRelativeIfPresent(THREE_MF_SYNC_RELATIVE_PATH);
+        yield* removeRelativeIfPresent(STL_SYNC_RELATIVE_PATH);
+        yield* removeRelativeIfPresent(STEP_SYNC_RELATIVE_PATH);
 
         for (const file of extracted.files) {
           const destAbs = path.resolve(path.join(output.workspaceRoot, file.relativePath));
@@ -1058,6 +1375,9 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
       }
 
       yield* removeIfPresent(bundleDirResolved);
+      yield* removeRelativeIfPresent(THREE_MF_SYNC_RELATIVE_PATH);
+      yield* removeRelativeIfPresent(STL_SYNC_RELATIVE_PATH);
+      yield* removeRelativeIfPresent(STEP_SYNC_RELATIVE_PATH);
 
       yield* fileSystem
         .makeDirectory(path.dirname(output.path), { recursive: true })
@@ -1065,7 +1385,7 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
       yield* fileSystem.writeFile(output.path, payload).pipe(Effect.mapError(mapFsFailure));
 
       return {
-        relativePath: SYNC_RELATIVE_PATH,
+        relativePath: OBJ_SYNC_RELATIVE_PATH,
         absolutePath: output.path,
         syncedAt: yield* DateTime.now.pipe(Effect.map(DateTime.formatIso)),
         format: "obj",
