@@ -1,4 +1,4 @@
-const REPO = "pingdotgg/cadsense";
+const REPO = "AadiJo/cadsense";
 
 export const RELEASES_URL = `https://github.com/${REPO}/releases`;
 

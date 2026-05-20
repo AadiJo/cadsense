@@ -6,7 +6,7 @@ interface Props {
 
 const {
   title = "CadSense",
-  description = "CadSense — The open-source control plane for coding agents.",
+  description = "CadSense helps CAD teams review models, catch small mistakes early, and move fixes into Codex.",
 } = Astro.props;
 ---
 
@@ -35,17 +35,6 @@ const {
             <span class="nav-brand-name">CadSense</span>
           </a>
           <div class="nav-right">
-            <a
-              class="nav-gh"
-              href="https://github.com/pingdotgg/cadsense"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                <path d="M12 .5C5.65.5.5 5.65.5 12a11.5 11.5 0 007.86 10.93c.58.1.79-.25.79-.56v-2c-3.2.69-3.88-1.37-3.88-1.37-.52-1.33-1.27-1.69-1.27-1.69-1.04-.71.08-.7.08-.7 1.15.08 1.76 1.18 1.76 1.18 1.02 1.76 2.68 1.25 3.33.96.1-.75.4-1.25.72-1.54-2.55-.29-5.24-1.27-5.24-5.67 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.45.11-3.02 0 0 .96-.31 3.15 1.18a10.96 10.96 0 015.74 0c2.19-1.49 3.15-1.18 3.15-1.18.62 1.57.23 2.73.11 3.02.74.8 1.18 1.83 1.18 3.08 0 4.41-2.7 5.38-5.27 5.66.41.36.78 1.06.78 2.13v3.16c0 .31.21.67.8.56A11.5 11.5 0 0023.5 12C23.5 5.65 18.35.5 12 .5z"/>
-              </svg>
-              <span>GitHub</span>
-            </a>
             <a class="btn btn-primary" href="/#download">Download</a>
           </div>
         </div>
@@ -58,12 +47,11 @@ const {
       <footer class="footer">
         <div class="footer-inner">
           <div class="footer-brand">
-            <img src="/icon.webp" alt="" />
-            <span>&copy; {new Date().getFullYear()} CadSense Tools Inc · MIT licensed</span>
+            <img src="/cadsense-logo.png" alt="CadSense" />
+            <span>CadSense</span>
           </div>
           <div class="footer-links">
-            <a href="https://github.com/pingdotgg/cadsense" target="_blank" rel="noopener noreferrer">GitHub</a>
-            <a href="https://discord.gg/jn4EGJjrvv" target="_blank" rel="noopener noreferrer">Discord</a>
+            <a href="https://github.com/AadiJo/cadsense" target="_blank" rel="noopener noreferrer">GitHub</a>
             <a href="/download">Download</a>
           </div>
         </div>
@@ -227,6 +215,7 @@ const {
     padding: 14px 22px;
     font-size: 15px;
     border-radius: 10px;
+    min-height: 48px;
   }
 
   .tile {
@@ -327,25 +316,6 @@ const {
     display: inline-flex;
     align-items: center;
     gap: 8px;
-  }
-
-  .nav-gh {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 7px 12px;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: 12px;
-    transition: color 0.2s ease, background 0.2s ease, border-color 0.2s ease;
-  }
-
-  .nav-gh:hover {
-    color: var(--fg);
-    background: rgba(255, 255, 255, 0.04);
-    border-color: var(--border-strong);
   }
 
   .main {
