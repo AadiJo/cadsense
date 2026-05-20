@@ -40,6 +40,7 @@ interface ChatHeaderProps {
   gitCwd: string | null;
   diffOpen: boolean;
   onshapeSyncing: boolean;
+  cadExploded: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
@@ -47,6 +48,8 @@ interface ChatHeaderProps {
   onToggleTerminal: () => void;
   onToggleDiff: () => void;
   onSyncOnshape: () => void;
+  onToggleCadExploded: (exploded: boolean) => void;
+  onZoomCadToFit: () => void;
 }
 
 export function shouldShowOpenInPicker(input: {
@@ -81,6 +84,7 @@ export const ChatHeader = memo(function ChatHeader({
   gitCwd,
   diffOpen,
   onshapeSyncing,
+  cadExploded,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
@@ -88,6 +92,8 @@ export const ChatHeader = memo(function ChatHeader({
   onToggleTerminal,
   onToggleDiff,
   onSyncOnshape,
+  onToggleCadExploded,
+  onZoomCadToFit,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const panelLabel = activeProjectOnshapeContext ? "CAD view" : "diff panel";
@@ -124,7 +130,10 @@ export const ChatHeader = memo(function ChatHeader({
           <OnshapeSyncControl
             context={activeProjectOnshapeContext}
             isSyncing={onshapeSyncing}
+            exploded={cadExploded}
             onSync={onSyncOnshape}
+            onToggleExploded={onToggleCadExploded}
+            onZoomToFit={onZoomCadToFit}
           />
         ) : activeProjectScripts ? (
           <ProjectScriptsControl

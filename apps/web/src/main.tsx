@@ -11,19 +11,23 @@ import { getRouter } from "./router";
 import { APP_DISPLAY_NAME } from "./branding";
 import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
 
-// Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
-const history = isElectron ? createHashHistory() : createBrowserHistory();
+if (window.location.pathname === "/cad-viewer-frame") {
+  void import("./cadViewerFrame");
+} else {
+  // Electron loads the app from a file-backed shell, so hash history avoids path resolution issues.
+  const history = isElectron ? createHashHistory() : createBrowserHistory();
 
-const router = getRouter(history);
+  const router = getRouter(history);
 
-if (isElectron) {
-  syncDocumentWindowControlsOverlayClass();
+  if (isElectron) {
+    syncDocumentWindowControlsOverlayClass();
+  }
+
+  document.title = APP_DISPLAY_NAME;
+
+  ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
+    <React.StrictMode>
+      <RouterProvider router={router} />
+    </React.StrictMode>,
+  );
 }
-
-document.title = APP_DISPLAY_NAME;
-
-ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
-  <React.StrictMode>
-    <RouterProvider router={router} />
-  </React.StrictMode>,
-);

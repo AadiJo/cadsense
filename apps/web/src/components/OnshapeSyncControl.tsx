@@ -1,14 +1,18 @@
 import type { OnshapeContext } from "@cadsense/contracts";
-import { RefreshCwIcon } from "lucide-react";
+import { CircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { Button } from "./ui/button";
+import { Toggle } from "./ui/toggle";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface OnshapeSyncControlProps {
   readonly context: OnshapeContext;
   readonly isSyncing: boolean;
+  readonly exploded: boolean;
   readonly onSync: () => void;
+  readonly onToggleExploded: (exploded: boolean) => void;
+  readonly onZoomToFit: () => void;
 }
 
 function statusLabel(context: OnshapeContext, isSyncing: boolean): string {
@@ -24,7 +28,14 @@ function statusLabel(context: OnshapeContext, isSyncing: boolean): string {
   return "Never synced";
 }
 
-export function OnshapeSyncControl({ context, isSyncing, onSync }: OnshapeSyncControlProps) {
+export function OnshapeSyncControl({
+  context,
+  isSyncing,
+  exploded,
+  onSync,
+  onToggleExploded,
+  onZoomToFit,
+}: OnshapeSyncControlProps) {
   const label = statusLabel(context, isSyncing);
   const tooltip = context.lastSyncError
     ? context.lastSyncError
@@ -46,6 +57,41 @@ export function OnshapeSyncControl({ context, isSyncing, onSync }: OnshapeSyncCo
           }
         />
         <TooltipPopup side="bottom">{tooltip}</TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Toggle
+              className="shrink-0"
+              pressed={exploded}
+              onPressedChange={onToggleExploded}
+              aria-label="Toggle exploded CAD view"
+              variant="outline"
+              size="xs"
+            >
+              <CircleIcon className="size-3.5" />
+            </Toggle>
+          }
+        />
+        <TooltipPopup side="bottom">
+          {exploded ? "Collapse CAD assembly" : "Explode CAD assembly"}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              className="shrink-0"
+              size="xs"
+              variant="outline"
+              aria-label="Zoom CAD view to fit"
+              onClick={onZoomToFit}
+            >
+              <SearchIcon className="size-3.5" />
+            </Button>
+          }
+        />
+        <TooltipPopup side="bottom">Zoom CAD view to fit</TooltipPopup>
       </Tooltip>
       <span className="hidden max-w-32 truncate text-xs text-muted-foreground @3xl/header-actions:inline">
         {label}

@@ -31,6 +31,8 @@ export interface UiProjectState {
 export interface UiThreadState {
   threadLastVisitedAtById: Record<string, string>;
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
+  cadExplodedByThreadId: Record<string, boolean>;
+  cadZoomToFitRequestByThreadId: Record<string, number>;
 }
 
 export interface UiEndpointState {
@@ -57,6 +59,8 @@ const initialState: UiState = {
   projectOrder: [],
   threadLastVisitedAtById: {},
   threadChangedFilesExpandedById: {},
+  cadExplodedByThreadId: {},
+  cadZoomToFitRequestByThreadId: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -629,6 +633,8 @@ interface UiStateStore extends UiState {
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   clearThreadUi: (threadId: string) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
+  setCadExploded: (threadId: string, exploded: boolean) => void;
+  requestCadZoomToFit: (threadId: string) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
@@ -649,6 +655,22 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   clearThreadUi: (threadId) => set((state) => clearThreadUi(state, threadId)),
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
+  setCadExploded: (threadId, exploded) =>
+    set((state) => ({
+      ...state,
+      cadExplodedByThreadId: {
+        ...state.cadExplodedByThreadId,
+        [threadId]: exploded,
+      },
+    })),
+  requestCadZoomToFit: (threadId) =>
+    set((state) => ({
+      ...state,
+      cadZoomToFitRequestByThreadId: {
+        ...state.cadZoomToFitRequestByThreadId,
+        [threadId]: (state.cadZoomToFitRequestByThreadId[threadId] ?? 0) + 1,
+      },
+    })),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),

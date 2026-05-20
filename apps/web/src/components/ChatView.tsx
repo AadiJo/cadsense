@@ -870,6 +870,27 @@ export default function ChatView(props: ChatViewProps) {
   const activeProject = useStore(
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
+  const cadUiStateKey = activeThread?.projectId ?? null;
+  const cadExploded = useUiStateStore((store) =>
+    cadUiStateKey ? (store.cadExplodedByThreadId[cadUiStateKey] ?? false) : false,
+  );
+  const setCadExploded = useUiStateStore((store) => store.setCadExploded);
+  const requestCadZoomToFit = useUiStateStore((store) => store.requestCadZoomToFit);
+  const toggleCadExploded = useCallback(
+    (exploded: boolean) => {
+      if (!cadUiStateKey) {
+        return;
+      }
+      setCadExploded(cadUiStateKey, exploded);
+    },
+    [cadUiStateKey, setCadExploded],
+  );
+  const zoomCadToFit = useCallback(() => {
+    if (!cadUiStateKey) {
+      return;
+    }
+    requestCadZoomToFit(cadUiStateKey);
+  }, [cadUiStateKey, requestCadZoomToFit]);
 
   useEffect(() => {
     if (routeKind !== "server") {
@@ -3699,6 +3720,7 @@ export default function ChatView(props: ChatViewProps) {
           onshapeSyncing={
             activeProject !== undefined && onshapeSyncingProjectIds.has(activeProject.id)
           }
+          cadExploded={cadExploded}
           onRunProjectScript={runProjectScript}
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
@@ -3706,6 +3728,8 @@ export default function ChatView(props: ChatViewProps) {
           onToggleTerminal={toggleTerminalVisibility}
           onToggleDiff={onToggleDiff}
           onSyncOnshape={syncOnshapeProject}
+          onToggleCadExploded={toggleCadExploded}
+          onZoomCadToFit={zoomCadToFit}
         />
       </header>
 

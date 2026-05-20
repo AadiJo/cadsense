@@ -24,6 +24,8 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectOrder: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
+    cadExplodedByThreadId: {},
+    cadZoomToFitRequestByThreadId: {},
     defaultAdvertisedEndpointKey: null,
     ...overrides,
   };

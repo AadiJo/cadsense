@@ -1,4 +1,4 @@
-import type { CadView } from "@cadsense/contracts";
+import type { CadView, OnshapeSyncedCadFile } from "@cadsense/contracts";
 import { BoxIcon, XIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "@tanstack/react-router";
@@ -6,97 +6,29 @@ import { useQuery } from "@tanstack/react-query";
 
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
-import { cadViewIsCloseUp, cadViewVector } from "../lib/cadView";
+import { buildCadWebGlFailureUserMessage } from "../lib/cadViewerWebGl";
 import {
-  cadViewerOrientationTweenMs,
-  cadViewerViewCommandSettleMs,
-} from "../lib/cadViewerCameraTransition";
-import { cadEmbeddedViewerEdgeSettings } from "../lib/cadEmbeddedViewerTuning";
-import { createCadViewerResizeCoordinator } from "../lib/cadViewerResizeThrottle";
-import { buildCadWebGlFailureUserMessage, getWebGl1UnavailableReason } from "../lib/cadViewerWebGl";
+  CAD_VIEWER_FRAME_PARENT_SOURCE,
+  isCadViewerFrameResponse,
+  type CadViewerFrameLoadStats,
+  type CadViewerFrameRequestInput,
+} from "../lib/cadViewerFrameProtocol";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef } from "../threadRoutes";
+import { useUiStateStore } from "../uiStateStore";
 import { cn } from "../lib/utils";
 import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
-
-type Online3DViewerModule = typeof import("online-3d-viewer");
-type EmbeddedViewerInstance = InstanceType<Online3DViewerModule["EmbeddedViewer"]>;
+import {
+  CAD_MODEL_LOAD_TARGET_MS,
+  CAD_MODEL_LOAD_TIMEOUT_MS,
+  cadViewerFileName,
+  cadViewerFrameUrl,
+  getCadModelViewerBlocker,
+} from "./CadPanel.logic";
 
 interface CadPanelProps {
   mode?: DiffPanelMode;
-}
-
-function applyCadView(
-  module: Online3DViewerModule,
-  embeddedViewer: EmbeddedViewerInstance,
-  view: CadView,
-  fit: boolean,
-  cancelPendingFollowUp: () => void,
-  afterOrientationTween: (delayMs: number, fn: () => void) => void,
-) {
-  cancelPendingFollowUp();
-  const viewer = embeddedViewer.GetViewer() as ReturnType<EmbeddedViewerInstance["GetViewer"]> & {
-    navigation: {
-      MoveCamera: (camera: InstanceType<Online3DViewerModule["Camera"]>, stepCount: number) => void;
-    };
-    settings?: { animationSteps?: number };
-  };
-  const sphere = viewer.GetBoundingSphere(() => true);
-  if (!sphere) {
-    return;
-  }
-  const { direction, up } = cadViewVector(view);
-  const directionLength = Math.hypot(direction[0], direction[1], direction[2]) || 1;
-  const normalizedDirection = direction.map((value) => value / directionLength) as [
-    number,
-    number,
-    number,
-  ];
-  let distance = Math.max(sphere.radius * 2.8, 10);
-  if (fit) {
-    let fieldOfView = 45 / 2.0;
-    const canvas = (viewer as any).GetCanvas ? (viewer as any).GetCanvas() : null;
-    if (canvas && canvas.width < canvas.height) {
-      fieldOfView = (fieldOfView * canvas.width) / canvas.height;
-    }
-    const DegRad = Math.PI / 180.0;
-    const fitDistance = sphere.radius / Math.sin(fieldOfView * DegRad);
-    if (fitDistance > 0 && fitDistance !== Infinity) {
-      distance = fitDistance;
-    }
-  }
-  if (cadViewIsCloseUp(view)) {
-    distance *= 0.44;
-  }
-  const center = sphere.center;
-  const camera = new module.Camera(
-    new module.Coord3D(
-      center.x + normalizedDirection[0] * distance,
-      center.y + normalizedDirection[1] * distance,
-      center.z + normalizedDirection[2] * distance,
-    ),
-    new module.Coord3D(center.x, center.y, center.z),
-    new module.Coord3D(up[0], up[1], up[2]),
-    45,
-  );
-
-  const steps = viewer.settings?.animationSteps ?? 40;
-  viewer.navigation.MoveCamera(camera, steps);
-  if (typeof (viewer as any).Render === "function") {
-    (viewer as any).Render();
-  } else if (typeof (viewer as any).Draw === "function") {
-    (viewer as any).Draw();
-  }
-  const delayMs = cadViewerOrientationTweenMs(steps);
-  afterOrientationTween(delayMs, () => {
-    viewer.AdjustClippingPlanesToSphere(sphere);
-    if (typeof (viewer as any).Render === "function") {
-      (viewer as any).Render();
-    } else if (typeof (viewer as any).Draw === "function") {
-      (viewer as any).Draw();
-    }
-  });
 }
 
 function CadPanelEmptyState(props: { title: string; detail: string; icon?: "error" }) {
@@ -121,6 +53,22 @@ const cadShellProps = {
   showHeader: false as const,
   header: null,
 };
+
+const CAD_MODEL_LOADING_TEXT_DELAY_MS = 350;
+
+interface PendingFrameRequest {
+  readonly resolve: (
+    payload:
+      | { readonly pngBase64?: string; readonly loadStats?: CadViewerFrameLoadStats }
+      | undefined,
+  ) => void;
+  readonly reject: (error: Error) => void;
+  readonly timeoutId: ReturnType<typeof setTimeout>;
+}
+
+function errorFromUnknown(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error || "CAD viewer request failed."));
+}
 
 export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   const routeThreadRef = useParams({
@@ -162,12 +110,27 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     }
     return undefined;
   });
-  const containerRef = useRef<HTMLDivElement>(null);
-  const viewerRef = useRef<EmbeddedViewerInstance | null>(null);
-  const moduleRef = useRef<Online3DViewerModule | null>(null);
-  const cadViewFollowUpRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cadUiStateKey = activeThread?.projectId ?? draftSession?.projectId ?? null;
+  const cadExploded = useUiStateStore((store) =>
+    cadUiStateKey ? (store.cadExplodedByThreadId[cadUiStateKey] ?? false) : false,
+  );
+  const setCadExploded = useUiStateStore((store) => store.setCadExploded);
+  const cadZoomToFitRequest = useUiStateStore((store) =>
+    cadUiStateKey ? (store.cadZoomToFitRequestByThreadId[cadUiStateKey] ?? 0) : 0,
+  );
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const pendingFrameRequestsRef = useRef(new Map<string, PendingFrameRequest>());
+  const frameRequestSequenceRef = useRef(0);
+  const modelFilesRef = useRef<ReadonlyArray<OnshapeSyncedCadFile>>([]);
+  const activeFrameLoadIdRef = useRef(0);
+  const frameLoadStartedAtRef = useRef(0);
+  const loadedFrameRequestKeyRef = useRef<string | null>(null);
   const [loadState, setLoadState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [frameActive, setFrameActive] = useState(false);
+  const [frameKey, setFrameKey] = useState(0);
+  const [frameReadySequence, setFrameReadySequence] = useState(0);
+  const [showLoadingText, setShowLoadingText] = useState(false);
   const loadStateRef = useRef(loadState);
   loadStateRef.current = loadState;
 
@@ -190,7 +153,13 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   );
 
   const filesQuery = useQuery({
-    queryKey: ["onshape-cad-files", environmentId, cwd, onshapeContext?.lastSyncedRelativePath],
+    queryKey: [
+      "onshape-cad-files",
+      environmentId,
+      cwd,
+      onshapeContext?.lastSyncedRelativePath,
+      onshapeContext?.lastSyncedAt,
+    ],
     enabled: Boolean(environmentApi && cwd && onshapeContext),
     queryFn: async () => {
       if (!environmentApi || !cwd) {
@@ -210,44 +179,133 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     const preferredOnly = files.filter((file) => file.isPreferred);
     return preferredOnly.length > 0 ? preferredOnly : files;
   }, [filesQuery.data?.files]);
+  modelFilesRef.current = modelFiles;
 
-  const modelFileUrlsKey = useMemo(
-    () => modelFiles.map((file) => file.url).join("\0"),
+  const modelFileIdentityKey = useMemo(
+    () => modelFiles.map((file) => `${file.url}:${file.sizeBytes ?? "unknown"}`).join("\0"),
     [modelFiles],
   );
 
-  const cancelCadViewFollowUp = useCallback(() => {
-    if (cadViewFollowUpRef.current !== null) {
-      clearTimeout(cadViewFollowUpRef.current);
-      cadViewFollowUpRef.current = null;
+  const rejectAllPendingFrameRequests = useCallback((message: string) => {
+    for (const pending of pendingFrameRequestsRef.current.values()) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(new Error(message));
     }
+    pendingFrameRequestsRef.current.clear();
   }, []);
 
-  const scheduleCadViewAfterOrientation = useCallback((delayMs: number, fn: () => void) => {
-    cadViewFollowUpRef.current = setTimeout(() => {
-      cadViewFollowUpRef.current = null;
-      fn();
-    }, delayMs);
-  }, []);
+  const postFrameRequest = useCallback(
+    (
+      request: CadViewerFrameRequestInput,
+      timeoutMs = CAD_MODEL_LOAD_TIMEOUT_MS,
+      transfer?: Transferable[],
+    ) =>
+      new Promise<
+        { readonly pngBase64?: string; readonly loadStats?: CadViewerFrameLoadStats } | undefined
+      >((resolve, reject) => {
+        const targetWindow = iframeRef.current?.contentWindow;
+        if (!targetWindow) {
+          reject(new Error("CAD viewer frame is not available."));
+          return;
+        }
+
+        const requestId = `cad-frame-${++frameRequestSequenceRef.current}`;
+        const timeoutId = setTimeout(() => {
+          pendingFrameRequestsRef.current.delete(requestId);
+          reject(
+            new Error(
+              `The CAD viewer did not answer within ${(timeoutMs / 1000).toFixed(1)} seconds while handling '${request.type}'.`,
+            ),
+          );
+        }, timeoutMs);
+        pendingFrameRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
+        targetWindow.postMessage(
+          {
+            source: CAD_VIEWER_FRAME_PARENT_SOURCE,
+            requestId,
+            ...request,
+          },
+          "*",
+          transfer ?? [],
+        );
+      }),
+    [],
+  );
 
   const setFixedView = useCallback(
     (view: CadView, fit = true) => {
-      const module = moduleRef.current;
-      const embeddedViewer = viewerRef.current;
-      if (!module || !embeddedViewer) {
+      if (loadStateRef.current !== "loaded") {
         return;
       }
-      applyCadView(
-        module,
-        embeddedViewer,
-        view,
-        fit,
-        cancelCadViewFollowUp,
-        scheduleCadViewAfterOrientation,
-      );
+      void postFrameRequest({ type: "set-view", view, fit }, 3_000).catch(() => undefined);
     },
-    [cancelCadViewFollowUp, scheduleCadViewAfterOrientation],
+    [postFrameRequest],
   );
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent<unknown>) => {
+      if (!isCadViewerFrameResponse(event.data)) {
+        return;
+      }
+      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) {
+        return;
+      }
+      if (event.data.type === "ready") {
+        setFrameReadySequence((sequence) => sequence + 1);
+        return;
+      }
+      if (event.data.type === "status") {
+        console.info("CAD viewer frame status", {
+          requestId: event.data.requestId,
+          stage: event.data.stage,
+          elapsedMs: event.data.elapsedMs,
+        });
+        return;
+      }
+
+      const pending = pendingFrameRequestsRef.current.get(event.data.requestId);
+      if (!pending) {
+        return;
+      }
+      pendingFrameRequestsRef.current.delete(event.data.requestId);
+      clearTimeout(pending.timeoutId);
+
+      if (event.data.ok) {
+        pending.resolve(event.data.payload);
+      } else {
+        pending.reject(new Error(event.data.error));
+      }
+    };
+
+    window.addEventListener("message", onMessage);
+    return () => {
+      window.removeEventListener("message", onMessage);
+      rejectAllPendingFrameRequests("CAD viewer panel was closed.");
+    };
+  }, [rejectAllPendingFrameRequests]);
+
+  useEffect(() => {
+    if (loadState !== "loading") {
+      setShowLoadingText(false);
+      return;
+    }
+
+    setShowLoadingText(false);
+    const timeoutId = setTimeout(() => {
+      setShowLoadingText(true);
+    }, CAD_MODEL_LOADING_TEXT_DELAY_MS);
+
+    return () => {
+      clearTimeout(timeoutId);
+    };
+  }, [loadState]);
+
+  useEffect(() => {
+    if (!cadUiStateKey) {
+      return;
+    }
+    setCadExploded(cadUiStateKey, false);
+  }, [cadUiStateKey, modelFileIdentityKey, setCadExploded]);
 
   useEffect(() => {
     if (!environmentApi || !cadRoutingThreadId) {
@@ -262,6 +320,22 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   }, [cadRoutingThreadId, environmentApi, setFixedView]);
 
   useEffect(() => {
+    if (loadState !== "loaded") {
+      return;
+    }
+    void postFrameRequest({ type: "set-exploded", enabled: cadExploded }, 3_000).catch(
+      () => undefined,
+    );
+  }, [cadExploded, loadState, postFrameRequest]);
+
+  useEffect(() => {
+    if (loadState !== "loaded" || cadZoomToFitRequest === 0) {
+      return;
+    }
+    void postFrameRequest({ type: "zoom-to-fit" }, 3_000).catch(() => undefined);
+  }, [cadZoomToFitRequest, loadState, postFrameRequest]);
+
+  useEffect(() => {
     if (!environmentApi || !cadRoutingThreadId) {
       return;
     }
@@ -271,7 +345,7 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
       }
       void (async () => {
         try {
-          // Wait up to 10 seconds for the viewer to finish loading
+          // Wait up to 10 seconds for the frame to finish loading.
           let attempts = 0;
           while (loadStateRef.current !== "loaded" && attempts < 100) {
             if (loadStateRef.current === "error") {
@@ -281,45 +355,23 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
             attempts++;
           }
 
-          if (loadStateRef.current !== "loaded" || !viewerRef.current || !moduleRef.current) {
+          if (loadStateRef.current !== "loaded") {
             await environmentApi.onshape.uploadCadScreenshot({
               requestId: req.requestId,
               pngBase64: "",
             });
             return;
           }
-          const module = moduleRef.current;
-          const embeddedViewer = viewerRef.current;
-          if (req.view) {
-            applyCadView(
-              module,
-              embeddedViewer,
-              req.view,
-              req.fit,
-              cancelCadViewFollowUp,
-              scheduleCadViewAfterOrientation,
-            );
-            const viewerForTiming = embeddedViewer.GetViewer() as {
-              settings?: { animationSteps?: number };
-            };
-            const settleMs = cadViewerViewCommandSettleMs(
-              viewerForTiming.settings?.animationSteps ?? 40,
-              req.fit,
-            );
-            await new Promise<void>((resolve) => {
-              setTimeout(resolve, settleMs);
-            });
-          }
-          const viewer = embeddedViewer.GetViewer();
-          const size = viewer.GetCanvasSize();
-          const w = Math.max(1, Math.round(size.width));
-          const h = Math.max(1, Math.round(size.height));
-          const capture = viewer as unknown as {
-            GetImageAsDataUrl(width: number, height: number, isTransparent: boolean): string;
-          };
-          const dataUrl = capture.GetImageAsDataUrl(w, h, true);
-          const comma = dataUrl.indexOf(",");
-          const pngBase64 = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+
+          const result = await postFrameRequest(
+            {
+              type: "capture",
+              fit: req.fit,
+              ...(req.view ? { view: req.view } : {}),
+            },
+            CAD_MODEL_LOAD_TIMEOUT_MS,
+          );
+          const pngBase64 = result?.pngBase64 ?? "";
           await environmentApi.onshape.uploadCadScreenshot({ requestId: req.requestId, pngBase64 });
         } catch {
           await environmentApi.onshape
@@ -328,106 +380,121 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
         }
       })();
     });
-  }, [cadRoutingThreadId, environmentApi, cancelCadViewFollowUp, scheduleCadViewAfterOrientation]);
+  }, [cadRoutingThreadId, environmentApi, postFrameRequest]);
 
   useEffect(() => {
-    const container = containerRef.current;
-    const modelUrls = modelFileUrlsKey.length > 0 ? modelFileUrlsKey.split("\0") : [];
-    if (!container || modelUrls.length === 0) {
+    if (modelFiles.length === 0) {
+      activeFrameLoadIdRef.current += 1;
+      rejectAllPendingFrameRequests("CAD viewer model changed.");
+      loadedFrameRequestKeyRef.current = null;
+      frameLoadStartedAtRef.current = 0;
+      setFrameActive(false);
+      setFrameReadySequence(0);
+      setLoadState("idle");
+      setLoadError(null);
       return;
     }
 
-    const webGlReason = getWebGl1UnavailableReason();
-    if (webGlReason) {
+    const blocker = getCadModelViewerBlocker(modelFiles);
+    if (blocker) {
+      activeFrameLoadIdRef.current += 1;
+      rejectAllPendingFrameRequests("CAD viewer model is too large.");
+      loadedFrameRequestKeyRef.current = null;
+      frameLoadStartedAtRef.current = 0;
+      setFrameActive(false);
+      setFrameReadySequence(0);
       setLoadState("error");
-      setLoadError(webGlReason);
+      setLoadError(blocker);
       return;
     }
 
-    let cancelled = false;
+    activeFrameLoadIdRef.current += 1;
+    rejectAllPendingFrameRequests("CAD viewer model changed.");
+    loadedFrameRequestKeyRef.current = null;
+    frameLoadStartedAtRef.current = performance.now();
     setLoadState("loading");
     setLoadError(null);
-    container.replaceChildren();
+    const hasLiveFrame = frameActive && iframeRef.current?.contentWindow;
+    if (hasLiveFrame) {
+      setFrameActive(true);
+    } else {
+      setFrameReadySequence(0);
+      setFrameActive(true);
+      setFrameKey((key) => key + 1);
+    }
+  }, [frameActive, modelFileIdentityKey, modelFiles, rejectAllPendingFrameRequests]);
 
-    void import("online-3d-viewer")
-      .then((module) => {
-        if (cancelled) {
-          return;
-        }
-        moduleRef.current = module;
-        const embeddedViewer = new module.EmbeddedViewer(container, {
-          backgroundColor: new module.RGBAColor(0, 0, 0, 0),
-          // Darker neutral than stock gray when the mesh has no material / `usemtl` assignment.
-          defaultColor: new module.RGBColor(56, 60, 67),
-          defaultLineColor: new module.RGBColor(40, 43, 49),
-          edgeSettings: cadEmbeddedViewerEdgeSettings(module),
-          onModelLoaded: () => {
-            if (cancelled) {
-              return;
-            }
-            const localViewer = viewerRef.current?.GetViewer() as any;
-            if (
-              localViewer?.navigation?.callbacks?.onUpdate &&
-              !localViewer.navigation._cadSenseThrottled
-            ) {
-              localViewer.navigation._cadSenseThrottled = true;
-              const origUpdate = localViewer.navigation.callbacks.onUpdate;
-              let updatePending = false;
-              localViewer.navigation.callbacks.onUpdate = () => {
-                if (!updatePending) {
-                  updatePending = true;
-                  requestAnimationFrame(() => {
-                    updatePending = false;
-                    origUpdate.apply(localViewer.navigation.callbacks);
-                  });
-                }
+  useEffect(() => {
+    if (!frameActive || frameReadySequence === 0) {
+      return;
+    }
+
+    const files = modelFilesRef.current;
+    if (files.length === 0) {
+      return;
+    }
+
+    const frameLoadId = activeFrameLoadIdRef.current;
+    const requestKey = `${frameLoadId}:${frameReadySequence}:${modelFileIdentityKey}`;
+    if (loadedFrameRequestKeyRef.current === requestKey) {
+      return;
+    }
+    loadedFrameRequestKeyRef.current = requestKey;
+    const loadStartedAt = frameLoadStartedAtRef.current || performance.now();
+
+    void (async () => {
+      try {
+        const remainingLoadBudgetMs = Math.max(
+          1,
+          CAD_MODEL_LOAD_TIMEOUT_MS - (performance.now() - loadStartedAt),
+        );
+        const result = await postFrameRequest(
+          {
+            type: "load-file-urls",
+            files: files.map((file) => {
+              const name = cadViewerFileName(file.relativePath);
+              const descriptor = {
+                name,
+                url: file.url,
               };
-            }
-            setLoadState("loaded");
-            setFixedView("isometric", true);
+              if (name.toLowerCase().includes(".3mf")) {
+                Object.assign(descriptor, { type: "model/3mf" });
+              }
+              return file.sizeBytes === undefined
+                ? descriptor
+                : Object.assign(descriptor, { sizeBytes: file.sizeBytes });
+            }),
           },
-          onModelLoadFailed: () => {
-            if (cancelled) {
-              return;
-            }
-            setLoadState("error");
-            setLoadError("The synced CAD file could not be imported by the viewer.");
-          },
-        });
-        viewerRef.current = embeddedViewer;
-        embeddedViewer.LoadModelFromUrlList(modelUrls);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) {
+          remainingLoadBudgetMs,
+        );
+        if (frameLoadId !== activeFrameLoadIdRef.current) {
           return;
         }
+        if (result?.loadStats) {
+          const log =
+            result.loadStats.totalMs > CAD_MODEL_LOAD_TARGET_MS ? console.warn : console.info;
+          log("CAD viewer loaded", {
+            ...result.loadStats,
+            targetMs: CAD_MODEL_LOAD_TARGET_MS,
+          });
+        }
+        setLoadState("loaded");
+        setLoadError(null);
+      } catch (error) {
+        if (frameLoadId !== activeFrameLoadIdRef.current) {
+          return;
+        }
+        setFrameActive(false);
         setLoadState("error");
         setLoadError(
           buildCadWebGlFailureUserMessage(
-            error instanceof Error ? error.message : "Failed to load CAD viewer.",
+            errorFromUnknown(error).message ||
+              `The synced CAD file did not finish importing within ${CAD_MODEL_LOAD_TIMEOUT_MS / 1000} seconds. (Empty error received)`,
           ),
         );
-      });
-
-    const resizeCoordinator = createCadViewerResizeCoordinator(() => {
-      viewerRef.current?.Resize();
-    });
-    const resizeObserver = new ResizeObserver(() => {
-      resizeCoordinator.schedule();
-    });
-    resizeObserver.observe(container);
-
-    return () => {
-      cancelled = true;
-      cancelCadViewFollowUp();
-      resizeCoordinator.cancel();
-      resizeObserver.disconnect();
-      viewerRef.current?.Destroy();
-      viewerRef.current = null;
-      moduleRef.current = null;
-      container.replaceChildren();
-    };
-  }, [modelFileUrlsKey, setFixedView, cancelCadViewFollowUp]);
+      }
+    })();
+  }, [frameActive, frameReadySequence, modelFileIdentityKey, postFrameRequest]);
 
   if (!onshapeContext || !cwd) {
     return (
@@ -474,10 +541,16 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
           cadReviewInProgress && "cad-agent-control-frame",
         )}
       >
-        <div
-          ref={containerRef}
-          className="absolute inset-0 overflow-hidden [&>div:nth-child(2)]:hidden"
-        />
+        {frameActive ? (
+          <iframe
+            key={frameKey}
+            ref={iframeRef}
+            title="CAD model viewer"
+            src={cadViewerFrameUrl()}
+            sandbox="allow-scripts allow-same-origin"
+            className="absolute inset-0 size-full border-0 bg-transparent"
+          />
+        ) : null}
         {cadReviewInProgress ? (
           <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center">
             <div className="cad-agent-control-pill rounded-full border border-emerald-300/80 bg-emerald-950/45 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.45)] backdrop-blur">
@@ -486,8 +559,15 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
           </div>
         ) : null}
         {loadState === "loading" && (
-          <div className="absolute inset-0 flex items-center justify-center bg-background/70 text-sm text-muted-foreground">
-            Loading CAD model...
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background text-sm text-muted-foreground">
+            <span
+              className={cn(
+                "transition-opacity duration-150 ease-out",
+                showLoadingText ? "opacity-100" : "opacity-0",
+              )}
+            >
+              Loading CAD model...
+            </span>
           </div>
         )}
         {loadState === "error" && (

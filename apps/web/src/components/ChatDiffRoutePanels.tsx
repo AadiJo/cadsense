@@ -27,6 +27,19 @@ const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
   );
 };
 
+const CadLoadingFallback = (props: { mode: DiffPanelMode }) => {
+  return (
+    <DiffPanelShell mode={props.mode} header={null} showHeader={false}>
+      <div
+        className="flex min-h-0 flex-1 items-center justify-center bg-card/20 text-sm text-muted-foreground"
+        role="status"
+        aria-live="polite"
+        aria-label="Loading CAD viewer"
+      />
+    </DiffPanelShell>
+  );
+};
+
 export const LazyDiffPanel = (props: { mode: DiffPanelMode }) => {
   return (
     <DiffWorkerPoolProvider>
@@ -39,7 +52,7 @@ export const LazyDiffPanel = (props: { mode: DiffPanelMode }) => {
 
 export const LazyCadPanel = (props: { mode: DiffPanelMode }) => {
   return (
-    <Suspense fallback={<DiffLoadingFallback mode={props.mode} />}>
+    <Suspense fallback={<CadLoadingFallback mode={props.mode} />}>
       <CadPanel mode={props.mode} />
     </Suspense>
   );

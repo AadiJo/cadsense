@@ -26,11 +26,11 @@ const configuredHostedAppUrl = (() => {
 const sourcemapEnv = process.env.CADSENSE_WEB_SOURCEMAP?.trim().toLowerCase();
 
 const buildSourcemap =
-  sourcemapEnv === "0" || sourcemapEnv === "false"
-    ? false
+  sourcemapEnv === "1" || sourcemapEnv === "true"
+    ? true
     : sourcemapEnv === "hidden"
       ? "hidden"
-      : true;
+      : false;
 
 function resolveDevProxyTarget(wsUrl: string | undefined): string | undefined {
   if (!wsUrl) {
@@ -91,6 +91,7 @@ export default defineConfig({
   server: {
     host,
     port,
+    cors: true,
     strictPort: true,
     ...(devProxyTarget
       ? {

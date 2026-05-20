@@ -42,7 +42,7 @@
     "build:marketing": "turbo run build --filter=@cadsense/marketing",
     "build:desktop": "turbo run build --filter=@cadsense/desktop --filter=cadsense",
     "typecheck": "turbo run typecheck",
-    "lint": "oxlint --threads=1 --report-unused-disable-directives",
+    "lint": "bunx oxlint --threads=1 --report-unused-disable-directives apps/server/src apps/web/src apps/desktop/src apps/marketing/src packages scripts oxlint-plugin-cadsense",
     "test": "turbo run test",
     "test:desktop-smoke": "turbo run smoke-test --filter=@cadsense/desktop",
     "fmt": "oxfmt",
