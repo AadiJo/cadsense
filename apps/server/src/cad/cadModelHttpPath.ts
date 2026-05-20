@@ -11,9 +11,16 @@ export function posixFileBasename(path: string): string {
  * Builds a URL whose last path segment carries the file extension (e.g. `.glb`, `.step`)
  * so browser-based CAD viewers can infer format from the URL string.
  */
-export function buildCadModelUrl(cwd: string, relativePath: string): string {
+export function buildCadModelUrl(
+  cwd: string,
+  relativePath: string,
+  cacheVersion?: string | number | bigint,
+): string {
   const leaf = posixFileBasename(relativePath);
   const params = new URLSearchParams({ cwd, path: relativePath });
+  if (cacheVersion !== undefined) {
+    params.set("v", String(cacheVersion));
+  }
   return `${CAD_MODEL_HTTP_PATH}/${encodeURIComponent(leaf)}?${params.toString()}`;
 }
 

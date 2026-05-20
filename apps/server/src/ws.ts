@@ -155,6 +155,21 @@ function isWithinRoot(pathService: Path.Path, root: string, candidate: string): 
 
 const BUNDLE_SYNC_RELATIVE_PREFIX = `${CAD_SYNC_DIRECTORY}/bundle`;
 
+function toCadFileSizeBytes(size: bigint | number): number {
+  const asBigInt = typeof size === "bigint" ? size : BigInt(Math.max(0, Math.trunc(size)));
+  const maxSafe = BigInt(Number.MAX_SAFE_INTEGER);
+  return Number(asBigInt > maxSafe ? maxSafe : asBigInt);
+}
+
+function cadFileCacheVersion(stat: {
+  readonly size: bigint | number;
+  readonly mtime: Option.Option<Date>;
+}) {
+  return Option.isSome(stat.mtime)
+    ? `${stat.size.toString()}-${stat.mtime.value.getTime()}`
+    : stat.size.toString();
+}
+
 function isBundleObjPreviewPath(relativePath: string): boolean {
   const normalized = relativePath.replaceAll("\\", "/");
   const ext = getCadModelExtension(normalized);
@@ -213,11 +228,18 @@ const listObjAndMaterialLibs = (input: {
 }): Effect.Effect<OnshapeSyncedCadFile[], never, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     const absoluteObj = input.pathService.resolve(input.workspaceRoot, input.objRelativePath);
+    const objStat = yield* input.fileSystem
+      .stat(absoluteObj)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
     const files: OnshapeSyncedCadFile[] = [
       {
         relativePath: input.objRelativePath,
-        url: buildCadModelUrl(input.cwd, input.objRelativePath),
+        url:
+          objStat?.type === "File"
+            ? buildCadModelUrl(input.cwd, input.objRelativePath, cadFileCacheVersion(objStat))
+            : buildCadModelUrl(input.cwd, input.objRelativePath),
         isPreferred: true,
+        ...(objStat?.type === "File" ? { sizeBytes: toCadFileSizeBytes(objStat.size) } : {}),
       },
     ];
     const objText = yield* input.fileSystem
@@ -253,8 +275,9 @@ const listObjAndMaterialLibs = (input: {
         seen.add(mtlRelative);
         files.push({
           relativePath: mtlRelative,
-          url: buildCadModelUrl(input.cwd, mtlRelative),
+          url: buildCadModelUrl(input.cwd, mtlRelative, cadFileCacheVersion(mtlStat)),
           isPreferred: true,
+          sizeBytes: toCadFileSizeBytes(mtlStat.size),
         });
       }
     }
@@ -293,8 +316,9 @@ const listObjAndMaterialLibs = (input: {
         seen.add(assetRelative);
         files.push({
           relativePath: assetRelative,
-          url: buildCadModelUrl(input.cwd, assetRelative),
+          url: buildCadModelUrl(input.cwd, assetRelative, cadFileCacheVersion(assetStat)),
           isPreferred: true,
+          sizeBytes: toCadFileSizeBytes(assetStat.size),
         });
       }
     }
@@ -327,8 +351,9 @@ const listObjAndMaterialLibs = (input: {
       seen.add(childRelative);
       files.push({
         relativePath: childRelative,
-        url: buildCadModelUrl(input.cwd, childRelative),
+        url: buildCadModelUrl(input.cwd, childRelative, cadFileCacheVersion(childStat)),
         isPreferred: true,
+        sizeBytes: toCadFileSizeBytes(childStat.size),
       });
     }
 
@@ -385,8 +410,9 @@ const listSyncedCadFiles = (input: {
             files: [
               {
                 relativePath: viewerObjPath,
-                url: buildCadModelUrl(input.cwd, viewerObjPath),
+                url: buildCadModelUrl(input.cwd, viewerObjPath, cadFileCacheVersion(stat)),
                 isPreferred: true,
+                sizeBytes: toCadFileSizeBytes(stat.size),
               },
             ],
           };
@@ -425,9 +451,42 @@ const listSyncedCadFiles = (input: {
       }
       collected.push({
         relativePath,
-        url: buildCadModelUrl(input.cwd, relativePath),
+        url: buildCadModelUrl(input.cwd, relativePath, cadFileCacheVersion(stat)),
         size: stat.size,
       });
+    }
+
+    const preferredRow =
+      preferred !== null ? collected.find((c) => c.relativePath === preferred) : undefined;
+    if (preferredRow && getCadModelExtension(preferredRow.relativePath) !== "obj") {
+      return {
+        files: [
+          {
+            relativePath: preferredRow.relativePath,
+            url: preferredRow.url,
+            isPreferred: true,
+            sizeBytes: toCadFileSizeBytes(preferredRow.size),
+          },
+        ],
+      };
+    }
+
+    const defaultRow = collected.find((c) => c.relativePath === DEFAULT_ONSHAPE_SYNC_MODEL_PATH);
+    if (
+      preferred === null &&
+      defaultRow &&
+      getCadModelExtension(defaultRow.relativePath) !== "obj"
+    ) {
+      return {
+        files: [
+          {
+            relativePath: defaultRow.relativePath,
+            url: defaultRow.url,
+            isPreferred: true,
+            sizeBytes: toCadFileSizeBytes(defaultRow.size),
+          },
+        ],
+      };
     }
 
     const objRows = collected.filter((c) => getCadModelExtension(c.relativePath) === "obj");
@@ -449,6 +508,7 @@ const listSyncedCadFiles = (input: {
         relativePath: c.relativePath,
         url: c.url,
         isPreferred: preferred !== null && c.relativePath === preferred,
+        sizeBytes: toCadFileSizeBytes(c.size),
       })),
     };
   });

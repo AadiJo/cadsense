@@ -324,18 +324,21 @@ const cadModelFileHandler = Effect.gen(function* () {
   }
 
   const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-  const data = yield* fileSystem.readFile(filePath).pipe(Effect.catch(() => Effect.succeed(null)));
-  if (!data) {
-    return HttpServerResponse.text("Internal Server Error", { status: 500 });
-  }
+  const cacheControl = url.value.searchParams.has("v")
+    ? "public, max-age=31536000, immutable"
+    : "no-cache";
 
-  return HttpServerResponse.uint8Array(data, {
+  return yield* HttpServerResponse.file(filePath, {
     status: 200,
     headers: {
-      "Cache-Control": "no-store",
+      "Cache-Control": cacheControl,
       "Content-Type": contentType,
     },
-  });
+  }).pipe(
+    Effect.catch(() =>
+      Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+    ),
+  );
 }).pipe(Effect.catchTag("AuthError", respondToAuthError));
 
 /** Single wildcard route: find-my-way rejects registering both `/cad-model` and `/cad-model/*` for the same method. */
@@ -500,29 +503,24 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       .pipe(Effect.catch(() => Effect.succeed(null)));
     if (!fileInfo || fileInfo.type !== "File") {
       const indexPath = path.resolve(staticRoot, "index.html");
-      const indexData = yield* fileSystem
-        .readFile(indexPath)
-        .pipe(Effect.catch(() => Effect.succeed(null)));
-      if (!indexData) {
-        return HttpServerResponse.text("Not Found", { status: 404 });
-      }
-      return HttpServerResponse.uint8Array(indexData, {
+      return yield* HttpServerResponse.file(indexPath, {
         status: 200,
         contentType: "text/html; charset=utf-8",
-      });
+        headers: browserApiCorsHeaders,
+      }).pipe(
+        Effect.catch(() => Effect.succeed(HttpServerResponse.text("Not Found", { status: 404 }))),
+      );
     }
 
     const contentType = Mime.getType(filePath) ?? "application/octet-stream";
-    const data = yield* fileSystem
-      .readFile(filePath)
-      .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (!data) {
-      return HttpServerResponse.text("Internal Server Error", { status: 500 });
-    }
-
-    return HttpServerResponse.uint8Array(data, {
+    return yield* HttpServerResponse.file(filePath, {
       status: 200,
       contentType,
-    });
+      headers: browserApiCorsHeaders,
+    }).pipe(
+      Effect.catch(() =>
+        Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+      ),
+    );
   }),
 );

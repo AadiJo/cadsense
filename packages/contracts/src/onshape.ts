@@ -222,6 +222,7 @@ export const OnshapeSyncedCadFile = Schema.Struct({
   relativePath: TrimmedNonEmptyString,
   url: TrimmedNonEmptyString,
   isPreferred: Schema.Boolean,
+  sizeBytes: Schema.optionalKey(NonNegativeInt),
 });
 export type OnshapeSyncedCadFile = typeof OnshapeSyncedCadFile.Type;
 
