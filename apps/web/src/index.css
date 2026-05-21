@@ -598,6 +598,31 @@ label:has(> select#reasoning-effort) select {
   }
 }
 
+@keyframes cad-fullscreen-exit-button-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.92);
+  }
+  70% {
+    transform: translateY(1px) scale(1.04);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cad-component-row-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-6px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .cad-agent-control-frame {
   outline: 1px solid rgb(16 185 129 / 0.95);
   outline-offset: -1px;
@@ -608,6 +633,14 @@ label:has(> select#reasoning-effort) select {
 
 .cad-agent-control-pill {
   animation: cad-agent-control-pill-in 360ms cubic-bezier(0.16, 1, 0.3, 1) 90ms both;
+}
+
+.cad-fullscreen-exit-button {
+  animation: cad-fullscreen-exit-button-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cad-component-tree-row {
+  animation: cad-component-row-in 140ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 .ultrathink-frame {

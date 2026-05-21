@@ -294,32 +294,48 @@ export function parseThreeMfFast(input: {
     return built;
   };
 
-  const appendObject = (objectId: string, parentMatrix: ThreeMatrix4, stack: Set<string>): void => {
+  const appendObject = (
+    objectId: string,
+    localMatrix: ThreeMatrix4,
+    stack: Set<string>,
+  ): ThreeNamespace.Object3D | null => {
     if (stack.has(objectId)) {
-      return;
+      return null;
     }
     const object = objects.get(objectId);
     if (!object) {
-      return;
+      return null;
     }
 
     const mesh = getBuiltMesh(object);
     if (mesh) {
       const rendered = new three.Mesh(mesh.geometry, mesh.material);
       rendered.name = mesh.name ?? "";
-      rendered.applyMatrix4(parentMatrix);
-      group.add(rendered);
-      return;
+      rendered.applyMatrix4(localMatrix);
+      return rendered;
     }
 
     stack.add(objectId);
+    const assembly = new three.Group();
+    assembly.name = object.name ?? "";
+    assembly.applyMatrix4(localMatrix);
     for (const component of object.components) {
-      const componentMatrix = parentMatrix
-        .clone()
-        .multiply(matrixFrom3mfTransform(three, component.transform));
-      appendObject(component.objectId, componentMatrix, stack);
+      const child = appendObject(
+        component.objectId,
+        matrixFrom3mfTransform(three, component.transform),
+        stack,
+      );
+      if (child) {
+        assembly.add(child);
+      }
     }
     stack.delete(objectId);
+    if (!object.name && assembly.children.length === 1) {
+      const child = assembly.children[0]!;
+      child.applyMatrix4(localMatrix);
+      return child;
+    }
+    return assembly.children.length > 0 ? assembly : null;
   };
 
   const roots =
@@ -330,7 +346,14 @@ export function parseThreeMfFast(input: {
           .map((object) => ({ objectId: object.id, transform: null }));
 
   for (const item of roots) {
-    appendObject(item.objectId, matrixFrom3mfTransform(three, item.transform), new Set());
+    const child = appendObject(
+      item.objectId,
+      matrixFrom3mfTransform(three, item.transform),
+      new Set(),
+    );
+    if (child) {
+      group.add(child);
+    }
   }
 
   if (group.children.length === 0) {

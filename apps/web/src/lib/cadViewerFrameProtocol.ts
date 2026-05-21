@@ -1,4 +1,4 @@
-import type { CadView } from "@cadsense/contracts";
+import type { CadCameraVector, CadView } from "@cadsense/contracts";
 
 export const CAD_VIEWER_FRAME_PARENT_SOURCE = "cadsense-cad-viewer-parent";
 export const CAD_VIEWER_FRAME_SOURCE = "cadsense-cad-viewer-frame";
@@ -22,6 +22,15 @@ export interface CadViewerFrameLoadStats {
   readonly fetchMs: number;
   readonly importMs: number;
   readonly totalMs: number;
+}
+
+export interface CadViewerFrameComponentNode {
+  readonly id: string;
+  readonly parentId?: string;
+  readonly name: string;
+  readonly kind: "assembly" | "part";
+  readonly hasChildren: boolean;
+  readonly visible: boolean;
 }
 
 export type CadViewerFrameLoadStage =
@@ -49,8 +58,23 @@ export type CadViewerFrameRequestInput =
       readonly fit: boolean;
     }
   | {
+      readonly type: "set-camera";
+      readonly direction: CadCameraVector;
+      readonly up?: CadCameraVector;
+      readonly fit: boolean;
+      readonly closeUp: boolean;
+    }
+  | {
       readonly type: "set-exploded";
       readonly enabled: boolean;
+    }
+  | {
+      readonly type: "get-components";
+    }
+  | {
+      readonly type: "set-component-visibility";
+      readonly componentId: string;
+      readonly visible: boolean;
     }
   | {
       readonly type: "zoom-to-fit";
@@ -87,6 +111,7 @@ export type CadViewerFrameResponse =
       readonly requestId: string;
       readonly ok: true;
       readonly payload?: {
+        readonly components?: ReadonlyArray<CadViewerFrameComponentNode>;
         readonly pngBase64?: string;
         readonly loadStats?: CadViewerFrameLoadStats;
       };
@@ -114,6 +139,7 @@ export type CadViewerFrameResponseInput =
       readonly requestId: string;
       readonly ok: true;
       readonly payload?: {
+        readonly components?: ReadonlyArray<CadViewerFrameComponentNode>;
         readonly pngBase64?: string;
         readonly loadStats?: CadViewerFrameLoadStats;
       };

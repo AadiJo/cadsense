@@ -153,10 +153,12 @@ export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
   availableEditors,
   openInCwd,
+  onshapeUrl,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  onshapeUrl?: string | null;
 }) {
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
@@ -164,6 +166,7 @@ export const OpenInPicker = memo(function OpenInPicker({
     [availableEditors],
   );
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
+  const primaryOpenDisabled = onshapeUrl ? false : !preferredEditor || !openInCwd;
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
@@ -176,6 +179,16 @@ export const OpenInPicker = memo(function OpenInPicker({
     },
     [preferredEditor, openInCwd, setPreferredEditor],
   );
+
+  const openInOnshape = useCallback(() => {
+    if (!onshapeUrl) return;
+    const api = readLocalApi();
+    if (api) {
+      void api.shell.openExternal(onshapeUrl);
+      return;
+    }
+    window.open(onshapeUrl, "_blank", "noopener,noreferrer");
+  }, [onshapeUrl]);
 
   const openFavoriteEditorShortcutLabel = useMemo(
     () => shortcutLabelForCommand(keybindings, "editor.openFavorite"),
@@ -201,10 +214,20 @@ export const OpenInPicker = memo(function OpenInPicker({
       <Button
         size="xs"
         variant="outline"
-        disabled={!preferredEditor || !openInCwd}
-        onClick={() => openInEditor(preferredEditor)}
+        disabled={primaryOpenDisabled}
+        onClick={() => {
+          if (onshapeUrl) {
+            openInOnshape();
+            return;
+          }
+          openInEditor(preferredEditor);
+        }}
       >
-        {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}
+        {onshapeUrl ? (
+          <img src="/onshape.svg" alt="" className="size-3.5 rounded-sm object-contain" />
+        ) : (
+          primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />
+        )}
         <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
           Open
         </span>
@@ -215,6 +238,12 @@ export const OpenInPicker = memo(function OpenInPicker({
           <ChevronDownIcon aria-hidden="true" className="size-4" />
         </MenuTrigger>
         <MenuPopup align="end">
+          {onshapeUrl && (
+            <MenuItem onClick={openInOnshape}>
+              <img src="/onshape.svg" alt="" className="size-4 rounded-sm object-contain" />
+              Onshape
+            </MenuItem>
+          )}
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
           {options.map(({ label, Icon, value }) => (
             <MenuItem key={value} onClick={() => openInEditor(value)}>

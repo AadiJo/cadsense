@@ -1,4 +1,4 @@
-﻿import type { CadView } from "@cadsense/contracts";
+﻿import type { CadCameraVector, CadView } from "@cadsense/contracts";
 import type * as ThreeNamespace from "three";
 import type { OrbitControls as OrbitControlsInstance } from "three/examples/jsm/controls/OrbitControls.js";
 
@@ -12,6 +12,7 @@ import { getThreeMfRootModelByteLength, parseThreeMfFast } from "./lib/cadThreeM
 import {
   CAD_VIEWER_FRAME_PARENT_SOURCE,
   CAD_VIEWER_FRAME_SOURCE,
+  type CadViewerFrameComponentNode,
   type CadViewerFrameFileDescriptor,
   type CadViewerFrameFilePayload,
   type CadViewerFrameLoadStage,
@@ -51,6 +52,8 @@ interface ThreeViewerState {
   readonly group: ThreeObject3D;
   readonly boundingSphere: ThreeSphere;
   exploded: boolean;
+  componentTree: CadViewerFrameComponentNode[];
+  componentObjectsById: Map<string, ThreeObject3D>;
   readonly ownsModelAssets: boolean;
 }
 
@@ -92,6 +95,7 @@ const EXPLODED_ANIMATION_MS = 260;
 const ZOOM_TO_FIT_VIEWPORT_FILL = 1.3;
 const ZOOM_TO_FIT_ANIMATION_MS = 240;
 const MODEL_REVEAL_TRANSITION = "opacity 300ms ease-out";
+const COMPONENT_ID_KEY = "cadSenseComponentId";
 
 function postToParent(message: CadViewerFrameResponseInput): void {
   window.parent.postMessage({ source: CAD_VIEWER_FRAME_SOURCE, ...message }, "*");
@@ -163,6 +167,18 @@ function applyCadView(
   view: CadView,
   fit: boolean,
 ): void {
+  const { direction, up } = cadViewVector(view);
+  applyCadCamera(module, embeddedViewer, direction, up, fit, cadViewIsCloseUp(view));
+}
+
+function applyCadCamera(
+  module: Online3DViewerModule,
+  embeddedViewer: EmbeddedViewerInstance,
+  direction: CadCameraVector,
+  up: CadCameraVector | undefined,
+  fit: boolean,
+  closeUp: boolean,
+): void {
   cancelCadViewFollowUp();
   const viewer = embeddedViewer.GetViewer() as ReturnType<EmbeddedViewerInstance["GetViewer"]> & {
     navigation: {
@@ -175,13 +191,13 @@ function applyCadView(
     return;
   }
 
-  const { direction, up } = cadViewVector(view);
   const directionLength = Math.hypot(direction[0], direction[1], direction[2]) || 1;
   const normalizedDirection = direction.map((value) => value / directionLength) as [
     number,
     number,
     number,
   ];
+  const cameraUp = up ?? [0, 0, 1];
   let distance = Math.max(sphere.radius * 2.8, 10);
   if (fit) {
     let fieldOfView = 45 / 2.0;
@@ -197,7 +213,7 @@ function applyCadView(
       distance = fitDistance;
     }
   }
-  if (cadViewIsCloseUp(view)) {
+  if (closeUp) {
     distance *= 0.44;
   }
 
@@ -209,7 +225,7 @@ function applyCadView(
       center.z + normalizedDirection[2] * distance,
     ),
     new module.Coord3D(center.x, center.y, center.z),
-    new module.Coord3D(up[0], up[1], up[2]),
+    new module.Coord3D(cameraUp[0], cameraUp[1], cameraUp[2]),
     45,
   );
 
@@ -596,6 +612,96 @@ function renderThreeViewer(state: ThreeViewerState): void {
   state.renderer.render(state.scene, state.camera);
 }
 
+function getComponentId(object: ThreeObject3D): string {
+  const existing = object.userData[COMPONENT_ID_KEY];
+  if (typeof existing === "string" && existing.length > 0) {
+    return existing;
+  }
+  const id = `three-object-${object.id}`;
+  object.userData[COMPONENT_ID_KEY] = id;
+  return id;
+}
+
+function displayComponentName(object: ThreeObject3D, fallbackIndex: number): string {
+  const name = object.name.trim();
+  return name.length > 0 ? name : `Component ${fallbackIndex + 1}`;
+}
+
+function buildThreeComponentTree(state: Pick<ThreeViewerState, "group">): {
+  readonly nodes: CadViewerFrameComponentNode[];
+  readonly objectsById: Map<string, ThreeObject3D>;
+} {
+  const nodes: CadViewerFrameComponentNode[] = [];
+  const objectsById = new Map<string, ThreeObject3D>();
+  const includeObject = (object: ThreeObject3D) => {
+    const mesh = object as Partial<ThreeNamespace.Mesh>;
+    if (object === state.group) {
+      return true;
+    }
+    if (mesh.isMesh === true) {
+      return false;
+    }
+    return object.children.length > 0;
+  };
+
+  const visit = (object: ThreeObject3D, parentId: string | undefined) => {
+    const componentId = includeObject(object) ? getComponentId(object) : undefined;
+    const childParentId = componentId ?? parentId;
+    if (componentId) {
+      const mesh = object as Partial<ThreeNamespace.Mesh>;
+      objectsById.set(componentId, object);
+      nodes.push({
+        id: componentId,
+        ...(parentId ? { parentId } : {}),
+        name: object === state.group ? "Model" : displayComponentName(object, nodes.length),
+        kind: mesh.isMesh === true ? "part" : "assembly",
+        hasChildren: object.children.some((child) => includeObject(child)),
+        visible: object.visible,
+      });
+    }
+    for (const child of object.children) {
+      visit(child, childParentId);
+    }
+  };
+
+  visit(state.group, undefined);
+  if (nodes.length <= 1) {
+    for (const object of state.group.children) {
+      const mesh = object as Partial<ThreeNamespace.Mesh>;
+      if (mesh.isMesh !== true) {
+        continue;
+      }
+      const id = getComponentId(object);
+      objectsById.set(id, object);
+      nodes.push({
+        id,
+        parentId: getComponentId(state.group),
+        name: displayComponentName(object, nodes.length),
+        kind: "part",
+        hasChildren: false,
+        visible: object.visible,
+      });
+    }
+  }
+  return { nodes, objectsById };
+}
+
+function setThreeComponentVisibility(
+  state: ThreeViewerState,
+  componentId: string,
+  visible: boolean,
+): void {
+  const object = state.componentObjectsById.get(componentId);
+  if (!object) {
+    throw new Error("CAD component was not found.");
+  }
+  object.visible = visible;
+  state.componentTree = state.componentTree.map((node) =>
+    node.id === componentId ? { ...node, visible } : node,
+  );
+  renderThreeViewer(state);
+}
+
 function resizeThreeViewer(state: ThreeViewerState): void {
   const rect = root.getBoundingClientRect();
   const width = Math.max(1, Math.round(rect.width || root.clientWidth || 1));
@@ -607,14 +713,25 @@ function resizeThreeViewer(state: ThreeViewerState): void {
 }
 
 function applyThreeCadView(state: ThreeViewerState, view: CadView, fit: boolean): void {
+  const { direction, up } = cadViewVector(view);
+  applyThreeCadCamera(state, direction, up, fit, cadViewIsCloseUp(view));
+}
+
+function applyThreeCadCamera(
+  state: ThreeViewerState,
+  direction: CadCameraVector,
+  up: CadCameraVector | undefined,
+  fit: boolean,
+  closeUp: boolean,
+): void {
   cancelCadViewFollowUp();
   const { three, camera, controls, boundingSphere } = state;
-  const { direction, up } = cadViewVector(view);
   const normalizedDirection = new three.Vector3(direction[0], direction[1], direction[2]);
   if (normalizedDirection.lengthSq() === 0) {
     normalizedDirection.set(1, -1, 1);
   }
   normalizedDirection.normalize();
+  const cameraUp = up ?? [0, 0, 1];
 
   const canvas = state.renderer.domElement;
   let distance = Math.max(boundingSphere.radius * 2.8, 10);
@@ -628,12 +745,12 @@ function applyThreeCadView(state: ThreeViewerState, view: CadView, fit: boolean)
       distance = fitDistance;
     }
   }
-  if (cadViewIsCloseUp(view)) {
+  if (closeUp) {
     distance *= 0.44;
   }
 
   camera.position.copy(boundingSphere.center).addScaledVector(normalizedDirection, distance);
-  camera.up.set(up[0], up[1], up[2]).normalize();
+  camera.up.set(cameraUp[0], cameraUp[1], cameraUp[2]).normalize();
   camera.near = Math.max(0.01, distance - boundingSphere.radius * 4);
   camera.far = Math.max(distance + boundingSphere.radius * 4, 1_000);
   camera.lookAt(boundingSphere.center);
@@ -795,6 +912,7 @@ async function loadFilesDirect3mfUrl(
   controls.enableDamping = false;
   controls.screenSpacePanning = false;
   controls.target.copy(model.boundingSphere.center);
+  const componentTree = buildThreeComponentTree({ group: model.group });
 
   const state: ThreeViewerState = {
     kind: "three",
@@ -806,6 +924,8 @@ async function loadFilesDirect3mfUrl(
     group: model.group,
     boundingSphere: model.boundingSphere,
     exploded: false,
+    componentTree: componentTree.nodes,
+    componentObjectsById: componentTree.objectsById,
     ownsModelAssets,
   };
   threeViewerRef = state;
@@ -977,9 +1097,11 @@ async function capturePngBase64(input: {
   return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
 }
 
-async function handleRequest(
-  request: CadViewerFrameRequest,
-): Promise<{ pngBase64?: string; loadStats?: CadViewerFrameLoadStats } | void> {
+async function handleRequest(request: CadViewerFrameRequest): Promise<{
+  components?: ReadonlyArray<CadViewerFrameComponentNode>;
+  pngBase64?: string;
+  loadStats?: CadViewerFrameLoadStats;
+} | void> {
   const requestStartedAt = performance.now();
   if (request.type === "load-file-urls") {
     postLoadStatus(request.requestId, requestStartedAt, "request-received");
@@ -1004,9 +1126,41 @@ async function handleRequest(
       applyCadView(module, embeddedViewer, request.view, request.fit);
       return;
     }
+    case "set-camera": {
+      if (threeViewerRef) {
+        applyThreeCadCamera(
+          getLoadedThreeViewer(),
+          request.direction,
+          request.up,
+          request.fit,
+          request.closeUp,
+        );
+        return;
+      }
+      const { module, embeddedViewer } = getLoadedViewer();
+      applyCadCamera(
+        module,
+        embeddedViewer,
+        request.direction,
+        request.up,
+        request.fit,
+        request.closeUp,
+      );
+      return;
+    }
     case "set-exploded":
       if (threeViewerRef) {
         applyExplodedView(getLoadedThreeViewer(), request.enabled);
+      }
+      return;
+    case "get-components":
+      if (threeViewerRef) {
+        return { components: getLoadedThreeViewer().componentTree };
+      }
+      return { components: [] };
+    case "set-component-visibility":
+      if (threeViewerRef) {
+        setThreeComponentVisibility(getLoadedThreeViewer(), request.componentId, request.visible);
       }
       return;
     case "zoom-to-fit":

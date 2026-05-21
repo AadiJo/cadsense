@@ -51,6 +51,8 @@ vi.mock("../environmentApi", () => ({
         ],
       })),
       onCadViewCommand: vi.fn(() => () => undefined),
+      onCadHierarchyRequest: vi.fn(() => () => undefined),
+      uploadCadHierarchy: vi.fn(async () => ({ components: [] })),
       onCadScreenshotRequest: vi.fn(() => () => undefined),
       uploadCadScreenshot: vi.fn(async () => undefined),
     },

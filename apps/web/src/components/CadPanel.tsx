@@ -1,5 +1,12 @@
 import type { CadView, OnshapeSyncedCadFile } from "@cadsense/contracts";
-import { BoxIcon, XIcon } from "lucide-react";
+import {
+  BoxIcon,
+  ChevronRightIcon,
+  FolderIcon,
+  Maximize2Icon,
+  Minimize2Icon,
+  XIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -10,11 +17,13 @@ import { buildCadWebGlFailureUserMessage } from "../lib/cadViewerWebGl";
 import {
   CAD_VIEWER_FRAME_PARENT_SOURCE,
   isCadViewerFrameResponse,
+  type CadViewerFrameComponentNode,
   type CadViewerFrameLoadStats,
   type CadViewerFrameRequestInput,
 } from "../lib/cadViewerFrameProtocol";
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
+import { threadHasStarted } from "../threadLifecycle";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useUiStateStore } from "../uiStateStore";
 import { cn } from "../lib/utils";
@@ -26,6 +35,9 @@ import {
   cadViewerFrameUrl,
   getCadModelViewerBlocker,
 } from "./CadPanel.logic";
+import { Button } from "./ui/button";
+import { Checkbox } from "./ui/checkbox";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface CadPanelProps {
   mode?: DiffPanelMode;
@@ -56,14 +68,109 @@ const cadShellProps = {
 
 const CAD_MODEL_LOADING_TEXT_DELAY_MS = 350;
 
+type CadViewerFrameResponsePayload = {
+  readonly components?: ReadonlyArray<CadViewerFrameComponentNode>;
+  readonly pngBase64?: string;
+  readonly loadStats?: CadViewerFrameLoadStats;
+};
+
 interface PendingFrameRequest {
-  readonly resolve: (
-    payload:
-      | { readonly pngBase64?: string; readonly loadStats?: CadViewerFrameLoadStats }
-      | undefined,
-  ) => void;
+  readonly resolve: (payload: CadViewerFrameResponsePayload | undefined) => void;
   readonly reject: (error: Error) => void;
   readonly timeoutId: ReturnType<typeof setTimeout>;
+}
+
+function CadComponentTree(props: {
+  components: ReadonlyArray<CadViewerFrameComponentNode>;
+  onToggle: (component: CadViewerFrameComponentNode, visible: boolean) => void;
+}) {
+  const [expandedById, setExpandedById] = useState<Record<string, boolean>>({});
+  const childrenByParentId = useMemo(() => {
+    const children = new Map<string | undefined, CadViewerFrameComponentNode[]>();
+    for (const component of props.components) {
+      const siblings = children.get(component.parentId);
+      if (siblings) {
+        siblings.push(component);
+      } else {
+        children.set(component.parentId, [component]);
+      }
+    }
+    return children;
+  }, [props.components]);
+
+  if (props.components.length === 0) {
+    return (
+      <div className="px-3 py-4 text-xs leading-relaxed text-muted-foreground">
+        Component folders are available for synced 3MF assemblies.
+      </div>
+    );
+  }
+
+  const renderNode = (
+    component: CadViewerFrameComponentNode,
+    depth: number,
+    parentVisible: boolean,
+  ) => {
+    const children = childrenByParentId.get(component.id) ?? [];
+    const expanded = expandedById[component.id] ?? depth < 1;
+    const visible = component.visible && parentVisible;
+    return (
+      <div key={component.id} className="cad-component-tree-row">
+        <label
+          className={cn(
+            "group flex h-8 min-w-0 items-center gap-2 rounded-md pr-2 text-sm text-foreground/90 transition-[background-color,opacity,transform] duration-120 ease-out hover:bg-accent/55",
+            !visible && "text-muted-foreground opacity-68",
+          )}
+          style={{ paddingLeft: `${8 + depth * 14}px` }}
+        >
+          <button
+            aria-label={expanded ? "Collapse CAD component" : "Expand CAD component"}
+            className={cn(
+              "flex size-4 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-transform duration-150 ease-out hover:bg-accent",
+              expanded && "rotate-90",
+              children.length === 0 && "invisible",
+            )}
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              setExpandedById((current) => ({
+                ...current,
+                [component.id]: !expanded,
+              }));
+            }}
+          >
+            <ChevronRightIcon className="size-3.5" />
+          </button>
+          <Checkbox
+            checked={visible}
+            onCheckedChange={(checked) => props.onToggle(component, checked === true)}
+          />
+          {component.kind === "assembly" ? (
+            <FolderIcon className="size-4 shrink-0 text-muted-foreground/80" />
+          ) : (
+            <BoxIcon className="size-4 shrink-0 text-muted-foreground/80" />
+          )}
+          <span className="min-w-0 truncate">{component.name}</span>
+        </label>
+        <div
+          className={cn(
+            "grid transition-[grid-template-rows,opacity,transform] duration-160 ease-out",
+            expanded ? "grid-rows-[1fr] opacity-100" : "grid-rows-[0fr] opacity-0 -translate-y-0.5",
+          )}
+        >
+          <div className="min-h-0 overflow-hidden">
+            {children.map((child) => renderNode(child, depth + 1, visible))}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-0.5">
+      {(childrenByParentId.get(undefined) ?? []).map((component) => renderNode(component, 0, true))}
+    </div>
+  );
 }
 
 function errorFromUnknown(error: unknown): Error {
@@ -110,7 +217,11 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     }
     return undefined;
   });
-  const cadUiStateKey = activeThread?.projectId ?? draftSession?.projectId ?? null;
+  const activeThreadStarted = threadHasStarted(activeThread);
+  const cadUiStateKey =
+    activeThread && activeThreadStarted
+      ? activeThread.id
+      : (activeThread?.projectId ?? draftSession?.projectId ?? null);
   const cadExploded = useUiStateStore((store) =>
     cadUiStateKey ? (store.cadExplodedByThreadId[cadUiStateKey] ?? false) : false,
   );
@@ -131,6 +242,10 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   const [frameKey, setFrameKey] = useState(0);
   const [frameReadySequence, setFrameReadySequence] = useState(0);
   const [showLoadingText, setShowLoadingText] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreenMounted, setFullscreenMounted] = useState(false);
+  const [components, setComponents] = useState<ReadonlyArray<CadViewerFrameComponentNode>>([]);
+  const fullscreenCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadStateRef = useRef(loadState);
   loadStateRef.current = loadState;
 
@@ -200,9 +315,7 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
       timeoutMs = CAD_MODEL_LOAD_TIMEOUT_MS,
       transfer?: Transferable[],
     ) =>
-      new Promise<
-        { readonly pngBase64?: string; readonly loadStats?: CadViewerFrameLoadStats } | undefined
-      >((resolve, reject) => {
+      new Promise<CadViewerFrameResponsePayload | undefined>((resolve, reject) => {
         const targetWindow = iframeRef.current?.contentWindow;
         if (!targetWindow) {
           reject(new Error("CAD viewer frame is not available."));
@@ -238,6 +351,65 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
         return;
       }
       void postFrameRequest({ type: "set-view", view, fit }, 3_000).catch(() => undefined);
+    },
+    [postFrameRequest],
+  );
+
+  const openFullscreen = useCallback(() => {
+    if (fullscreenCloseTimeoutRef.current) {
+      clearTimeout(fullscreenCloseTimeoutRef.current);
+      fullscreenCloseTimeoutRef.current = null;
+    }
+    setFullscreenMounted(true);
+    requestAnimationFrame(() => {
+      setFullscreen(true);
+    });
+  }, []);
+
+  const closeFullscreen = useCallback(() => {
+    setFullscreen(false);
+    if (fullscreenCloseTimeoutRef.current) {
+      clearTimeout(fullscreenCloseTimeoutRef.current);
+    }
+    fullscreenCloseTimeoutRef.current = setTimeout(() => {
+      fullscreenCloseTimeoutRef.current = null;
+      setFullscreenMounted(false);
+    }, 180);
+  }, []);
+
+  const refreshComponents = useCallback(() => {
+    if (loadStateRef.current !== "loaded") {
+      setComponents([]);
+      return;
+    }
+    void postFrameRequest({ type: "get-components" }, 3_000)
+      .then((result) => {
+        setComponents(result?.components ?? []);
+      })
+      .catch(() => {
+        setComponents([]);
+      });
+  }, [postFrameRequest]);
+
+  const toggleComponent = useCallback(
+    (component: CadViewerFrameComponentNode, visible: boolean) => {
+      setComponents((current) =>
+        current.map((item) => (item.id === component.id ? { ...item, visible } : item)),
+      );
+      void postFrameRequest(
+        {
+          type: "set-component-visibility",
+          componentId: component.id,
+          visible,
+        },
+        3_000,
+      ).catch(() => {
+        setComponents((current) =>
+          current.map((item) =>
+            item.id === component.id ? { ...item, visible: component.visible } : item,
+          ),
+        );
+      });
     },
     [postFrameRequest],
   );
@@ -301,6 +473,38 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   }, [loadState]);
 
   useEffect(() => {
+    if (loadState !== "loaded") {
+      setComponents([]);
+      return;
+    }
+    refreshComponents();
+  }, [loadState, modelFileIdentityKey, refreshComponents]);
+
+  useEffect(() => {
+    if (!fullscreenMounted) {
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        closeFullscreen();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [closeFullscreen, fullscreenMounted]);
+
+  useEffect(
+    () => () => {
+      if (fullscreenCloseTimeoutRef.current) {
+        clearTimeout(fullscreenCloseTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
     if (!cadUiStateKey) {
       return;
     }
@@ -315,9 +519,81 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
       if (cadRoutingThreadId && command.threadId !== cadRoutingThreadId) {
         return;
       }
-      setFixedView(command.view, command.fit);
+      if (command.type === "set-view") {
+        setFixedView(command.view, command.fit);
+        return;
+      }
+      if (loadStateRef.current !== "loaded") {
+        return;
+      }
+      if (command.type === "set-camera") {
+        const request =
+          command.up === undefined
+            ? {
+                type: "set-camera" as const,
+                direction: command.direction,
+                fit: command.fit,
+                closeUp: command.closeUp,
+              }
+            : {
+                type: "set-camera" as const,
+                direction: command.direction,
+                up: command.up,
+                fit: command.fit,
+                closeUp: command.closeUp,
+              };
+        void postFrameRequest(request, 3_000).catch(() => undefined);
+        return;
+      }
+      if (command.type === "set-component-visibility") {
+        toggleComponent(
+          {
+            id: command.componentId,
+            name: command.componentId,
+            kind: "part",
+            hasChildren: false,
+            visible: !command.visible,
+          },
+          command.visible,
+        );
+        return;
+      }
+      if (command.type === "set-exploded") {
+        void postFrameRequest({ type: "set-exploded", enabled: command.exploded }, 3_000).catch(
+          () => undefined,
+        );
+        return;
+      }
+      void postFrameRequest({ type: "zoom-to-fit" }, 3_000).catch(() => undefined);
     });
-  }, [cadRoutingThreadId, environmentApi, setFixedView]);
+  }, [cadRoutingThreadId, environmentApi, postFrameRequest, setFixedView, toggleComponent]);
+
+  useEffect(() => {
+    if (!environmentApi || !cadRoutingThreadId) {
+      return;
+    }
+    return environmentApi.onshape.onCadHierarchyRequest((req) => {
+      if (cadRoutingThreadId && req.threadId !== cadRoutingThreadId) {
+        return;
+      }
+      void (async () => {
+        try {
+          const result =
+            loadStateRef.current === "loaded"
+              ? await postFrameRequest({ type: "get-components" }, 3_000)
+              : undefined;
+          await environmentApi.onshape.uploadCadHierarchy({
+            requestId: req.requestId,
+            components: result?.components ?? [],
+          });
+        } catch {
+          await environmentApi.onshape
+            .uploadCadHierarchy({ requestId: req.requestId, components: [] })
+            .catch(() => undefined);
+        }
+      })();
+    });
+  }, [cadRoutingThreadId, environmentApi, postFrameRequest]);
 
   useEffect(() => {
     if (loadState !== "loaded") {
@@ -537,55 +813,114 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     <DiffPanelShell mode={mode} {...cadShellProps}>
       <div
         className={cn(
-          "relative min-h-0 flex-1 bg-card/20 transition-[box-shadow,outline-color] duration-500",
+          "relative min-h-0 flex-1 bg-card/20 transition-[background-color,box-shadow,outline-color,opacity,transform] duration-180 ease-out",
+          fullscreenMounted &&
+            "fixed inset-0 z-50 grid grid-cols-[280px_minmax(0,1fr)] bg-background/96 backdrop-blur supports-[height:100dvh]:h-dvh",
+          fullscreenMounted && (fullscreen ? "opacity-100" : "opacity-0"),
           cadReviewInProgress && "cad-agent-control-frame",
         )}
       >
-        {frameActive ? (
-          <iframe
-            key={frameKey}
-            ref={iframeRef}
-            title="CAD model viewer"
-            src={cadViewerFrameUrl()}
-            sandbox="allow-scripts allow-same-origin"
-            className="absolute inset-0 size-full border-0 bg-transparent"
-          />
-        ) : null}
-        {cadReviewInProgress ? (
-          <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center">
-            <div className="cad-agent-control-pill rounded-full border border-emerald-300/80 bg-emerald-950/45 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.45)] backdrop-blur">
-              Agent control
+        {fullscreenMounted ? (
+          <aside
+            className={cn(
+              "relative z-30 flex min-h-0 flex-col border-r border-border/80 bg-background/95 shadow-xl transition-[opacity,transform] duration-180 ease-out",
+              fullscreen ? "translate-x-0 opacity-100" : "-translate-x-3 opacity-0",
+            )}
+          >
+            <div className="border-b border-border/70 px-4 py-3">
+              <div className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                Worktree
+              </div>
+              <div className="mt-1 truncate text-sm font-medium">
+                {modelFiles[0] ? cadViewerFileName(modelFiles[0].relativePath) : "CAD model"}
+              </div>
             </div>
-          </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-2">
+              <CadComponentTree components={components} onToggle={toggleComponent} />
+            </div>
+          </aside>
         ) : null}
-        {loadState === "loading" && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-background text-sm text-muted-foreground">
-            <span
-              className={cn(
-                "transition-opacity duration-150 ease-out",
-                showLoadingText ? "opacity-100" : "opacity-0",
-              )}
-            >
-              Loading CAD model...
-            </span>
-          </div>
-        )}
-        {loadState === "error" && (
-          <div className="absolute inset-0 bg-background">
-            <CadPanelEmptyState
-              title="Could not load CAD model"
-              detail={loadError ?? "The viewer failed to import the synced model."}
-              icon="error"
-            />
-          </div>
-        )}
         <div
           className={cn(
-            "pointer-events-none absolute bottom-2 left-2 rounded-md border border-border/70 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm",
-            loadState !== "loaded" && "hidden",
+            "relative min-h-0 transition-[opacity,transform] duration-180 ease-out",
+            fullscreenMounted ? "h-full" : "size-full",
+            fullscreenMounted &&
+              (fullscreen ? "scale-100 opacity-100" : "scale-[0.992] opacity-80"),
           )}
         >
-          Drag to rotate, scroll to zoom
+          {frameActive ? (
+            <iframe
+              key={frameKey}
+              ref={iframeRef}
+              title="CAD model viewer"
+              src={cadViewerFrameUrl()}
+              sandbox="allow-scripts allow-same-origin"
+              className="absolute inset-0 size-full border-0 bg-transparent"
+            />
+          ) : null}
+          {cadReviewInProgress ? (
+            <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center">
+              <div className="cad-agent-control-pill rounded-full border border-emerald-300/80 bg-emerald-950/45 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.45)] backdrop-blur">
+                Agent control
+              </div>
+            </div>
+          ) : null}
+          <div
+            className={cn(
+              "absolute z-30 transition-[right,top,transform] duration-180 ease-out",
+              fullscreenMounted ? "right-4 top-12" : "right-2 top-2",
+              fullscreenMounted && fullscreen && "cad-fullscreen-exit-button",
+            )}
+          >
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    aria-label={fullscreenMounted ? "Exit fullscreen CAD view" : "Expand CAD view"}
+                    className="border-border/70 bg-background/90 shadow-sm backdrop-blur hover:bg-background"
+                    size="icon-sm"
+                    variant="outline"
+                    onClick={fullscreenMounted ? closeFullscreen : openFullscreen}
+                  >
+                    {fullscreenMounted ? <Minimize2Icon /> : <Maximize2Icon />}
+                  </Button>
+                }
+              />
+              <TooltipPopup side="left">
+                {fullscreenMounted ? "Exit fullscreen CAD view" : "Expand CAD view"}
+              </TooltipPopup>
+            </Tooltip>
+          </div>
+          {loadState === "loading" && (
+            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background text-sm text-muted-foreground">
+              <span
+                className={cn(
+                  "transition-opacity duration-150 ease-out",
+                  showLoadingText ? "opacity-100" : "opacity-0",
+                )}
+              >
+                Loading CAD model...
+              </span>
+            </div>
+          )}
+          {loadState === "error" && (
+            <div className="absolute inset-0 bg-background">
+              <CadPanelEmptyState
+                title="Could not load CAD model"
+                detail={loadError ?? "The viewer failed to import the synced model."}
+                icon="error"
+              />
+            </div>
+          )}
+          <div
+            className={cn(
+              "pointer-events-none absolute bottom-2 left-2 rounded-md border border-border/70 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm",
+              fullscreen && "left-4 bottom-4",
+              loadState !== "loaded" && "hidden",
+            )}
+          >
+            Drag to rotate, scroll to zoom
+          </div>
         </div>
       </div>
     </DiffPanelShell>

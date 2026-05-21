@@ -88,6 +88,10 @@ export interface WsRpcClient {
     readonly listSyncedCadFiles: RpcUnaryMethod<typeof WS_METHODS.onshapeListSyncedCadFiles>;
     readonly setCadView: RpcUnaryMethod<typeof WS_METHODS.cadSetView>;
     readonly onCadViewCommand: RpcStreamMethod<typeof WS_METHODS.subscribeCadViewCommands>;
+    readonly uploadCadHierarchy: RpcUnaryMethod<typeof WS_METHODS.cadHierarchyUpload>;
+    readonly onCadHierarchyRequest: RpcStreamMethod<
+      typeof WS_METHODS.subscribeCadHierarchyRequests
+    >;
     readonly uploadCadScreenshot: RpcUnaryMethod<typeof WS_METHODS.cadScreenshotUpload>;
     readonly onCadScreenshotRequest: RpcStreamMethod<
       typeof WS_METHODS.subscribeCadScreenshotRequests
@@ -229,6 +233,17 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
           ...options,
           tag: WS_METHODS.subscribeCadViewCommands,
         }),
+      uploadCadHierarchy: (input) =>
+        transport.request((client) => client[WS_METHODS.cadHierarchyUpload](input)),
+      onCadHierarchyRequest: (listener, options) =>
+        transport.subscribe(
+          (client) => client[WS_METHODS.subscribeCadHierarchyRequests]({}),
+          listener,
+          {
+            ...options,
+            tag: WS_METHODS.subscribeCadHierarchyRequests,
+          },
+        ),
       uploadCadScreenshot: (input) =>
         transport.request((client) => client[WS_METHODS.cadScreenshotUpload](input)),
       onCadScreenshotRequest: (listener, options) =>
