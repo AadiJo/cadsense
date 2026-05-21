@@ -1,6 +1,9 @@
 import Mime from "@effect/platform-node/Mime";
 import { isOnshapeSyncRelativePath, isSupportedCadModelPath } from "@cadsense/shared/cad";
 import {
+  CadControlInput,
+  CadHierarchyRequestInput,
+  CadHierarchyUploadInput,
   CadScreenshotMcpCaptureInput,
   CadSetViewInput,
   OnshapeRpcError,
@@ -34,13 +37,13 @@ import { BrowserTraceCollector } from "./observability/Services/BrowserTraceColl
 import { ProjectFaviconResolver } from "./project/Services/ProjectFaviconResolver.ts";
 import { ServerAuth } from "./auth/Services/ServerAuth.ts";
 import { respondToAuthError } from "./auth/http.ts";
-import { publishCadViewCommand } from "./cad/CadViewCommands.ts";
 import {
-  CAPTURE_TIMEOUT,
-  publishCadScreenshotRequest,
-  rejectCadScreenshotPending,
-  startCadScreenshotCaptureEffect,
-} from "./cad/CadScreenshotCapture.ts";
+  completeCadHierarchyRequest,
+  publishCadControlCommand,
+  publishCadViewCommand,
+  requestCadHierarchy,
+} from "./cad/CadViewCommands.ts";
+import { captureCadScreenshot } from "./cad/CadScreenshotClient.ts";
 import { CAD_VIEW_MCP_TOKEN, CAD_VIEW_MCP_TOKEN_HEADER } from "./cad/CadViewMcp.ts";
 import {
   CAD_MODEL_HTTP_PATH,
@@ -58,11 +61,16 @@ const PROJECT_FAVICON_CACHE_CONTROL = "public, max-age=3600";
 const FALLBACK_PROJECT_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>`;
 const OTLP_TRACES_PROXY_PATH = "/api/observability/v1/traces";
 const CAD_VIEW_COMMAND_ROUTE_PATH = "/api/cad/view-command";
+const CAD_CONTROL_ROUTE_PATH = "/api/cad/control-command";
+const CAD_HIERARCHY_ROUTE_PATH = "/api/cad/hierarchy";
+const CAD_HIERARCHY_UPLOAD_ROUTE_PATH = "/api/cad/hierarchy-upload";
 const CAD_SCREENSHOT_CAPTURE_ROUTE_PATH = "/api/cad/screenshot-capture";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const decodeCadSetViewInput = Schema.decodeUnknownEffect(CadSetViewInput);
+const decodeCadControlInput = Schema.decodeUnknownEffect(CadControlInput);
+const decodeCadHierarchyRequestInput = Schema.decodeUnknownEffect(CadHierarchyRequestInput);
+const decodeCadHierarchyUploadInput = Schema.decodeUnknownEffect(CadHierarchyUploadInput);
 const decodeCadScreenshotMcpCaptureInput = Schema.decodeUnknownEffect(CadScreenshotMcpCaptureInput);
-const isOnshapeRpcError = Schema.is(OnshapeRpcError);
 
 export const browserApiCorsLayer = HttpRouter.cors({
   allowedMethods: [...browserApiCorsAllowedMethods],
@@ -369,6 +377,89 @@ export const cadSetViewRouteLayer = HttpRouter.add(
   ),
 );
 
+export const cadControlRouteLayer = HttpRouter.add(
+  "POST",
+  CAD_CONTROL_ROUTE_PATH,
+  Effect.gen(function* () {
+    yield* requireAuthenticatedOrCadMcpRequest;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* request.json;
+    const input = yield* decodeCadControlInput(body).pipe(
+      Effect.mapError(() => "invalid" as const),
+    );
+    const command = yield* publishCadControlCommand(input);
+    return HttpServerResponse.jsonUnsafe(command, { status: 200 });
+  }).pipe(
+    Effect.catchTag("AuthError", respondToAuthError),
+    Effect.catchIf(
+      (error): error is "invalid" => error === "invalid",
+      () => Effect.succeed(HttpServerResponse.text("Invalid CAD control command", { status: 400 })),
+    ),
+  ),
+);
+
+export const cadHierarchyRouteLayer = HttpRouter.add(
+  "POST",
+  CAD_HIERARCHY_ROUTE_PATH,
+  Effect.gen(function* () {
+    yield* requireAuthenticatedOrCadMcpRequest;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* request.json;
+    const input = yield* decodeCadHierarchyRequestInput(body).pipe(
+      Effect.mapError(() => "invalid" as const),
+    );
+    const result = yield* Effect.race(
+      requestCadHierarchy(input.threadId).pipe(
+        Effect.mapError(
+          (cause) =>
+            new OnshapeRpcError({
+              message: cause.message || "CAD hierarchy request failed.",
+              cause,
+            }),
+        ),
+      ),
+      Effect.sleep("10 seconds").pipe(
+        Effect.flatMap(() =>
+          Effect.fail(new OnshapeRpcError({ message: "CAD hierarchy timed out." })),
+        ),
+      ),
+    );
+    return HttpServerResponse.jsonUnsafe(result, { status: 200 });
+  }).pipe(
+    Effect.catchTag("AuthError", respondToAuthError),
+    Effect.catchIf(
+      (error): error is "invalid" => error === "invalid",
+      () =>
+        Effect.succeed(HttpServerResponse.text("Invalid CAD hierarchy request", { status: 400 })),
+    ),
+    Effect.catchTag("OnshapeRpcError", (error) =>
+      Effect.succeed(HttpServerResponse.text(error.message, { status: 504 })),
+    ),
+  ),
+);
+
+export const cadHierarchyUploadRouteLayer = HttpRouter.add(
+  "POST",
+  CAD_HIERARCHY_UPLOAD_ROUTE_PATH,
+  Effect.gen(function* () {
+    yield* requireAuthenticatedOrCadMcpRequest;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const body = yield* request.json;
+    const input = yield* decodeCadHierarchyUploadInput(body).pipe(
+      Effect.mapError(() => "invalid" as const),
+    );
+    completeCadHierarchyRequest(input.requestId, { components: input.components });
+    return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 200 });
+  }).pipe(
+    Effect.catchTag("AuthError", respondToAuthError),
+    Effect.catchIf(
+      (error): error is "invalid" => error === "invalid",
+      () =>
+        Effect.succeed(HttpServerResponse.text("Invalid CAD hierarchy upload", { status: 400 })),
+    ),
+  ),
+);
+
 export const cadScreenshotCaptureRouteLayer = HttpRouter.add(
   "POST",
   CAD_SCREENSHOT_CAPTURE_ROUTE_PATH,
@@ -391,39 +482,15 @@ export const cadScreenshotCaptureRouteLayer = HttpRouter.add(
       });
     }
     const exportRootResolved = pathService.resolve(exportRootRaw);
-    const capture = yield* startCadScreenshotCaptureEffect({
+    return yield* captureCadScreenshot({
       threadId: input.threadId,
       exportRoot: exportRootResolved,
       suggestedBaseName: input.suggestedBaseName,
       view: input.view,
       fit: input.fit,
-    });
-    yield* publishCadScreenshotRequest(capture.browserRequest);
-    return yield* Effect.race(
-      capture.awaitResult,
-      Effect.sleep(CAPTURE_TIMEOUT).pipe(
-        Effect.tap(() =>
-          Effect.sync(() =>
-            rejectCadScreenshotPending(capture.requestId, "CAD screenshot capture timed out."),
-          ),
-        ),
-        Effect.flatMap(() =>
-          Effect.fail(new OnshapeRpcError({ message: "CAD screenshot capture timed out." })),
-        ),
-      ),
-    ).pipe(
+    }).pipe(
       Effect.matchEffect({
-        onFailure: (e) =>
-          Effect.succeed(
-            HttpServerResponse.text(
-              isOnshapeRpcError(e)
-                ? e.message
-                : e instanceof Error
-                  ? e.message
-                  : "CAD screenshot capture failed.",
-              { status: 504 },
-            ),
-          ),
+        onFailure: (e) => Effect.succeed(HttpServerResponse.text(e.message, { status: 504 })),
         onSuccess: (body) => Effect.succeed(HttpServerResponse.jsonUnsafe(body, { status: 200 })),
       }),
     );

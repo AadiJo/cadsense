@@ -4,6 +4,8 @@ import {
   EventId,
   MessageId,
   ThreadId,
+  type CadScreenshotCaptureHttpResult,
+  type CadView,
   type CadReviewActionItem,
   type CadReviewEvidenceArtifact,
   type CadReviewFinding,
@@ -21,15 +23,18 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 
+import { captureCadScreenshot } from "../../cad/CadScreenshotClient.ts";
+import { resolveCadViewExportRootForInstance } from "../../cad/CadViewExportRoot.ts";
 import { CadViewScheduler } from "../../cad/CadViewScheduler.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { CadReviewService, type CadReviewServiceShape } from "../Services/CadReviewService.ts";
 import {
   PERSONAS,
   REVIEWER_TRAIT_SUMMARIES,
-  buildBaselinePrompt,
   buildReviewerPrompt,
   buildSynthesisPrompt,
   personaLabel,
@@ -37,6 +42,25 @@ import {
 
 const CAD_REVIEW_CHILD_LINK_KIND = "cad-review.child-thread.linked";
 const REVIEWER_TURN_TIMEOUT = Duration.minutes(10);
+const BASELINE_CAPTURE_SPECS = [
+  { view: "isometric", suggestedBaseName: "cad-review-baseline-isometric" },
+  { view: "front", suggestedBaseName: "cad-review-baseline-front" },
+  { view: "back", suggestedBaseName: "cad-review-baseline-back" },
+  { view: "left", suggestedBaseName: "cad-review-baseline-left" },
+  { view: "right", suggestedBaseName: "cad-review-baseline-right" },
+  { view: "top", suggestedBaseName: "cad-review-baseline-top" },
+  { view: "bottom", suggestedBaseName: "cad-review-baseline-bottom" },
+  {
+    view: "isometric-close-up",
+    suggestedBaseName: "cad-review-baseline-isometric-close-up",
+  },
+  { view: "front-close-up", suggestedBaseName: "cad-review-baseline-front-close-up" },
+  { view: "right-close-up", suggestedBaseName: "cad-review-baseline-right-close-up" },
+  { view: "top-close-up", suggestedBaseName: "cad-review-baseline-top-close-up" },
+] as const satisfies ReadonlyArray<{
+  readonly view: CadView;
+  readonly suggestedBaseName: string;
+}>;
 
 class CadReviewRunError extends Data.TaggedError("CadReviewRunError")<{
   readonly message: string;
@@ -45,6 +69,12 @@ class CadReviewRunError extends Data.TaggedError("CadReviewRunError")<{
 type ChildRunResult =
   | { readonly ok: true; readonly childThread: OrchestrationThread }
   | { readonly ok: false; readonly error: string };
+
+interface BaselineCaptureRecord {
+  readonly result: CadScreenshotCaptureHttpResult;
+  readonly createdAt: string;
+  readonly activity: OrchestrationThreadActivity;
+}
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
@@ -326,6 +356,68 @@ function toolCallsFromActivities(input: {
   return dedupeToolCalls(toolCalls);
 }
 
+function baselineArtifactFromCapture(input: {
+  readonly reviewRunId: string;
+  readonly index: number;
+  readonly view: CadView;
+  readonly absolutePath: string;
+  readonly createdAt: string;
+}): CadReviewEvidenceArtifact {
+  return {
+    id: `${input.reviewRunId}:baseline:baseline:${input.index + 1}`,
+    scope: "baseline",
+    viewName: input.view,
+    artifactUri: input.absolutePath,
+    mimeType: "image/png",
+    status: "captured",
+    createdAt: input.createdAt,
+  };
+}
+
+function baselineToolActivity(input: {
+  readonly threadId: ThreadId;
+  readonly view: CadView;
+  readonly suggestedBaseName: string;
+  readonly result: CadScreenshotCaptureHttpResult;
+  readonly createdAt: string;
+}): OrchestrationThreadActivity {
+  const toolResultText = `Saved CAD screenshot to ${input.result.absolutePath} (under export root: ${input.result.relativePath}).`;
+  return {
+    id: EventId.make(crypto.randomUUID()),
+    tone: "tool",
+    kind: "tool.completed",
+    summary: `Captured baseline CAD screenshot for ${input.view}`,
+    payload: {
+      toolName: "export_cad_screenshot",
+      message: toolResultText,
+      data: {
+        item: {
+          name: "export_cad_screenshot",
+          arguments: {
+            threadId: input.threadId,
+            view: input.view,
+            fit: true,
+            suggestedBaseName: input.suggestedBaseName,
+          },
+          result: {
+            content: [
+              {
+                type: "text",
+                text: toolResultText,
+              },
+            ],
+          },
+        },
+      },
+      absolutePath: input.result.absolutePath,
+      relativePath: input.result.relativePath,
+      status: "completed",
+    },
+    turnId: null,
+    createdAt: input.createdAt,
+  };
+}
+
 function buildPersonaReport(input: {
   readonly reviewRunId: string;
   readonly persona: Exclude<CadReviewPersona, "synthesis">;
@@ -494,6 +586,8 @@ const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const cadViewScheduler = yield* CadViewScheduler;
+  const pathService = yield* Path.Path;
+  const serverSettingsService = yield* ServerSettingsService;
 
   const appendActivity = (input: {
     readonly threadId: OrchestrationThread["id"];
@@ -518,6 +612,97 @@ const make = Effect.gen(function* () {
       },
       createdAt: input.createdAt,
     });
+
+  const captureBaselineEvidence = (input: {
+    readonly thread: OrchestrationThread;
+    readonly reviewRunId: string;
+  }) =>
+    cadViewScheduler.enqueue(
+      input.thread.id,
+      `${input.reviewRunId}:baseline-capture`,
+      Effect.gen(function* () {
+        const exportRoot = yield* resolveCadViewExportRootForInstance(
+          input.thread.modelSelection.instanceId,
+        ).pipe(
+          Effect.provideService(Path.Path, pathService),
+          Effect.provideService(ServerSettingsService, serverSettingsService),
+          Effect.mapError(
+            (error) =>
+              new CadReviewRunError({
+                message: error.message,
+              }),
+          ),
+        );
+        const captures: BaselineCaptureRecord[] = [];
+        for (const spec of BASELINE_CAPTURE_SPECS) {
+          const createdAt = yield* nowIso;
+          const result = yield* captureCadScreenshot({
+            threadId: input.thread.id,
+            exportRoot,
+            suggestedBaseName: spec.suggestedBaseName,
+            view: spec.view,
+            fit: true,
+          }).pipe(
+            Effect.mapError(
+              (error) =>
+                new CadReviewRunError({
+                  message: `Failed to capture baseline view '${spec.view}': ${error.message}`,
+                }),
+            ),
+          );
+          const activity = baselineToolActivity({
+            threadId: input.thread.id,
+            view: spec.view,
+            suggestedBaseName: spec.suggestedBaseName,
+            result,
+            createdAt,
+          });
+          yield* appendActivity({
+            threadId: input.thread.id,
+            tone: activity.tone,
+            kind: activity.kind,
+            summary: activity.summary,
+            payload: activity.payload as Record<string, unknown>,
+            createdAt,
+          });
+          captures.push({ result, createdAt, activity });
+        }
+        const artifacts = captures.map((capture, index) =>
+          baselineArtifactFromCapture({
+            reviewRunId: input.reviewRunId,
+            index,
+            view: BASELINE_CAPTURE_SPECS[index]!.view,
+            absolutePath: capture.result.absolutePath,
+            createdAt: capture.createdAt,
+          }),
+        );
+        const toolCalls = toolCallsFromActivities({
+          reviewRunId: input.reviewRunId,
+          persona: "synthesis",
+          phase: "baseline",
+          activities: captures.map((capture) => capture.activity),
+          artifacts,
+        });
+        return { artifacts, toolCalls };
+      }).pipe(
+        Effect.matchCauseEffect({
+          onFailure: (cause) =>
+            Effect.succeed({
+              ok: false,
+              error: Cause.pretty(cause),
+            } satisfies { readonly ok: false; readonly error: string }),
+          onSuccess: (result) =>
+            Effect.succeed({
+              ok: true,
+              ...result,
+            } satisfies {
+              readonly ok: true;
+              readonly artifacts: CadReviewEvidenceArtifact[];
+              readonly toolCalls: CadReviewToolCall[];
+            }),
+        }),
+      ),
+    );
 
   const upsertReview = (threadId: OrchestrationThread["id"], review: CadReviewReport) =>
     orchestrationEngine.dispatch({
@@ -746,35 +931,17 @@ const make = Effect.gen(function* () {
       });
       yield* upsertReview(thread.id, review);
 
-      const baselineStartedAt = yield* nowIso;
-      const baselineChild = yield* runChildReviewer({
-        parentThread: thread,
+      const baselineCapture = yield* captureBaselineEvidence({
+        thread,
         reviewRunId: review.id,
-        persona: "synthesis",
-        title: `${review.title} - baseline capture`,
-        prompt: buildBaselinePrompt(subject),
-        createdAt: baselineStartedAt,
       });
       updatedAt = yield* nowIso;
-      if (baselineChild.ok) {
-        const baselineArtifacts = artifactsFromChild({
-          reviewRunId: review.id,
-          childThread: baselineChild.childThread,
-          scope: "baseline",
-          createdAt: updatedAt,
-        });
-        const baselineToolCalls = toolCallsFromActivities({
-          reviewRunId: review.id,
-          persona: "synthesis",
-          phase: "baseline",
-          activities: baselineChild.childThread.activities,
-          artifacts: baselineArtifacts,
-        });
+      if (baselineCapture.ok) {
         Object.assign(review, {
-          evidenceArtifacts: [...review.evidenceArtifacts, ...baselineArtifacts],
+          evidenceArtifacts: [...review.evidenceArtifacts, ...baselineCapture.artifacts],
           toolCallsByReviewer: {
             ...review.toolCallsByReviewer,
-            synthesis: [...review.toolCallsByReviewer.synthesis, ...baselineToolCalls],
+            synthesis: [...review.toolCallsByReviewer.synthesis, ...baselineCapture.toolCalls],
           },
           updatedAt,
         });
@@ -783,21 +950,20 @@ const make = Effect.gen(function* () {
           tone: "info",
           kind: "cad-review.baseline.completed",
           summary:
-            baselineArtifacts.length > 0
+            baselineCapture.artifacts.length > 0
               ? "Baseline CAD views captured"
               : "Baseline capture completed without screenshot artifacts",
           payload: {
             reviewRunId: review.id,
             phase: "baseline",
-            agent: "Baseline capture",
-            childThreadId: baselineChild.childThread.id,
-            artifactCount: baselineArtifacts.length,
+            agent: "Server baseline capture",
+            artifactCount: baselineCapture.artifacts.length,
           },
           createdAt: updatedAt,
         });
       } else {
         Object.assign(review, {
-          error: `Baseline capture failed: ${baselineChild.error}`,
+          error: `Baseline capture failed: ${baselineCapture.error}`,
           updatedAt,
         });
         yield* appendActivity({
@@ -808,7 +974,7 @@ const make = Effect.gen(function* () {
           payload: {
             reviewRunId: review.id,
             phase: "baseline",
-            detail: baselineChild.error,
+            detail: baselineCapture.error,
           },
           createdAt: updatedAt,
         });

@@ -80,6 +80,8 @@ describe("CadViewMcp", () => {
 
   it("handles MCP tool calls", async () => {
     const setView = vi.fn().mockResolvedValue(undefined);
+    const sendControl = vi.fn().mockResolvedValue(undefined);
+    const getHierarchy = vi.fn().mockResolvedValue({ components: [] });
     const captureScreenshot = vi.fn();
     const response = await handleCadViewMcpRequest(
       {
@@ -91,7 +93,7 @@ describe("CadViewMcp", () => {
           arguments: { threadId: "thread-1", view: "top", fit: true },
         },
       },
-      { setView, captureScreenshot },
+      { setView, sendControl, getHierarchy, captureScreenshot },
     );
 
     expect(setView).toHaveBeenCalledWith({ threadId: "thread-1", view: "top", fit: true });
@@ -103,13 +105,66 @@ describe("CadViewMcp", () => {
     });
   });
 
+  it("handles free camera MCP tool calls", async () => {
+    const setView = vi.fn().mockResolvedValue(undefined);
+    const sendControl = vi.fn().mockResolvedValue(undefined);
+    const getHierarchy = vi.fn().mockResolvedValue({ components: [] });
+    const captureScreenshot = vi.fn();
+    const response = await handleCadViewMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: "set_cad_camera",
+          arguments: {
+            threadId: "thread-1",
+            direction: [0.7, -1, 0.35],
+            up: [0, 0, 1],
+            fit: true,
+            closeUp: false,
+          },
+        },
+      },
+      { setView, sendControl, getHierarchy, captureScreenshot },
+    );
+
+    expect(setView).not.toHaveBeenCalled();
+    expect(sendControl).toHaveBeenCalledWith({
+      type: "set-camera",
+      threadId: "thread-1",
+      direction: [0.7, -1, 0.35],
+      up: [0, 0, 1],
+      fit: true,
+      closeUp: false,
+    });
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 3,
+      result: { content: [{ type: "text", text: "CAD camera set to direction [0.7, -1, 0.35]." }] },
+    });
+  });
+
   it("lists two tools", async () => {
     const response = await handleCadViewMcpRequest(
       { jsonrpc: "2.0", id: 2, method: "tools/list" },
-      { setView: vi.fn(), captureScreenshot: vi.fn() },
+      {
+        setView: vi.fn(),
+        sendControl: vi.fn(),
+        getHierarchy: vi.fn().mockResolvedValue({ components: [] }),
+        captureScreenshot: vi.fn(),
+      },
     );
     expect(response).toMatchObject({ jsonrpc: "2.0", id: 2 });
     const tools = (response as { result: { tools: { name: string }[] } }).result.tools;
-    expect(tools.map((t) => t.name)).toEqual(["set_cad_view", "export_cad_screenshot"]);
+    expect(tools.map((t) => t.name)).toEqual([
+      "set_cad_view",
+      "set_cad_camera",
+      "export_cad_screenshot",
+      "get_cad_hierarchy",
+      "set_cad_component_visibility",
+      "set_cad_exploded",
+      "zoom_cad_to_fit",
+    ]);
   });
 });

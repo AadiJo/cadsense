@@ -99,16 +99,6 @@ export function buildReviewerPrompt(input: {
   ].join("\n");
 }
 
-export function buildBaselinePrompt(subject: string): string {
-  return [
-    `Capture baseline CAD evidence for ${subject}.`,
-    "Use export_cad_screenshot for isometric, front, back, left, right, top, and bottom views.",
-    "Also capture close-up detail screenshots for isometric-close-up, front-close-up, right-close-up, and top-close-up.",
-    "Use suggestedBaseName values like cad-review-baseline-isometric and cad-review-baseline-front-close-up.",
-    'After capturing, return JSON only: {"summary":"...","capturedViews":[...],"missingEvidence":"..."}.',
-  ].join("\n");
-}
-
 export function buildSynthesisPrompt(input: {
   readonly subject: string;
   readonly reports: ReadonlyArray<CadReviewPersonaReport>;

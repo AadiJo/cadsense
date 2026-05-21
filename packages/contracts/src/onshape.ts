@@ -256,13 +256,133 @@ export const CadSetViewInput = Schema.Struct({
 });
 export type CadSetViewInput = typeof CadSetViewInput.Type;
 
-export const CadViewCommand = Schema.Struct({
-  commandId: TrimmedNonEmptyString,
+export const CadCameraVector = Schema.Tuple([Schema.Number, Schema.Number, Schema.Number]);
+export type CadCameraVector = typeof CadCameraVector.Type;
+
+export const CadSetCameraInput = Schema.Struct({
   threadId: ThreadId,
-  view: CadView,
-  fit: Schema.Boolean,
-  createdAt: IsoDateTime,
+  direction: CadCameraVector,
+  up: Schema.optionalKey(CadCameraVector),
+  fit: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  closeUp: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
+export type CadSetCameraInput = typeof CadSetCameraInput.Type;
+
+export const CadComponentVisibilityInput = Schema.Struct({
+  threadId: ThreadId,
+  componentId: TrimmedNonEmptyString,
+  visible: Schema.Boolean,
+});
+export type CadComponentVisibilityInput = typeof CadComponentVisibilityInput.Type;
+
+export const CadExplodedViewInput = Schema.Struct({
+  threadId: ThreadId,
+  exploded: Schema.Boolean,
+});
+export type CadExplodedViewInput = typeof CadExplodedViewInput.Type;
+
+export const CadZoomToFitInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type CadZoomToFitInput = typeof CadZoomToFitInput.Type;
+
+export const CadHierarchyRequestInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type CadHierarchyRequestInput = typeof CadHierarchyRequestInput.Type;
+
+export const CadHierarchyComponent = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  parentId: Schema.optional(TrimmedNonEmptyString),
+  name: TrimmedNonEmptyString,
+  kind: Schema.Literals(["assembly", "part"]),
+  hasChildren: Schema.Boolean,
+  visible: Schema.Boolean,
+});
+export type CadHierarchyComponent = typeof CadHierarchyComponent.Type;
+
+export const CadHierarchyBrowserRequest = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  threadId: ThreadId,
+});
+export type CadHierarchyBrowserRequest = typeof CadHierarchyBrowserRequest.Type;
+
+export const CadHierarchyUploadInput = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  components: Schema.Array(CadHierarchyComponent),
+});
+export type CadHierarchyUploadInput = typeof CadHierarchyUploadInput.Type;
+
+export const CadHierarchyResult = Schema.Struct({
+  components: Schema.Array(CadHierarchyComponent),
+});
+export type CadHierarchyResult = typeof CadHierarchyResult.Type;
+
+export const CadControlInput = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("set-view"),
+    ...CadSetViewInput.fields,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("set-camera"),
+    ...CadSetCameraInput.fields,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("set-component-visibility"),
+    ...CadComponentVisibilityInput.fields,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("set-exploded"),
+    ...CadExplodedViewInput.fields,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("zoom-to-fit"),
+    ...CadZoomToFitInput.fields,
+  }),
+]);
+export type CadControlInput = typeof CadControlInput.Type;
+
+export const CadViewCommand = Schema.Union([
+  Schema.Struct({
+    commandId: TrimmedNonEmptyString,
+    type: Schema.Literal("set-view"),
+    threadId: ThreadId,
+    view: CadView,
+    fit: Schema.Boolean,
+    createdAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    commandId: TrimmedNonEmptyString,
+    type: Schema.Literal("set-camera"),
+    threadId: ThreadId,
+    direction: CadCameraVector,
+    up: Schema.optionalKey(CadCameraVector),
+    fit: Schema.Boolean,
+    closeUp: Schema.Boolean,
+    createdAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    commandId: TrimmedNonEmptyString,
+    type: Schema.Literal("set-component-visibility"),
+    threadId: ThreadId,
+    componentId: TrimmedNonEmptyString,
+    visible: Schema.Boolean,
+    createdAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    commandId: TrimmedNonEmptyString,
+    type: Schema.Literal("set-exploded"),
+    threadId: ThreadId,
+    exploded: Schema.Boolean,
+    createdAt: IsoDateTime,
+  }),
+  Schema.Struct({
+    commandId: TrimmedNonEmptyString,
+    type: Schema.Literal("zoom-to-fit"),
+    threadId: ThreadId,
+    createdAt: IsoDateTime,
+  }),
+]);
 export type CadViewCommand = typeof CadViewCommand.Type;
 
 /** Pushed to the browser so the CAD panel can render and upload a PNG. */

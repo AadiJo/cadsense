@@ -51,6 +51,9 @@ import {
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   CadScreenshotBrowserRequest,
+  CadHierarchyBrowserRequest,
+  CadHierarchyUploadInput,
+  CadHierarchyResult,
   CadScreenshotUploadInput,
   CadScreenshotUploadResult,
   CadSetViewInput,
@@ -185,6 +188,7 @@ export const WS_METHODS = {
   onshapeListSyncedCadFiles: "onshape.listSyncedCadFiles",
   cadSetView: "cad.setView",
   cadScreenshotUpload: "cad.screenshotUpload",
+  cadHierarchyUpload: "cad.hierarchyUpload",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -193,6 +197,7 @@ export const WS_METHODS = {
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeCadViewCommands: "subscribeCadViewCommands",
+  subscribeCadHierarchyRequests: "subscribeCadHierarchyRequests",
   subscribeCadScreenshotRequests: "subscribeCadScreenshotRequests",
 } as const;
 
@@ -348,6 +353,12 @@ export const WsCadSetViewRpc = Rpc.make(WS_METHODS.cadSetView, {
 export const WsCadScreenshotUploadRpc = Rpc.make(WS_METHODS.cadScreenshotUpload, {
   payload: CadScreenshotUploadInput,
   success: CadScreenshotUploadResult,
+  error: OnshapeRpcError,
+});
+
+export const WsCadHierarchyUploadRpc = Rpc.make(WS_METHODS.cadHierarchyUpload, {
+  payload: CadHierarchyUploadInput,
+  success: CadHierarchyResult,
   error: OnshapeRpcError,
 });
 
@@ -565,6 +576,15 @@ export const WsSubscribeCadViewCommandsRpc = Rpc.make(WS_METHODS.subscribeCadVie
   stream: true,
 });
 
+export const WsSubscribeCadHierarchyRequestsRpc = Rpc.make(
+  WS_METHODS.subscribeCadHierarchyRequests,
+  {
+    payload: Schema.Struct({}),
+    success: CadHierarchyBrowserRequest,
+    stream: true,
+  },
+);
+
 export const WsSubscribeCadScreenshotRequestsRpc = Rpc.make(
   WS_METHODS.subscribeCadScreenshotRequests,
   {
@@ -599,6 +619,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOnshapeListSyncedCadFilesRpc,
   WsCadSetViewRpc,
   WsCadScreenshotUploadRpc,
+  WsCadHierarchyUploadRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
@@ -626,6 +647,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeCadViewCommandsRpc,
+  WsSubscribeCadHierarchyRequestsRpc,
   WsSubscribeCadScreenshotRequestsRpc,
   WsOrchestrationDispatchCommandRpc,
   WsOrchestrationGetTurnDiffRpc,

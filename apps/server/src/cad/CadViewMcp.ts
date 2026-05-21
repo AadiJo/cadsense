@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   CadScreenshotMcpCaptureInput,
+  CadControlInput,
+  CadHierarchyRequestInput,
+  type CadHierarchyResult,
+  CadSetCameraInput,
   CadSetViewInput,
   CadView,
   ThreadId,
@@ -17,7 +21,12 @@ import { formatHostForUrl, isWildcardHost } from "../startupAccess.ts";
 
 export const CAD_VIEW_MCP_SERVER_NAME = "cadsense-cad-view";
 export const CAD_VIEW_MCP_TOOL_NAME = "set_cad_view";
+export const CAD_VIEW_MCP_CAMERA_TOOL_NAME = "set_cad_camera";
 export const CAD_VIEW_MCP_EXPORT_TOOL_NAME = "export_cad_screenshot";
+export const CAD_VIEW_MCP_HIERARCHY_TOOL_NAME = "get_cad_hierarchy";
+export const CAD_VIEW_MCP_COMPONENT_VISIBILITY_TOOL_NAME = "set_cad_component_visibility";
+export const CAD_VIEW_MCP_EXPLODED_TOOL_NAME = "set_cad_exploded";
+export const CAD_VIEW_MCP_ZOOM_TOOL_NAME = "zoom_cad_to_fit";
 export const CAD_VIEW_MCP_TOKEN_HEADER = "x-cadsense-cad-view-token";
 export const CAD_VIEW_MCP_TOKEN = randomUUID();
 export const CAD_VIEW_EXPORT_ROOT_ENV = "CADSENSE_CAD_VIEW_EXPORT_ROOT";
@@ -40,6 +49,9 @@ const CAD_VIEW_VALUES = [
 ] as const satisfies ReadonlyArray<CadView>;
 
 const isCadSetViewInput = Schema.is(CadSetViewInput);
+const isCadSetCameraInput = Schema.is(CadSetCameraInput);
+const isCadControlInput = Schema.is(CadControlInput);
+const isCadHierarchyRequestInput = Schema.is(CadHierarchyRequestInput);
 const isCadView = Schema.is(CadView);
 const isCadScreenshotMcpCaptureInput = Schema.is(CadScreenshotMcpCaptureInput);
 const decodeThreadIdUnknownSync = Schema.decodeUnknownSync(ThreadId);
@@ -50,6 +62,17 @@ const SET_CAD_VIEW_TOOL_DESCRIPTION = [
   "",
   "View reference:",
   CAD_VIEW_ORIENTATION_GUIDE,
+].join("\n");
+
+const SET_CAD_CAMERA_TOOL_DESCRIPTION = [
+  "Set the CAD side panel camera to a freeform view direction. Use this when a non-standard oblique angle is useful, for example slightly above-front-right instead of exactly front/right/top.",
+  "The `direction` vector is the camera position direction from the model center; it does not need to be normalized. `up` controls screen-up and usually should be [0, 0, 1] for CAD views with Z vertical.",
+  "Use `fit: true` for normal inspection. Use `closeUp: true` for a detail view at the same angle.",
+  "",
+  "Known standard view vectors:",
+  CAD_VIEW_ORIENTATION_GUIDE,
+  "Equivalent raw vectors: top [0,0,1] up [0,1,0]; bottom [0,0,-1] up [0,1,0]; front [0,-1,0] up [0,0,1]; back [0,1,0] up [0,0,1]; left [-1,0,0] up [0,0,1]; right [1,0,0] up [0,0,1]; isometric [1,-1,1] up [0,0,1].",
+  "For in-between views, blend those directions. Examples: slightly above front-right [0.7,-1,0.35]; high front-left [-0.8,-1,0.8]; shallow rear-right [1,0.8,0.25].",
 ].join("\n");
 
 const EXPORT_CAD_SCREENSHOT_TOOL_DESCRIPTION = [
@@ -196,6 +219,76 @@ function normalizeSetViewArguments(args: unknown): CadSetViewInput | undefined {
   };
 }
 
+function normalizeSetCameraArguments(args: unknown): CadSetCameraInput | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return undefined;
+  }
+  const candidate = args as Record<string, unknown>;
+  const input = {
+    threadId: candidate.threadId ?? process.env.CADSENSE_CAD_VIEW_THREAD_ID,
+    direction: candidate.direction,
+    up: candidate.up,
+    fit: candidate.fit,
+    closeUp: candidate.closeUp,
+  };
+  if (!isCadSetCameraInput(input)) {
+    return undefined;
+  }
+  if (!input.direction.every(Number.isFinite) || input.direction.every((value) => value === 0)) {
+    return undefined;
+  }
+  if (input.up && (!input.up.every(Number.isFinite) || input.up.every((value) => value === 0))) {
+    return undefined;
+  }
+  return input.up === undefined
+    ? {
+        threadId: input.threadId,
+        direction: input.direction,
+        fit: input.fit,
+        closeUp: input.closeUp,
+      }
+    : {
+        threadId: input.threadId,
+        direction: input.direction,
+        up: input.up,
+        fit: input.fit,
+        closeUp: input.closeUp,
+      };
+}
+
+function normalizeThreadIdArg(args: unknown): string | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return process.env.CADSENSE_CAD_VIEW_THREAD_ID;
+  }
+  const candidate = args as Record<string, unknown>;
+  const threadId = candidate.threadId ?? process.env.CADSENSE_CAD_VIEW_THREAD_ID;
+  return typeof threadId === "string" ? threadId : undefined;
+}
+
+function normalizeControlArguments(
+  args: unknown,
+  type: CadControlInput["type"],
+): CadControlInput | undefined {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return undefined;
+  }
+  const candidate = args as Record<string, unknown>;
+  const threadId = candidate.threadId ?? process.env.CADSENSE_CAD_VIEW_THREAD_ID;
+  const input =
+    type === "set-component-visibility"
+      ? { type, threadId, componentId: candidate.componentId, visible: candidate.visible }
+      : type === "set-exploded"
+        ? { type, threadId, exploded: candidate.exploded }
+        : { type, threadId };
+  return isCadControlInput(input) ? input : undefined;
+}
+
+function normalizeHierarchyArguments(args: unknown): CadHierarchyRequestInput | undefined {
+  const threadId = normalizeThreadIdArg(args);
+  const input = { threadId };
+  return isCadHierarchyRequestInput(input) ? input : undefined;
+}
+
 function normalizeExportScreenshotArguments(
   args: unknown,
 ): CadScreenshotMcpCaptureInput | undefined {
@@ -247,6 +340,8 @@ function normalizeExportScreenshotArguments(
 
 export interface CadViewMcpHandlers {
   readonly setView: (input: CadSetViewInput) => Promise<void>;
+  readonly sendControl: (input: CadControlInput) => Promise<void>;
+  readonly getHierarchy: (input: CadHierarchyRequestInput) => Promise<CadHierarchyResult>;
   readonly captureScreenshot: (
     input: CadScreenshotMcpCaptureInput,
   ) => Promise<CadScreenshotCaptureHttpResult>;
@@ -297,6 +392,42 @@ export async function handleCadViewMcpRequest(
             },
           },
           {
+            name: CAD_VIEW_MCP_CAMERA_TOOL_NAME,
+            description: SET_CAD_CAMERA_TOOL_DESCRIPTION,
+            inputSchema: {
+              type: "object",
+              properties: {
+                direction: {
+                  type: "array",
+                  items: { type: "number" },
+                  minItems: 3,
+                  maxItems: 3,
+                  description:
+                    "Camera direction from the model center as [x, y, z]. Must not be [0,0,0].",
+                },
+                up: {
+                  type: "array",
+                  items: { type: "number" },
+                  minItems: 3,
+                  maxItems: 3,
+                  description: "Optional screen-up vector. Usually [0,0,1] for CAD views.",
+                },
+                fit: {
+                  type: "boolean",
+                  description: "Fit the model to the viewport after changing camera direction.",
+                  default: true,
+                },
+                closeUp: {
+                  type: "boolean",
+                  description: "Move closer along the same view direction for detail inspection.",
+                  default: false,
+                },
+              },
+              required: ["direction"],
+              additionalProperties: false,
+            },
+          },
+          {
             name: CAD_VIEW_MCP_EXPORT_TOOL_NAME,
             description: EXPORT_CAD_SCREENSHOT_TOOL_DESCRIPTION,
             inputSchema: {
@@ -323,6 +454,41 @@ export async function handleCadViewMcpRequest(
               additionalProperties: false,
             },
           },
+          {
+            name: CAD_VIEW_MCP_HIERARCHY_TOOL_NAME,
+            description:
+              "Return the current CAD assembly/component hierarchy, including stable component ids and visibility states.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          },
+          {
+            name: CAD_VIEW_MCP_COMPONENT_VISIBILITY_TOOL_NAME,
+            description:
+              "Toggle a CAD hierarchy component on or off by component id from get_cad_hierarchy.",
+            inputSchema: {
+              type: "object",
+              properties: {
+                componentId: { type: "string" },
+                visible: { type: "boolean" },
+              },
+              required: ["componentId", "visible"],
+              additionalProperties: false,
+            },
+          },
+          {
+            name: CAD_VIEW_MCP_EXPLODED_TOOL_NAME,
+            description: "Enable or disable the CAD exploded view.",
+            inputSchema: {
+              type: "object",
+              properties: { exploded: { type: "boolean" } },
+              required: ["exploded"],
+              additionalProperties: false,
+            },
+          },
+          {
+            name: CAD_VIEW_MCP_ZOOM_TOOL_NAME,
+            description: "Zoom the CAD viewer to fit the current visible model.",
+            inputSchema: { type: "object", properties: {}, additionalProperties: false },
+          },
         ],
       });
     case "tools/call": {
@@ -339,6 +505,25 @@ export async function handleCadViewMcpRequest(
           await handlers.setView(input);
           return jsonRpcResult(id, {
             content: [{ type: "text", text: `CAD view set to ${input.view}.` }],
+          });
+        } catch (error) {
+          return jsonRpcError(id, -32603, error instanceof Error ? error.message : String(error));
+        }
+      }
+      if (name === CAD_VIEW_MCP_CAMERA_TOOL_NAME) {
+        const input = normalizeSetCameraArguments(args);
+        if (!input) {
+          return jsonRpcError(id, -32602, "Invalid CAD camera arguments.");
+        }
+        try {
+          await handlers.sendControl({ type: "set-camera", ...input });
+          return jsonRpcResult(id, {
+            content: [
+              {
+                type: "text",
+                text: `CAD camera set to direction [${input.direction.join(", ")}].`,
+              },
+            ],
           });
         } catch (error) {
           return jsonRpcError(id, -32603, error instanceof Error ? error.message : String(error));
@@ -362,6 +547,40 @@ export async function handleCadViewMcpRequest(
                 text: `Saved CAD screenshot to ${result.absolutePath} (under export root: ${result.relativePath}).`,
               },
             ],
+          });
+        } catch (error) {
+          return jsonRpcError(id, -32603, error instanceof Error ? error.message : String(error));
+        }
+      }
+      if (name === CAD_VIEW_MCP_HIERARCHY_TOOL_NAME) {
+        const input = normalizeHierarchyArguments(args);
+        if (!input) return jsonRpcError(id, -32602, "Invalid CAD hierarchy arguments.");
+        try {
+          const result = await handlers.getHierarchy(input);
+          return jsonRpcResult(id, {
+            content: [{ type: "text", text: JSON.stringify(result.components, null, 2) }],
+          });
+        } catch (error) {
+          return jsonRpcError(id, -32603, error instanceof Error ? error.message : String(error));
+        }
+      }
+      if (
+        name === CAD_VIEW_MCP_COMPONENT_VISIBILITY_TOOL_NAME ||
+        name === CAD_VIEW_MCP_EXPLODED_TOOL_NAME ||
+        name === CAD_VIEW_MCP_ZOOM_TOOL_NAME
+      ) {
+        const type =
+          name === CAD_VIEW_MCP_COMPONENT_VISIBILITY_TOOL_NAME
+            ? "set-component-visibility"
+            : name === CAD_VIEW_MCP_EXPLODED_TOOL_NAME
+              ? "set-exploded"
+              : "zoom-to-fit";
+        const input = normalizeControlArguments(args ?? {}, type);
+        if (!input) return jsonRpcError(id, -32602, "Invalid CAD control arguments.");
+        try {
+          await handlers.sendControl(input);
+          return jsonRpcResult(id, {
+            content: [{ type: "text", text: "CAD control command sent." }],
           });
         } catch (error) {
           return jsonRpcError(id, -32603, error instanceof Error ? error.message : String(error));
@@ -391,6 +610,37 @@ async function postCadViewCommand(input: CadSetViewInput): Promise<void> {
   if (!response.ok) {
     throw new Error(`Failed to set CAD view: HTTP ${response.status}`);
   }
+}
+
+async function postCadControlCommand(input: CadControlInput): Promise<void> {
+  const origin = process.env.CADSENSE_CAD_VIEW_ORIGIN;
+  const token = process.env.CADSENSE_CAD_VIEW_TOKEN;
+  if (!origin || !token) {
+    throw new Error("Missing CADSENSE_CAD_VIEW_ORIGIN or CADSENSE_CAD_VIEW_TOKEN.");
+  }
+  const response = await fetch(new URL("/api/cad/control-command", origin), {
+    method: "POST",
+    headers: { "content-type": "application/json", [CAD_VIEW_MCP_TOKEN_HEADER]: token },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`Failed to control CAD view: HTTP ${response.status}`);
+}
+
+async function postCadHierarchyRequest(
+  input: CadHierarchyRequestInput,
+): Promise<CadHierarchyResult> {
+  const origin = process.env.CADSENSE_CAD_VIEW_ORIGIN;
+  const token = process.env.CADSENSE_CAD_VIEW_TOKEN;
+  if (!origin || !token) {
+    throw new Error("Missing CADSENSE_CAD_VIEW_ORIGIN or CADSENSE_CAD_VIEW_TOKEN.");
+  }
+  const response = await fetch(new URL("/api/cad/hierarchy", origin), {
+    method: "POST",
+    headers: { "content-type": "application/json", [CAD_VIEW_MCP_TOKEN_HEADER]: token },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) throw new Error(`Failed to get CAD hierarchy: HTTP ${response.status}`);
+  return (await response.json()) as CadHierarchyResult;
 }
 
 async function postCadScreenshotCapture(
@@ -439,6 +689,8 @@ export async function runCadViewMcpServer(): Promise<void> {
     try {
       const response = await handleCadViewMcpRequest(request, {
         setView: postCadViewCommand,
+        sendControl: postCadControlCommand,
+        getHierarchy: postCadHierarchyRequest,
         captureScreenshot: postCadScreenshotCapture,
       });
       if (response) {

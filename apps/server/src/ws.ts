@@ -109,7 +109,12 @@ import {
   type SessionCredentialChange,
 } from "./auth/Services/SessionCredentialService.ts";
 import { respondToAuthError } from "./auth/http.ts";
-import { cadViewCommandStream, publishCadViewCommand } from "./cad/CadViewCommands.ts";
+import {
+  cadHierarchyRequestStream,
+  cadViewCommandStream,
+  completeCadHierarchyRequest,
+  publishCadViewCommand,
+} from "./cad/CadViewCommands.ts";
 import {
   cadScreenshotRequestStream,
   completeCadScreenshotPending,
@@ -1507,6 +1512,20 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(WS_METHODS.cadSetView, publishCadViewCommand(input), {
             "rpc.aggregate": "cad",
           }),
+        [WS_METHODS.cadHierarchyUpload]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cadHierarchyUpload,
+            Effect.gen(function* () {
+              const result = { components: input.components };
+              if (!completeCadHierarchyRequest(input.requestId, result)) {
+                return yield* new OnshapeRpcError({
+                  message: "Unknown or expired CAD hierarchy request.",
+                });
+              }
+              return result;
+            }),
+            { "rpc.aggregate": "cad" },
+          ),
         [WS_METHODS.cadScreenshotUpload]: (input) =>
           observeRpcEffect(
             WS_METHODS.cadScreenshotUpload,
@@ -1855,6 +1874,10 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           ),
         [WS_METHODS.subscribeCadViewCommands]: (_input) =>
           observeRpcStream(WS_METHODS.subscribeCadViewCommands, cadViewCommandStream, {
+            "rpc.aggregate": "cad",
+          }),
+        [WS_METHODS.subscribeCadHierarchyRequests]: (_input) =>
+          observeRpcStream(WS_METHODS.subscribeCadHierarchyRequests, cadHierarchyRequestStream, {
             "rpc.aggregate": "cad",
           }),
         [WS_METHODS.subscribeCadScreenshotRequests]: (_input) =>

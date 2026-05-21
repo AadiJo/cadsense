@@ -70,6 +70,9 @@ import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 import type {
   CadSetViewInput,
+  CadHierarchyBrowserRequest,
+  CadHierarchyResult,
+  CadHierarchyUploadInput,
   CadScreenshotBrowserRequest,
   CadScreenshotUploadInput,
   CadScreenshotUploadResult,
@@ -552,6 +555,8 @@ export interface EnvironmentApi {
     ) => Promise<OnshapeListSyncedCadFilesResult>;
     setCadView: (input: CadSetViewInput) => Promise<CadViewCommand>;
     onCadViewCommand: (callback: (command: CadViewCommand) => void) => () => void;
+    onCadHierarchyRequest: (callback: (request: CadHierarchyBrowserRequest) => void) => () => void;
+    uploadCadHierarchy: (input: CadHierarchyUploadInput) => Promise<CadHierarchyResult>;
     onCadScreenshotRequest: (
       callback: (request: CadScreenshotBrowserRequest) => void,
     ) => () => void;
