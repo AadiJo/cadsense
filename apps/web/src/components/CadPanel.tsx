@@ -24,9 +24,9 @@ import {
 import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteRef } from "../threadRoutes";
+import { threadHasStarted } from "../threadLifecycle";
 import { useUiStateStore } from "../uiStateStore";
 import { cn } from "../lib/utils";
-import { threadHasStarted } from "./ChatView.logic";
 import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import {
   CAD_MODEL_LOAD_TARGET_MS,

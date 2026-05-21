@@ -12,6 +12,7 @@ import { type ChatMessage, type SessionPhase, type Thread, type ThreadSession } 
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
 import * as Schema from "effect/Schema";
 import { selectThreadByRef, useStore } from "../store";
+import { threadHasStarted } from "../threadLifecycle";
 import {
   filterTerminalContextsWithText,
   stripInlineTerminalContextPlaceholders,
@@ -221,11 +222,7 @@ export function buildExpiredTerminalContextToastCopy(
   };
 }
 
-export function threadHasStarted(thread: Thread | null | undefined): boolean {
-  return Boolean(
-    thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
-  );
-}
+export { threadHasStarted };
 
 // `threadProvider` is the open branded driver kind carried by the session.
 // Unknown driver kinds degrade to `null` (i.e. "unlocked"), which is the safe
