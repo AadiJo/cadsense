@@ -14,6 +14,7 @@ build/
 release/
 release-mock/
 .cadsense
+.docs/
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
