@@ -49,12 +49,17 @@ interface ThreeViewerState {
   readonly scene: ThreeScene;
   readonly camera: ThreePerspectiveCamera;
   readonly controls: OrbitControlsInstance;
+  middlePanController: MiddlePanController | null;
   readonly group: ThreeObject3D;
   readonly boundingSphere: ThreeSphere;
   exploded: boolean;
   componentTree: CadViewerFrameComponentNode[];
   componentObjectsById: Map<string, ThreeObject3D>;
   readonly ownsModelAssets: boolean;
+}
+
+interface MiddlePanController {
+  readonly dispose: () => void;
 }
 
 interface CachedThreeModel {
@@ -112,6 +117,177 @@ function postLoadStatus(
     stage,
     elapsedMs: performance.now() - startedAt,
   });
+}
+
+function preventMiddleMouseDefault(event: MouseEvent | PointerEvent): void {
+  if (event.button === 1) {
+    event.preventDefault();
+  }
+}
+
+function preventMiddlePanEvent(event: PointerEvent): void {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}
+
+function applyThreeViewerPanDelta(
+  state: ThreeViewerState,
+  panVector: ThreeNamespace.Vector3,
+  scratchVector: ThreeNamespace.Vector3,
+  deltaX: number,
+  deltaY: number,
+): void {
+  const { camera, controls, renderer } = state;
+  const elementHeight = renderer.domElement.clientHeight;
+  if (elementHeight <= 0) {
+    return;
+  }
+
+  scratchVector.copy(camera.position).sub(controls.target);
+  const targetDistance = scratchVector.length() * Math.tan((camera.fov / 2) * (Math.PI / 180));
+  const panScale = (2 * targetDistance) / elementHeight;
+
+  panVector.setFromMatrixColumn(camera.matrix, 0);
+  panVector.multiplyScalar(-deltaX * panScale);
+
+  scratchVector.setFromMatrixColumn(camera.matrix, 0);
+  scratchVector.crossVectors(camera.up, scratchVector);
+  scratchVector.multiplyScalar(deltaY * panScale);
+  panVector.add(scratchVector);
+
+  camera.position.add(panVector);
+  controls.target.add(panVector);
+  controls.update();
+}
+
+function createMiddlePanController(state: ThreeViewerState): MiddlePanController {
+  const { controls, renderer, three } = state;
+  const element = renderer.domElement;
+  const panVector = new three.Vector3();
+  const scratchVector = new three.Vector3();
+  let activePointerId: number | null = null;
+  let lastX = 0;
+  let lastY = 0;
+  let pendingDeltaX = 0;
+  let pendingDeltaY = 0;
+  let animationFrame = 0;
+
+  const flushPan = (): void => {
+    animationFrame = 0;
+    const deltaX = pendingDeltaX;
+    const deltaY = pendingDeltaY;
+    pendingDeltaX = 0;
+    pendingDeltaY = 0;
+    if (deltaX === 0 && deltaY === 0) {
+      return;
+    }
+    applyThreeViewerPanDelta(
+      state,
+      panVector,
+      scratchVector,
+      deltaX * controls.panSpeed,
+      deltaY * controls.panSpeed,
+    );
+  };
+
+  const schedulePan = (): void => {
+    if (animationFrame === 0) {
+      animationFrame = requestAnimationFrame(flushPan);
+    }
+  };
+
+  const clearDocumentListeners = (): void => {
+    document.removeEventListener("pointermove", handlePointerMove, { capture: true });
+    document.removeEventListener("pointerup", handlePointerEnd, { capture: true });
+    document.removeEventListener("pointercancel", handlePointerEnd, { capture: true });
+    window.removeEventListener("blur", handleWindowBlur);
+  };
+
+  const finishPan = (event: PointerEvent | null): void => {
+    if (event !== null) {
+      preventMiddlePanEvent(event);
+      try {
+        if (element.hasPointerCapture(event.pointerId)) {
+          element.releasePointerCapture(event.pointerId);
+        }
+      } catch {
+        // Pointer capture can already be released by the browser.
+      }
+    }
+    activePointerId = null;
+    clearDocumentListeners();
+    if (animationFrame !== 0) {
+      cancelAnimationFrame(animationFrame);
+      animationFrame = 0;
+    }
+    flushPan();
+  };
+
+  function handlePointerDown(event: PointerEvent): void {
+    if (
+      event.button !== 1 ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey ||
+      !controls.enabled ||
+      !controls.enablePan ||
+      activePointerId !== null
+    ) {
+      return;
+    }
+
+    preventMiddlePanEvent(event);
+    activePointerId = event.pointerId;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    pendingDeltaX = 0;
+    pendingDeltaY = 0;
+    try {
+      element.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is best-effort; document listeners still keep the drag alive.
+    }
+    document.addEventListener("pointermove", handlePointerMove, { capture: true });
+    document.addEventListener("pointerup", handlePointerEnd, { capture: true });
+    document.addEventListener("pointercancel", handlePointerEnd, { capture: true });
+    window.addEventListener("blur", handleWindowBlur);
+  }
+
+  function handlePointerMove(event: PointerEvent): void {
+    if (event.pointerId !== activePointerId) {
+      return;
+    }
+
+    preventMiddlePanEvent(event);
+    pendingDeltaX += event.clientX - lastX;
+    pendingDeltaY += event.clientY - lastY;
+    lastX = event.clientX;
+    lastY = event.clientY;
+    schedulePan();
+  }
+
+  function handlePointerEnd(event: PointerEvent): void {
+    if (event.pointerId === activePointerId) {
+      finishPan(event);
+    }
+  }
+
+  function handleWindowBlur(): void {
+    finishPan(null);
+  }
+
+  element.addEventListener("pointerdown", handlePointerDown, { capture: true });
+
+  return {
+    dispose: () => {
+      element.removeEventListener("pointerdown", handlePointerDown, { capture: true });
+      clearDocumentListeners();
+      if (animationFrame !== 0) {
+        cancelAnimationFrame(animationFrame);
+        animationFrame = 0;
+      }
+    },
+  };
 }
 
 function errorMessage(error: unknown): string {
@@ -268,6 +444,8 @@ function isThreeMaterial(value: unknown): value is ThreeNamespace.Material {
 }
 
 function disposeThreeViewer(state: ThreeViewerState): void {
+  state.middlePanController?.dispose();
+  state.middlePanController = null;
   state.controls.dispose();
   if (state.ownsModelAssets) {
     disposeThreeGroupAssets(state.group);
@@ -531,7 +709,9 @@ function prepareExplodedMeshes(
     if (!mesh.isMesh) {
       return;
     }
-    mesh.userData.cadSenseBasePosition ??= mesh.position.clone();
+    if (!(mesh.userData.cadSenseBasePosition instanceof three.Vector3)) {
+      mesh.userData.cadSenseBasePosition = mesh.position.clone();
+    }
     if (mesh.userData.cadSenseExplodeDirection instanceof three.Vector3) {
       return;
     }
@@ -893,6 +1073,9 @@ async function loadFilesDirect3mfUrl(
   renderer.domElement.style.filter = CANVAS_COLOR_GRADE_FILTER;
   renderer.domElement.style.transition = MODEL_REVEAL_TRANSITION;
   renderer.domElement.style.opacity = "0";
+  renderer.domElement.addEventListener("mousedown", preventMiddleMouseDefault);
+  renderer.domElement.addEventListener("pointerdown", preventMiddleMouseDefault);
+  renderer.domElement.addEventListener("auxclick", preventMiddleMouseDefault);
   root.append(renderer.domElement);
 
   const scene = new threeModule.Scene();
@@ -911,6 +1094,7 @@ async function loadFilesDirect3mfUrl(
   const controls = new orbitControlsModule.OrbitControls(camera, renderer.domElement);
   controls.enableDamping = false;
   controls.screenSpacePanning = false;
+  controls.mouseButtons.MIDDLE = threeModule.MOUSE.PAN;
   controls.target.copy(model.boundingSphere.center);
   const componentTree = buildThreeComponentTree({ group: model.group });
 
@@ -921,6 +1105,7 @@ async function loadFilesDirect3mfUrl(
     scene,
     camera,
     controls,
+    middlePanController: null,
     group: model.group,
     boundingSphere: model.boundingSphere,
     exploded: false,
@@ -929,6 +1114,7 @@ async function loadFilesDirect3mfUrl(
     ownsModelAssets,
   };
   threeViewerRef = state;
+  state.middlePanController = createMiddlePanController(state);
 
   resizeThreeViewer(state);
   controls.addEventListener("change", () => renderThreeViewer(state));
