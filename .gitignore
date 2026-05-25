@@ -18,6 +18,7 @@ release-mock/
 .docs/
 AGENTS.md
 CLAUDE.md
+docs/
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
@@ -30,5 +31,3 @@ squashfs-root/
 .gstack/
 dist-electron/
 .electron-runtime/
-onshape-shaded-preview/
-docs/
