@@ -10,6 +10,13 @@ const projectId = "project-cad-browser";
 
 let cadFrameUrl = "";
 const observedFrameRequests: unknown[] = [];
+let cadViewCommandHandler:
+  | ((command: {
+      readonly threadId: string;
+      readonly type: "set-exploded";
+      readonly exploded: boolean;
+    }) => void)
+  | null = null;
 
 const onshapeContext = {
   provider: "onshape" as const,
@@ -50,7 +57,14 @@ vi.mock("../environmentApi", () => ({
           },
         ],
       })),
-      onCadViewCommand: vi.fn(() => () => undefined),
+      onCadViewCommand: vi.fn((handler) => {
+        cadViewCommandHandler = handler;
+        return () => {
+          if (cadViewCommandHandler === handler) {
+            cadViewCommandHandler = null;
+          }
+        };
+      }),
       onCadHierarchyRequest: vi.fn(() => () => undefined),
       uploadCadHierarchy: vi.fn(async () => ({ components: [] })),
       onCadScreenshotRequest: vi.fn(() => () => undefined),
@@ -64,6 +78,9 @@ vi.mock("../storeSelectors", () => ({
     id: threadId,
     environmentId,
     projectId,
+    messages: [],
+    latestTurn: null,
+    session: null,
     externalContext: null,
     worktreePath: null,
     reviews: [],
@@ -137,6 +154,7 @@ describe("CadPanel browser behavior", () => {
   afterEach(() => {
     vi.clearAllMocks();
     observedFrameRequests.length = 0;
+    cadViewCommandHandler = null;
     useUiStateStore.setState({
       cadExplodedByThreadId: {},
       cadZoomToFitRequestByThreadId: {},
@@ -203,6 +221,101 @@ describe("CadPanel browser behavior", () => {
     expect(useUiStateStore.getState().cadExplodedByThreadId[projectId]).toBe(false);
 
     window.removeEventListener("message", onObservedRequest);
+    await screen.unmount();
+    queryClient.clear();
+  });
+
+  it("syncs external exploded view commands into the header toggle state", async () => {
+    cadFrameUrl = delayedReadyFrameUrl();
+    const onObservedRequest = (event: MessageEvent<unknown>) => {
+      if (
+        typeof event.data === "object" &&
+        event.data !== null &&
+        "source" in event.data &&
+        event.data.source === "cad-test-frame-observation" &&
+        "request" in event.data
+      ) {
+        observedFrameRequests.push(event.data.request);
+      }
+    };
+    window.addEventListener("message", onObservedRequest);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await vi.waitFor(() => expect(cadViewCommandHandler).toBeTypeOf("function"));
+    await vi.waitFor(() => {
+      expect(observedFrameRequests).toContainEqual(
+        expect.objectContaining({ type: "set-exploded", enabled: false }),
+      );
+    });
+
+    cadViewCommandHandler?.({ threadId, type: "set-exploded", exploded: true });
+
+    await vi.waitFor(() => {
+      expect(useUiStateStore.getState().cadExplodedByThreadId[projectId]).toBe(true);
+    });
+
+    window.removeEventListener("message", onObservedRequest);
+    await screen.unmount();
+    queryClient.clear();
+  });
+
+  it("covers fullscreen layout changes and keeps the control anchored during entry", async () => {
+    cadFrameUrl = delayedReadyFrameUrl();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+
+    const expandButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Expand CAD view"]',
+    );
+    expect(expandButton).toBeTruthy();
+    const initialRect = expandButton!.getBoundingClientRect();
+
+    expandButton!.click();
+    await new Promise((resolve) => setTimeout(resolve, 320));
+
+    const anchoredButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Exit fullscreen CAD view"]',
+    );
+    expect(anchoredButton).toBeTruthy();
+    const anchoredRect = anchoredButton!.getBoundingClientRect();
+    expect(Math.abs(anchoredRect.left - initialRect.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(anchoredRect.top - initialRect.top)).toBeLessThanOrEqual(1);
+
+    await vi.waitFor(() => {
+      const releasedButton = document.querySelector<HTMLButtonElement>(
+        'button[aria-label="Exit fullscreen CAD view"]',
+      );
+      expect(releasedButton).toBeTruthy();
+      const releasedRect = releasedButton!.getBoundingClientRect();
+      expect(releasedRect.top).toBeGreaterThanOrEqual(48);
+    });
+
+    await page.getByRole("button", { name: "Exit fullscreen CAD view" }).click();
     await screen.unmount();
     queryClient.clear();
   });
