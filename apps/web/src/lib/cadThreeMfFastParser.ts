@@ -6,10 +6,31 @@ type ThreeMatrix4 = ThreeNamespace.Matrix4;
 type ThreeBufferGeometry = ThreeNamespace.BufferGeometry;
 type ThreeMaterial = ThreeNamespace.Material;
 
-interface ParsedColor {
+export interface ParsedColor {
   readonly r: number;
   readonly g: number;
   readonly b: number;
+}
+
+export interface CadThreeMfParsedMesh {
+  readonly id: string;
+  readonly name: string | null;
+  readonly color: ParsedColor | null;
+  readonly positions: Float32Array;
+  readonly indices: Uint16Array | Uint32Array;
+}
+
+export interface CadThreeMfParsedNode {
+  readonly kind: "group" | "mesh";
+  readonly name: string | null;
+  readonly transform: readonly number[] | null;
+  readonly meshId?: string;
+  readonly children?: readonly CadThreeMfParsedNode[];
+}
+
+export interface CadThreeMfParsedModel {
+  readonly meshes: readonly CadThreeMfParsedMesh[];
+  readonly roots: readonly CadThreeMfParsedNode[];
 }
 
 interface ParsedComponent {
@@ -28,12 +49,6 @@ interface ParsedObject {
 interface ParsedBuildItem {
   readonly objectId: string;
   readonly transform: readonly number[] | null;
-}
-
-interface BuiltMesh {
-  readonly geometry: ThreeBufferGeometry;
-  readonly material: ThreeMaterial;
-  readonly name: string | null;
 }
 
 const MODEL_ENTRY_PATTERN = /^3D\/[^/]*\.model$/u;
@@ -196,7 +211,7 @@ function parseBuildItems(modelXml: string): ParsedBuildItem[] {
   return items;
 }
 
-function parseGeometry(three: ThreeModule, meshBlock: string): ThreeBufferGeometry {
+function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indices" | "positions"> {
   const vertexCount = countMatches(VERTEX_PATTERN, meshBlock);
   const triangleCount = countMatches(TRIANGLE_PATTERN, meshBlock);
   const positions = new Float32Array(vertexCount * 3);
@@ -227,28 +242,33 @@ function parseGeometry(three: ThreeModule, meshBlock: string): ThreeBufferGeomet
   }
   TRIANGLE_PATTERN.lastIndex = 0;
 
+  return { positions, indices };
+}
+
+function geometryForParsedMesh(
+  three: ThreeModule,
+  mesh: Pick<CadThreeMfParsedMesh, "indices" | "positions">,
+): ThreeBufferGeometry {
   const geometry = new three.BufferGeometry();
-  geometry.setAttribute("position", new three.BufferAttribute(positions, 3));
-  geometry.setIndex(new three.BufferAttribute(indices, 1));
+  geometry.setAttribute("position", new three.BufferAttribute(mesh.positions, 3));
+  geometry.setIndex(new three.BufferAttribute(mesh.indices, 1));
   geometry.computeVertexNormals();
   return geometry;
 }
 
-function materialForObject(
+function colorForObject(object: ParsedObject, colors: readonly ParsedColor[]): ParsedColor | null {
+  return object.pindex === null ? null : (colors[object.pindex] ?? null);
+}
+
+function materialForParsedMesh(
   three: ThreeModule,
-  object: ParsedObject,
-  colors: readonly ParsedColor[],
+  mesh: Pick<CadThreeMfParsedMesh, "color">,
 ): ThreeMaterial {
-  const color = object.pindex === null ? null : (colors[object.pindex] ?? null);
+  const color = mesh.color;
   return new three.MeshPhongMaterial({
     color: color ? new three.Color(color.r, color.g, color.b) : new three.Color(0x8f969d),
     side: three.DoubleSide,
   });
-}
-
-function disposeBuiltMesh(mesh: BuiltMesh): void {
-  mesh.geometry.dispose();
-  mesh.material.dispose();
 }
 
 function findRootModelXml(unzipped: Record<string, Uint8Array>): Uint8Array {
@@ -264,41 +284,40 @@ export function getThreeMfRootModelByteLength(unzipped: Record<string, Uint8Arra
   return findRootModelXml(unzipped).byteLength;
 }
 
-export function parseThreeMfFast(input: {
-  readonly three: ThreeModule;
+export function parseThreeMfFastModel(input: {
   readonly unzipped: Record<string, Uint8Array>;
-}): ThreeGroup {
-  const { three } = input;
+}): CadThreeMfParsedModel {
   const modelBytes = findRootModelXml(input.unzipped);
   const modelXml = new TextDecoder().decode(modelBytes);
   const colors = parseColors(modelXml);
   const objects = parseObjects(modelXml);
   const buildItems = parseBuildItems(modelXml);
-  const builtMeshes = new Map<string, BuiltMesh>();
-  const group = new three.Group();
+  const parsedMeshes = new Map<string, CadThreeMfParsedMesh>();
 
-  const getBuiltMesh = (object: ParsedObject): BuiltMesh | null => {
+  const getParsedMesh = (object: ParsedObject): CadThreeMfParsedMesh | null => {
     if (!object.meshBlock) {
       return null;
     }
-    const existing = builtMeshes.get(object.id);
+    const existing = parsedMeshes.get(object.id);
     if (existing) {
       return existing;
     }
+    const geometry = parseGeometryData(object.meshBlock);
     const built = {
-      geometry: parseGeometry(three, object.meshBlock),
-      material: materialForObject(three, object, colors),
+      id: object.id,
       name: object.name,
-    };
-    builtMeshes.set(object.id, built);
+      color: colorForObject(object, colors),
+      ...geometry,
+    } satisfies CadThreeMfParsedMesh;
+    parsedMeshes.set(object.id, built);
     return built;
   };
 
-  const appendObject = (
+  const buildNode = (
     objectId: string,
-    localMatrix: ThreeMatrix4,
+    transform: readonly number[] | null,
     stack: Set<string>,
-  ): ThreeNamespace.Object3D | null => {
+  ): CadThreeMfParsedNode | null => {
     if (stack.has(objectId)) {
       return null;
     }
@@ -307,35 +326,36 @@ export function parseThreeMfFast(input: {
       return null;
     }
 
-    const mesh = getBuiltMesh(object);
+    const mesh = getParsedMesh(object);
     if (mesh) {
-      const rendered = new three.Mesh(mesh.geometry, mesh.material);
-      rendered.name = mesh.name ?? "";
-      rendered.applyMatrix4(localMatrix);
-      return rendered;
+      return {
+        kind: "mesh",
+        name: mesh.name,
+        transform,
+        meshId: mesh.id,
+      };
     }
 
     stack.add(objectId);
-    const assembly = new three.Group();
-    assembly.name = object.name ?? "";
-    assembly.applyMatrix4(localMatrix);
+    const children: CadThreeMfParsedNode[] = [];
     for (const component of object.components) {
-      const child = appendObject(
-        component.objectId,
-        matrixFrom3mfTransform(three, component.transform),
-        stack,
-      );
+      const child = buildNode(component.objectId, component.transform, stack);
       if (child) {
-        assembly.add(child);
+        children.push(child);
       }
     }
     stack.delete(objectId);
-    if (!object.name && assembly.children.length === 1) {
-      const child = assembly.children[0]!;
-      child.applyMatrix4(localMatrix);
-      return child;
+    if (!object.name && children.length === 1 && !transform) {
+      return children[0]!;
     }
-    return assembly.children.length > 0 ? assembly : null;
+    return children.length > 0
+      ? {
+          kind: "group",
+          name: object.name,
+          transform,
+          children,
+        }
+      : null;
   };
 
   const roots =
@@ -345,23 +365,101 @@ export function parseThreeMfFast(input: {
           .filter((object) => object.meshBlock)
           .map((object) => ({ objectId: object.id, transform: null }));
 
+  const rootNodes: CadThreeMfParsedNode[] = [];
   for (const item of roots) {
-    const child = appendObject(
-      item.objectId,
-      matrixFrom3mfTransform(three, item.transform),
-      new Set(),
-    );
+    const child = buildNode(item.objectId, item.transform, new Set());
+    if (child) {
+      rootNodes.push(child);
+    }
+  }
+
+  if (rootNodes.length === 0) {
+    throw new Error("3MF model did not contain renderable mesh geometry.");
+  }
+
+  return { meshes: Array.from(parsedMeshes.values()), roots: rootNodes };
+}
+
+export function buildThreeMfFastGroup(input: {
+  readonly three: ThreeModule;
+  readonly model: CadThreeMfParsedModel;
+}): ThreeGroup {
+  const { three } = input;
+  const meshDataById = new Map(input.model.meshes.map((mesh) => [mesh.id, mesh]));
+  const geometryById = new Map<string, ThreeBufferGeometry>();
+  const materialById = new Map<string, ThreeMaterial>();
+  const group = new three.Group();
+
+  const getGeometry = (mesh: CadThreeMfParsedMesh): ThreeBufferGeometry => {
+    const existing = geometryById.get(mesh.id);
+    if (existing) {
+      return existing;
+    }
+    const geometry = geometryForParsedMesh(three, mesh);
+    geometryById.set(mesh.id, geometry);
+    return geometry;
+  };
+
+  const getMaterial = (mesh: CadThreeMfParsedMesh): ThreeMaterial => {
+    const existing = materialById.get(mesh.id);
+    if (existing) {
+      return existing;
+    }
+    const material = materialForParsedMesh(three, mesh);
+    materialById.set(mesh.id, material);
+    return material;
+  };
+
+  const buildObject = (node: CadThreeMfParsedNode): ThreeNamespace.Object3D | null => {
+    if (node.kind === "mesh") {
+      const meshData = node.meshId ? meshDataById.get(node.meshId) : undefined;
+      if (!meshData) {
+        return null;
+      }
+      const mesh = new three.Mesh(getGeometry(meshData), getMaterial(meshData));
+      mesh.name = node.name ?? "";
+      mesh.applyMatrix4(matrixFrom3mfTransform(three, node.transform));
+      return mesh;
+    }
+
+    const assembly = new three.Group();
+    assembly.name = node.name ?? "";
+    assembly.applyMatrix4(matrixFrom3mfTransform(three, node.transform));
+    for (const childNode of node.children ?? []) {
+      const child = buildObject(childNode);
+      if (child) {
+        assembly.add(child);
+      }
+    }
+    return assembly.children.length > 0 ? assembly : null;
+  };
+
+  for (const root of input.model.roots) {
+    const child = buildObject(root);
     if (child) {
       group.add(child);
     }
   }
 
   if (group.children.length === 0) {
-    for (const mesh of builtMeshes.values()) {
-      disposeBuiltMesh(mesh);
+    for (const geometry of geometryById.values()) {
+      geometry.dispose();
+    }
+    for (const material of materialById.values()) {
+      material.dispose();
     }
     throw new Error("3MF model did not contain renderable mesh geometry.");
   }
 
   return group;
+}
+
+export function parseThreeMfFast(input: {
+  readonly three: ThreeModule;
+  readonly unzipped: Record<string, Uint8Array>;
+}): ThreeGroup {
+  return buildThreeMfFastGroup({
+    three: input.three,
+    model: parseThreeMfFastModel({ unzipped: input.unzipped }),
+  });
 }
