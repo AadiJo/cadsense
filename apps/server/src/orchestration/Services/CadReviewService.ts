@@ -7,6 +7,9 @@ export interface CadReviewServiceShape {
   readonly generateReview: (
     event: Extract<OrchestrationEvent, { type: "thread.review-requested" }>,
   ) => Effect.Effect<void, never>;
+  readonly stopReview: (
+    event: Extract<OrchestrationEvent, { type: "thread.review-stop-requested" }>,
+  ) => Effect.Effect<void, never>;
   readonly recoverInterruptedReviews: () => Effect.Effect<void, never>;
 }
 

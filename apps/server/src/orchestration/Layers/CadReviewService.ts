@@ -30,6 +30,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { captureCadScreenshot } from "../../cad/CadScreenshotClient.ts";
+import { rejectCadScreenshotPendingForThread } from "../../cad/CadScreenshotCapture.ts";
 import { resolveCadViewExportRootForInstance } from "../../cad/CadViewExportRoot.ts";
 import { CadViewScheduler } from "../../cad/CadViewScheduler.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
@@ -93,6 +94,8 @@ interface BaselineCaptureRecord {
 function isCadReviewActive(status: CadReviewStatus): boolean {
   return CAD_REVIEW_ACTIVE_STATUSES.has(status);
 }
+
+const reviewKey = (threadId: ThreadId, reviewRunId: string) => `${threadId}\0${reviewRunId}`;
 
 const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
@@ -258,6 +261,24 @@ function payloadRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
+}
+
+function reviewChildThreadIdsFromActivities(
+  thread: OrchestrationThread,
+  reviewRunId: string,
+): ThreadId[] {
+  const childThreadIds = new Set<string>();
+  for (const activity of thread.activities) {
+    if (activity.kind !== "cad-review.child-thread.created") {
+      continue;
+    }
+    const payload = payloadRecord(activity.payload);
+    if (payload?.reviewRunId !== reviewRunId || typeof payload.childThreadId !== "string") {
+      continue;
+    }
+    childThreadIds.add(payload.childThreadId);
+  }
+  return [...childThreadIds].map((childThreadId) => ThreadId.make(childThreadId));
 }
 
 function viewNameFromPath(path: string): string {
@@ -802,6 +823,37 @@ const make = Effect.gen(function* () {
   const cadViewScheduler = yield* CadViewScheduler;
   const pathService = yield* Path.Path;
   const serverSettingsService = yield* ServerSettingsService;
+  const activeReviews = new Map<
+    string,
+    { readonly childThreadIds: Set<ThreadId>; stopped: boolean }
+  >();
+
+  const getActiveReview = (threadId: ThreadId, reviewRunId: string) => {
+    const key = reviewKey(threadId, reviewRunId);
+    const existing = activeReviews.get(key);
+    if (existing) {
+      return existing;
+    }
+    const state = { childThreadIds: new Set<ThreadId>(), stopped: false };
+    activeReviews.set(key, state);
+    return state;
+  };
+
+  const failIfReviewStopped = (threadId: ThreadId, reviewRunId: string) =>
+    Effect.sync(() => activeReviews.get(reviewKey(threadId, reviewRunId))?.stopped === true).pipe(
+      Effect.flatMap((stopped) =>
+        stopped
+          ? Effect.fail(
+              new CadReviewRunError({
+                message: "CAD review stopped by user.",
+              }),
+            )
+          : Effect.void,
+      ),
+    );
+
+  const isReviewStopped = (threadId: ThreadId, reviewRunId: string) =>
+    activeReviews.get(reviewKey(threadId, reviewRunId))?.stopped === true;
 
   const appendActivity = (input: {
     readonly threadId: OrchestrationThread["id"];
@@ -850,6 +902,7 @@ const make = Effect.gen(function* () {
         const captures: BaselineCaptureRecord[] = [];
         const failureDetails: string[] = [];
         for (const spec of BASELINE_CAPTURE_SPECS) {
+          yield* failIfReviewStopped(input.thread.id, input.reviewRunId);
           const createdAt = yield* nowIso;
           const captureExit = yield* Effect.exit(
             captureCadScreenshot({
@@ -867,6 +920,7 @@ const make = Effect.gen(function* () {
               ),
             ),
           );
+          yield* failIfReviewStopped(input.thread.id, input.reviewRunId);
           if (Exit.isFailure(captureExit)) {
             const detail = Cause.pretty(captureExit.cause);
             failureDetails.push(`${spec.view}: ${detail}`);
@@ -1014,6 +1068,75 @@ const make = Effect.gen(function* () {
       return childThreadId;
     });
 
+  const stopChildSessions = (input: {
+    readonly childThreadIds: ReadonlySet<ThreadId>;
+    readonly reviewRunId: string;
+    readonly createdAt: string;
+  }) =>
+    Effect.gen(function* () {
+      for (const childThreadId of input.childThreadIds) {
+        yield* orchestrationEngine
+          .dispatch({
+            type: "thread.session.stop",
+            commandId: serverCommandId("cad-review-stop-child-session"),
+            threadId: childThreadId,
+            createdAt: input.createdAt,
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("failed to stop CAD review child thread", {
+                threadId: childThreadId,
+                reviewRunId: input.reviewRunId,
+                cause: Cause.pretty(cause),
+              }),
+            ),
+          );
+      }
+      return input.childThreadIds.size;
+    });
+
+  const stopChildSessionsForReview = (input: {
+    readonly thread: OrchestrationThread;
+    readonly reviewRunId: string;
+    readonly createdAt: string;
+    readonly activeChildThreadIds?: ReadonlySet<ThreadId>;
+  }) => {
+    const childThreadIds = new Set(input.activeChildThreadIds ?? []);
+    for (const childThreadId of reviewChildThreadIdsFromActivities(
+      input.thread,
+      input.reviewRunId,
+    )) {
+      childThreadIds.add(childThreadId);
+    }
+    return stopChildSessions({
+      childThreadIds,
+      reviewRunId: input.reviewRunId,
+      createdAt: input.createdAt,
+    });
+  };
+
+  const stopLiveChildSessionsForInactiveReview = (input: {
+    readonly thread: OrchestrationThread;
+    readonly reviewRunId: string;
+    readonly liveThreadIds: ReadonlySet<ThreadId>;
+    readonly createdAt: string;
+  }) => {
+    const childThreadIds = new Set<ThreadId>();
+    for (const childThreadId of reviewChildThreadIdsFromActivities(
+      input.thread,
+      input.reviewRunId,
+    )) {
+      if (input.liveThreadIds.has(childThreadId)) {
+        childThreadIds.add(childThreadId);
+      }
+    }
+    return stopChildSessions({
+      childThreadIds,
+      reviewRunId: input.reviewRunId,
+      createdAt: input.createdAt,
+    });
+  };
+
   const waitForChildTurn = (
     childThreadId: ThreadId,
   ): Effect.Effect<OrchestrationThread, CadReviewRunError> =>
@@ -1045,6 +1168,11 @@ const make = Effect.gen(function* () {
       if (sessionStatus === "error" && childThread.session?.lastError) {
         return yield* new CadReviewRunError({ message: childThread.session.lastError });
       }
+      if (sessionStatus === "interrupted" || sessionStatus === "stopped") {
+        return yield* new CadReviewRunError({
+          message: `Child reviewer '${childThreadId}' was ${sessionStatus}.`,
+        });
+      }
       yield* Effect.sleep(Duration.seconds(1));
       return yield* waitForChildTurn(childThreadId);
     });
@@ -1058,37 +1186,46 @@ const make = Effect.gen(function* () {
     readonly createdAt: string;
   }) =>
     Effect.gen(function* () {
+      const activeReview = getActiveReview(input.parentThread.id, input.reviewRunId);
+      yield* failIfReviewStopped(input.parentThread.id, input.reviewRunId);
       const childThreadId = yield* createChildThread(input);
-      yield* orchestrationEngine.dispatch({
-        type: "thread.turn.start",
-        commandId: serverCommandId("cad-review-child-turn"),
-        threadId: childThreadId,
-        message: {
-          messageId: MessageId.make(`user:${input.reviewRunId}:${input.persona}`),
-          role: "user",
-          text: input.prompt,
-          attachments: [],
-        },
-        modelSelection: input.parentThread.modelSelection,
-        runtimeMode: input.parentThread.runtimeMode,
-        interactionMode: input.parentThread.interactionMode,
-        createdAt: input.createdAt,
-      });
-      const completed = yield* waitForChildTurn(childThreadId).pipe(
-        Effect.timeoutOption(REVIEWER_TURN_TIMEOUT),
-        Effect.flatMap((option) =>
-          Option.match(option, {
-            onNone: () =>
-              Effect.fail(
-                new CadReviewRunError({
-                  message: `Timed out waiting for '${childThreadId}'.`,
-                }),
-              ),
-            onSome: (childThread) => Effect.succeed(childThread),
-          }),
-        ),
+      activeReview.childThreadIds.add(childThreadId);
+      return yield* Effect.gen(function* () {
+        yield* failIfReviewStopped(input.parentThread.id, input.reviewRunId);
+        yield* orchestrationEngine.dispatch({
+          type: "thread.turn.start",
+          commandId: serverCommandId("cad-review-child-turn"),
+          threadId: childThreadId,
+          message: {
+            messageId: MessageId.make(`user:${input.reviewRunId}:${input.persona}`),
+            role: "user",
+            text: input.prompt,
+            attachments: [],
+          },
+          modelSelection: input.parentThread.modelSelection,
+          runtimeMode: input.parentThread.runtimeMode,
+          interactionMode: input.parentThread.interactionMode,
+          createdAt: input.createdAt,
+        });
+        const completed = yield* waitForChildTurn(childThreadId).pipe(
+          Effect.timeoutOption(REVIEWER_TURN_TIMEOUT),
+          Effect.flatMap((option) =>
+            Option.match(option, {
+              onNone: () =>
+                Effect.fail(
+                  new CadReviewRunError({
+                    message: `Timed out waiting for '${childThreadId}'.`,
+                  }),
+                ),
+              onSome: (childThread) => Effect.succeed(childThread),
+            }),
+          ),
+        );
+        yield* failIfReviewStopped(input.parentThread.id, input.reviewRunId);
+        return { ok: true, childThread: completed } satisfies ChildRunResult;
+      }).pipe(
+        Effect.ensuring(Effect.sync(() => activeReview.childThreadIds.delete(childThreadId))),
       );
-      return { ok: true, childThread: completed } satisfies ChildRunResult;
     }).pipe(
       Effect.matchCauseEffect({
         onFailure: (cause) =>
@@ -1167,6 +1304,7 @@ const make = Effect.gen(function* () {
       }
       const thread = threadOption.value;
       activeThreadForFailure = thread;
+      getActiveReview(thread.id, event.payload.reviewRunId).stopped = false;
       const snapshot = yield* projectionSnapshotQuery.getCommandReadModel();
       const projectTitle = snapshot.projects.find(
         (project) => project.id === thread.projectId,
@@ -1208,11 +1346,13 @@ const make = Effect.gen(function* () {
         createdAt,
       });
       yield* upsertReview(thread.id, review);
+      yield* failIfReviewStopped(thread.id, review.id);
 
       const baselineCapture = yield* captureBaselineEvidence({
         thread,
         reviewRunId: review.id,
       });
+      yield* failIfReviewStopped(thread.id, review.id);
       updatedAt = yield* nowIso;
       if (baselineCapture.ok) {
         Object.assign(review, {
@@ -1262,6 +1402,7 @@ const make = Effect.gen(function* () {
         return;
       }
       yield* upsertReview(thread.id, review);
+      yield* failIfReviewStopped(thread.id, review.id);
 
       updatedAt = yield* nowIso;
       Object.assign(review, { status: "planning", activePersona: "synthesis", updatedAt });
@@ -1294,6 +1435,7 @@ const make = Effect.gen(function* () {
         createdAt: updatedAt,
       });
       const planningAt = yield* nowIso;
+      yield* failIfReviewStopped(thread.id, review.id);
       if (planningChild.ok) {
         const planningArtifacts = artifactsFromChild({
           reviewRunId: review.id,
@@ -1336,6 +1478,7 @@ const make = Effect.gen(function* () {
         createdAt: planningAt,
       });
       yield* upsertReview(thread.id, review);
+      yield* failIfReviewStopped(thread.id, review.id);
 
       updatedAt = yield* nowIso;
       Object.assign(review, { status: "reviewing", activePersona: undefined, updatedAt });
@@ -1380,8 +1523,10 @@ const make = Effect.gen(function* () {
           }).pipe(Effect.map((personaChild) => ({ persona, personaChild }))),
         { concurrency: Math.min(CAD_REVIEW_REVIEWER_CONCURRENCY, reviewerStarts.length) },
       );
+      yield* failIfReviewStopped(thread.id, review.id);
 
       for (const { persona, personaChild } of personaRuns) {
+        yield* failIfReviewStopped(thread.id, review.id);
         const reportAt = yield* nowIso;
         if (personaChild.ok) {
           const personaArtifacts = artifactsFromChild({
@@ -1449,6 +1594,7 @@ const make = Effect.gen(function* () {
         });
         yield* upsertReview(thread.id, review);
       }
+      yield* failIfReviewStopped(thread.id, review.id);
 
       const deepDiveFindings = selectDeepDiveFindings(
         review.personaReports.filter((report) => report.status === "completed"),
@@ -1486,6 +1632,7 @@ const make = Effect.gen(function* () {
           createdAt: updatedAt,
         });
         const deepDiveAt = yield* nowIso;
+        yield* failIfReviewStopped(thread.id, review.id);
         if (deepDiveChild.ok) {
           const deepDiveArtifacts = artifactsFromChild({
             reviewRunId: review.id,
@@ -1538,6 +1685,7 @@ const make = Effect.gen(function* () {
         });
         yield* upsertReview(thread.id, review);
       }
+      yield* failIfReviewStopped(thread.id, review.id);
 
       updatedAt = yield* nowIso;
       Object.assign(review, { status: "synthesizing", activePersona: "synthesis", updatedAt });
@@ -1572,6 +1720,7 @@ const make = Effect.gen(function* () {
       const synthesisText = synthesisChild?.ok
         ? assistantText(synthesisChild.childThread.messages)
         : "";
+      yield* failIfReviewStopped(thread.id, review.id);
       const synthesisArtifacts = synthesisChild?.ok
         ? artifactsFromChild({
             reviewRunId: review.id,
@@ -1646,30 +1795,144 @@ const make = Effect.gen(function* () {
       Effect.catchCause((cause) =>
         Effect.logWarning("cad review generation failed", { cause: Cause.pretty(cause) }).pipe(
           Effect.flatMap(() =>
-            isCadReviewActive(activeReviewForFailure?.status ?? "failed")
-              ? failActiveReview(cause).pipe(
-                  Effect.catchCause((upsertCause) =>
-                    Effect.logWarning("failed to mark interrupted CAD review as failed", {
-                      cause: Cause.pretty(upsertCause),
-                    }),
-                  ),
-                )
-              : Effect.void,
+            isReviewStopped(event.payload.threadId, event.payload.reviewRunId)
+              ? Effect.void
+              : isCadReviewActive(activeReviewForFailure?.status ?? "failed")
+                ? failActiveReview(cause).pipe(
+                    Effect.catchCause((upsertCause) =>
+                      Effect.logWarning("failed to mark interrupted CAD review as failed", {
+                        cause: Cause.pretty(upsertCause),
+                      }),
+                    ),
+                  )
+                : Effect.void,
           ),
+        ),
+      ),
+      Effect.ensuring(
+        Effect.sync(() =>
+          activeReviews.delete(reviewKey(event.payload.threadId, event.payload.reviewRunId)),
         ),
       ),
     );
   };
 
+  const stopReview: CadReviewServiceShape["stopReview"] = (event) =>
+    Effect.gen(function* () {
+      const { threadId, reviewRunId, createdAt } = event.payload;
+      const activeReview = getActiveReview(threadId, reviewRunId);
+      activeReview.stopped = true;
+      const interruptedScreenshotCount = rejectCadScreenshotPendingForThread(
+        threadId,
+        "CAD review stopped by user.",
+      );
+      const threadOption = yield* projectionSnapshotQuery
+        .getThreadDetailById(threadId)
+        .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+      let interruptedChildThreadCount = 0;
+      if (Option.isSome(threadOption)) {
+        interruptedChildThreadCount = yield* stopChildSessionsForReview({
+          thread: threadOption.value,
+          reviewRunId,
+          createdAt,
+          activeChildThreadIds: activeReview.childThreadIds,
+        });
+      } else {
+        interruptedChildThreadCount = activeReview.childThreadIds.size;
+        for (const childThreadId of activeReview.childThreadIds) {
+          yield* orchestrationEngine
+            .dispatch({
+              type: "thread.session.stop",
+              commandId: serverCommandId("cad-review-stop-child-session"),
+              threadId: childThreadId,
+              createdAt,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("failed to stop CAD review child thread", {
+                  threadId: childThreadId,
+                  reviewRunId,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
+        }
+      }
+
+      if (Option.isNone(threadOption)) {
+        return;
+      }
+      const review = (threadOption.value.reviews ?? []).find((entry) => entry.id === reviewRunId);
+      if (!review || !isCadReviewActive(review.status)) {
+        return;
+      }
+      yield* upsertReview(threadId, {
+        ...review,
+        status: "failed",
+        activePersona: undefined,
+        error: "CAD review stopped by user.",
+        updatedAt: createdAt,
+      });
+      yield* appendActivity({
+        threadId,
+        tone: "error",
+        kind: "cad-review.stopped",
+        summary: "CAD review stopped",
+        payload: {
+          reviewRunId,
+          interruptedScreenshotCount,
+          interruptedChildThreadCount,
+        },
+        createdAt,
+      });
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to stop CAD review", { cause: Cause.pretty(cause) }),
+      ),
+    );
+
   const recoverInterruptedReviews: CadReviewServiceShape["recoverInterruptedReviews"] = () =>
     Effect.gen(function* () {
       const snapshot = yield* projectionSnapshotQuery.getSnapshot();
+      const liveThreadIds = new Set(
+        snapshot.threads
+          .filter((thread) => thread.session && thread.session.status !== "stopped")
+          .map((thread) => thread.id),
+      );
       for (const thread of snapshot.threads) {
         for (const review of thread.reviews ?? []) {
           if (!isCadReviewActive(review.status)) {
+            if (review.status === "failed" || review.status === "partial") {
+              const recoveredAt = yield* nowIso;
+              const interruptedChildThreadCount = yield* stopLiveChildSessionsForInactiveReview({
+                thread,
+                reviewRunId: review.id,
+                liveThreadIds,
+                createdAt: recoveredAt,
+              });
+              if (interruptedChildThreadCount > 0) {
+                yield* appendActivity({
+                  threadId: thread.id,
+                  tone: "error",
+                  kind: "cad-review.child-sessions-recovered",
+                  summary: "Interrupted CAD review child sessions stopped",
+                  payload: {
+                    reviewRunId: review.id,
+                    status: review.status,
+                    interruptedChildThreadCount,
+                  },
+                  createdAt: recoveredAt,
+                });
+              }
+            }
             continue;
           }
           const failedAt = yield* nowIso;
+          const interruptedChildThreadCount = yield* stopChildSessionsForReview({
+            thread,
+            reviewRunId: review.id,
+            createdAt: failedAt,
+          });
           const failedReview: CadReviewReport = {
             ...review,
             status: "failed",
@@ -1687,6 +1950,7 @@ const make = Effect.gen(function* () {
             payload: {
               reviewRunId: review.id,
               previousStatus: review.status,
+              interruptedChildThreadCount,
             },
             createdAt: failedAt,
           });
@@ -1701,7 +1965,7 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  return { generateReview, recoverInterruptedReviews } satisfies CadReviewServiceShape;
+  return { generateReview, stopReview, recoverInterruptedReviews } satisfies CadReviewServiceShape;
 });
 
 export const CadReviewServiceLive = Layer.effect(CadReviewService, make);

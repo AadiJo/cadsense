@@ -760,6 +760,17 @@ label:has(> select#reasoning-effort) select {
   }
 }
 
+@keyframes cad-review-substep-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .cad-agent-control-frame {
   outline: 1px solid rgb(16 185 129 / 0.95);
   outline-offset: -1px;

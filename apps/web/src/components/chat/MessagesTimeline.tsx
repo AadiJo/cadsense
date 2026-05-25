@@ -89,6 +89,7 @@ interface TimelineRowSharedState {
   resolvedTheme: "light" | "dark";
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  displayCadReviewWorkLog: boolean;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -132,6 +133,7 @@ interface MessagesTimelineProps {
   timestampFormat: TimestampFormat;
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  displayCadReviewWorkLog?: boolean;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -161,6 +163,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   timestampFormat,
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
+  displayCadReviewWorkLog = false,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
@@ -223,6 +226,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      displayCadReviewWorkLog,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -235,6 +239,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       resolvedTheme,
       workspaceRoot,
       skills,
+      displayCadReviewWorkLog,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -305,6 +310,24 @@ type TimelineEntry = ReturnType<typeof deriveTimelineEntries>[number];
 type TimelineMessage = Extract<TimelineEntry, { kind: "message" }>["message"];
 type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"][number];
 type TimelineRow = MessagesTimelineRow;
+
+function isCadReviewTimelineWorkEntry(entry: TimelineWorkEntry): boolean {
+  if (entry.activityKind?.startsWith("cad-review.") === true) {
+    return true;
+  }
+  const text = `${entry.label} ${entry.detail ?? ""} ${entry.toolTitle ?? ""}`.toLowerCase();
+  return (
+    text.includes("cad review") ||
+    text.includes("baseline cad screenshot") ||
+    text.includes("baseline cad view") ||
+    text.includes("captured cad screenshot") ||
+    text.includes("export_cad_screenshot") ||
+    text.includes("systems_integration reviewer") ||
+    text.includes("program_readiness reviewer") ||
+    text.includes("mechanical_robustness reviewer") ||
+    text.includes("synthesis reviewer")
+  );
+}
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   return (
@@ -1040,22 +1063,21 @@ const WorkGroupSection = memo(function WorkGroupSection({
 }: {
   groupedEntries: Extract<MessagesTimelineRow, { kind: "work" }>["groupedEntries"];
 }) {
-  const { workspaceRoot } = use(TimelineRowCtx);
+  const { displayCadReviewWorkLog, workspaceRoot } = use(TimelineRowCtx);
   const [isExpanded, setIsExpanded] = useState(false);
-  const isCadReviewWorkLog = groupedEntries.some((entry) =>
-    entry.activityKind?.startsWith("cad-review."),
-  );
+  const isCadReviewWorkLog = groupedEntries.some(isCadReviewTimelineWorkEntry);
+  if (isCadReviewWorkLog && !displayCadReviewWorkLog) {
+    return null;
+  }
   const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
   const visibleEntries =
-    isCadReviewWorkLog && !isExpanded
-      ? []
-      : hasOverflow && !isExpanded
-        ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-        : groupedEntries;
+    hasOverflow && !isExpanded
+      ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+      : groupedEntries;
   const hiddenCount = groupedEntries.length - visibleEntries.length;
   const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
   const showHeader = isCadReviewWorkLog || hasOverflow || !onlyToolEntries;
-  const groupLabel = onlyToolEntries ? "Tool calls" : "Work log";
+  const groupLabel = isCadReviewWorkLog || !onlyToolEntries ? "Work log" : "Tool calls";
 
   return (
     <div className="rounded-xl border border-border/45 bg-card/25 px-2 py-1.5">
@@ -1064,7 +1086,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
           <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
             {groupLabel} ({groupedEntries.length})
           </p>
-          {(hasOverflow || isCadReviewWorkLog) && (
+          {hasOverflow && (
             <button
               type="button"
               className="text-[9px] uppercase tracking-[0.12em] text-muted-foreground/55 transition-colors duration-150 hover:text-foreground/75"

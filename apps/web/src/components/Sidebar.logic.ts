@@ -32,7 +32,8 @@ export interface ThreadStatusPill {
     | "Completed"
     | "Pending Approval"
     | "Awaiting Input"
-    | "Plan Ready";
+    | "Plan Ready"
+    | "Reviewing";
   colorClass: string;
   dotClass: string;
   pulse: boolean;
@@ -41,6 +42,7 @@ export interface ThreadStatusPill {
 const THREAD_STATUS_PRIORITY: Record<ThreadStatusPill["label"], number> = {
   "Pending Approval": 5,
   "Awaiting Input": 4,
+  Reviewing: 3,
   Working: 3,
   Connecting: 3,
   "Plan Ready": 2,
@@ -53,6 +55,7 @@ type ThreadStatusInput = Pick<
   | "hasPendingApprovals"
   | "hasPendingUserInput"
   | "interactionMode"
+  | "hasActiveReview"
   | "latestTurn"
   | "session"
 > & {
@@ -346,6 +349,15 @@ export function resolveThreadStatusPill(input: {
       colorClass: "text-indigo-600 dark:text-indigo-300/90",
       dotClass: "bg-indigo-500 dark:bg-indigo-300/90",
       pulse: false,
+    };
+  }
+
+  if (thread.hasActiveReview) {
+    return {
+      label: "Reviewing",
+      colorClass: "text-yellow-600 dark:text-yellow-300/90",
+      dotClass: "bg-yellow-500 dark:bg-yellow-300/90",
+      pulse: true,
     };
   }
 

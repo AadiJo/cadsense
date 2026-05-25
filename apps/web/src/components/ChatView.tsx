@@ -1,6 +1,9 @@
 import {
   type ApprovalRequestId,
   CadReviewId,
+  type CadReviewPersona,
+  type CadReviewReport,
+  type CadReviewStatus,
   DEFAULT_MODEL,
   defaultInstanceIdForDriver,
   type EnvironmentId,
@@ -64,6 +67,7 @@ import {
   hasToolActivityForTurn,
   isLatestTurnSettled,
   formatElapsed,
+  type WorkLogEntry,
 } from "../session-logic";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
@@ -104,7 +108,13 @@ import { BranchToolbar } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import PlanSidebar from "./PlanSidebar";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
-import { ChevronDownIcon, TriangleAlertIcon, WifiOffIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronDownIcon,
+  LoaderCircleIcon,
+  TriangleAlertIcon,
+  WifiOffIcon,
+} from "lucide-react";
 import { cn, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -333,6 +343,289 @@ function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalog
         return nextResult;
       };
     }, [threadIds]),
+  );
+}
+
+type CadReviewOverlayStepState = "pending" | "active" | "complete" | "failed";
+
+interface CadReviewOverlayStep {
+  id: string;
+  label: string;
+  state: CadReviewOverlayStepState;
+  substeps: string[];
+}
+
+const CAD_REVIEW_ACTIVE_STATUSES = new Set<CadReviewStatus>([
+  "requested",
+  "planning",
+  "capturing-baseline",
+  "reviewing",
+  "deep-diving",
+  "synthesizing",
+]);
+
+const CAD_REVIEW_PROGRESS_ORDER: CadReviewStatus[] = [
+  "requested",
+  "planning",
+  "capturing-baseline",
+  "reviewing",
+  "deep-diving",
+  "synthesizing",
+  "completed",
+];
+
+const CAD_REVIEW_PERSONA_STEPS = [
+  { persona: "systems_integration", label: "Systems integration" },
+  { persona: "program_readiness", label: "Program readiness" },
+  { persona: "mechanical_robustness", label: "Mechanical robustness" },
+] as const satisfies ReadonlyArray<{
+  persona: CadReviewPersona;
+  label: string;
+}>;
+
+function isCadReviewWorkLogEntry(entry: WorkLogEntry): boolean {
+  if (entry.activityKind?.startsWith("cad-review.") === true) {
+    return true;
+  }
+  const text = `${entry.label} ${entry.detail ?? ""} ${entry.toolTitle ?? ""}`.toLowerCase();
+  return (
+    text.includes("cad review") ||
+    text.includes("baseline cad screenshot") ||
+    text.includes("baseline cad view") ||
+    text.includes("captured cad screenshot") ||
+    text.includes("export_cad_screenshot") ||
+    text.includes("systems_integration reviewer") ||
+    text.includes("program_readiness reviewer") ||
+    text.includes("mechanical_robustness reviewer") ||
+    text.includes("synthesis reviewer")
+  );
+}
+
+function deriveCadReviewOverlaySteps(
+  reviews: ReadonlyArray<CadReviewReport>,
+  cadReviewWorkLogEntries: ReadonlyArray<WorkLogEntry>,
+): CadReviewOverlayStep[] {
+  const activeReview = [...reviews]
+    .filter((review) => CAD_REVIEW_ACTIVE_STATUSES.has(review.status))
+    .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  if (!activeReview) {
+    return [];
+  }
+
+  const status = activeReview.status;
+  const failed = status === "failed";
+  const entries = cadReviewWorkLogEntries.filter((entry) => entry.label.trim().length > 0);
+
+  const requestedStep = buildCadReviewStep({
+    id: "requested",
+    label: "Review requested",
+    state: statusStateForCadReviewStatus(status, "requested", failed),
+    substeps: latestCadReviewSubsteps(entries, ["requested", "created"], ["Preparing review run"]),
+  });
+  const planningStep = buildCadReviewStep({
+    id: "planning",
+    label: "Plan review",
+    state: statusStateForCadReviewStatus(status, "planning", failed),
+    substeps: latestCadReviewSubsteps(
+      entries,
+      ["planning", "plan"],
+      ["Mapping mechanisms", "Choosing review priorities"],
+    ),
+  });
+  const baselineStep = buildCadReviewStep({
+    id: "capturing-baseline",
+    label: "Capture baseline",
+    state: statusStateForCadReviewStatus(status, "capturing-baseline", failed),
+    substeps: latestCadReviewSubsteps(
+      entries,
+      ["baseline", "screenshot", "capture"],
+      [
+        "Collecting screenshots",
+        `${activeReview.evidenceArtifacts.filter((artifact) => artifact.scope === "baseline").length} views captured`,
+      ],
+    ),
+  });
+  const personaSteps = CAD_REVIEW_PERSONA_STEPS.map(({ persona, label }) => {
+    const report = activeReview.personaReports.find((entry) => entry.persona === persona);
+    const isActive =
+      status === "reviewing" &&
+      (!activeReview.activePersona ||
+        activeReview.activePersona === persona ||
+        !report ||
+        report.status === "reviewing");
+    return buildCadReviewStep({
+      id: persona,
+      label,
+      state:
+        report?.status === "failed"
+          ? "failed"
+          : report?.status === "completed"
+            ? "complete"
+            : isActive
+              ? "active"
+              : statusStateAfter("reviewing", status),
+      substeps: latestCadReviewSubsteps(
+        entries,
+        [persona, label.toLowerCase(), "reviewer"],
+        ["Inspecting geometry", "Attributing tool calls"],
+      ),
+    });
+  });
+  const deepDiveStep = buildCadReviewStep({
+    id: "deep-diving",
+    label: "Focused deep dives",
+    state: statusStateForCadReviewStatus(status, "deep-diving", failed),
+    substeps: latestCadReviewSubsteps(
+      entries,
+      ["deep dive", "focused"],
+      [
+        "Checking highest-risk findings",
+        `${activeReview.deepDiveReports?.length ?? 0} deep dives drafted`,
+      ],
+    ),
+  });
+  const synthesisStep = buildCadReviewStep({
+    id: "synthesizing",
+    label: "Synthesis",
+    state: statusStateForCadReviewStatus(status, "synthesizing", failed),
+    substeps: latestCadReviewSubsteps(
+      entries,
+      ["synthesis", "synthesizing"],
+      ["Merging reviewer findings", "Writing action items"],
+    ),
+  });
+
+  return [
+    requestedStep,
+    planningStep,
+    baselineStep,
+    ...personaSteps,
+    deepDiveStep,
+    synthesisStep,
+  ].map((step) =>
+    step.state === "active"
+      ? step
+      : {
+          id: step.id,
+          label: step.label,
+          state: step.state,
+          substeps: [],
+        },
+  );
+}
+
+function buildCadReviewStep(step: CadReviewOverlayStep): CadReviewOverlayStep {
+  return { ...step, substeps: step.substeps.slice(0, 2) };
+}
+
+function statusStateForCadReviewStatus(
+  current: CadReviewStatus,
+  step: CadReviewStatus,
+  failed: boolean,
+): CadReviewOverlayStepState {
+  if (failed) return "failed";
+  if (current === step) return "active";
+  return statusStateAfter(step, current);
+}
+
+function statusStateAfter(
+  step: CadReviewStatus,
+  current: CadReviewStatus,
+): CadReviewOverlayStepState {
+  const stepIndex = CAD_REVIEW_PROGRESS_ORDER.indexOf(step);
+  const currentIndex = CAD_REVIEW_PROGRESS_ORDER.indexOf(current);
+  if (currentIndex < 0 || stepIndex < 0) return "pending";
+  return currentIndex > stepIndex ? "complete" : "pending";
+}
+
+function latestCadReviewSubsteps(
+  entries: ReadonlyArray<WorkLogEntry>,
+  needles: ReadonlyArray<string>,
+  fallback: ReadonlyArray<string>,
+): string[] {
+  const normalizedNeedles = needles.map((needle) => needle.toLowerCase());
+  const matches = entries
+    .filter((entry) => {
+      const haystack =
+        `${entry.activityKind ?? ""} ${entry.label} ${entry.detail ?? ""}`.toLowerCase();
+      return normalizedNeedles.some((needle) => haystack.includes(needle));
+    })
+    .slice(-2)
+    .map((entry) => entry.label);
+  return matches.length > 0 ? matches : [...fallback];
+}
+
+function CadReviewProgressOverlay({ steps }: { steps: ReadonlyArray<CadReviewOverlayStep> }) {
+  if (steps.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="pointer-events-none absolute left-3 top-3 z-30 w-[min(340px,calc(100%-1.5rem))] sm:left-5 sm:top-5">
+      <div className="rounded-lg border border-border/65 bg-card/92 px-3 py-3 shadow-xl shadow-black/15 backdrop-blur-xl dark:bg-muted/70">
+        <div className="space-y-1.5">
+          {steps.map((step, index) => (
+            <CadReviewProgressStep key={step.id} step={step} isLast={index === steps.length - 1} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CadReviewProgressStep({ step, isLast }: { step: CadReviewOverlayStep; isLast: boolean }) {
+  return (
+    <div className="grid grid-cols-[22px_1fr] gap-x-2.5">
+      <div className="relative flex justify-center">
+        <span
+          className={cn(
+            "mt-0.5 flex size-5 items-center justify-center rounded-full border transition-colors duration-200",
+            step.state === "complete" && "border-primary bg-primary text-primary-foreground",
+            step.state === "active" && "border-primary bg-primary/10 text-primary",
+            step.state === "failed" && "border-destructive bg-destructive/10 text-destructive",
+            step.state === "pending" && "border-border bg-muted/30 text-muted-foreground/50",
+          )}
+        >
+          {step.state === "active" ? (
+            <LoaderCircleIcon className="size-3 animate-spin" />
+          ) : step.state === "complete" ? (
+            <CheckIcon className="size-3" />
+          ) : (
+            <span className="size-1.5 rounded-full bg-current" />
+          )}
+        </span>
+        {!isLast ? (
+          <span
+            className={cn(
+              "absolute top-6 bottom-[-0.375rem] w-px rounded-full bg-border",
+              (step.state === "complete" || step.state === "active") && "bg-primary/55",
+            )}
+          />
+        ) : null}
+      </div>
+      <div className="min-w-0 pb-2">
+        <p
+          className={cn(
+            "truncate text-xs font-medium leading-5",
+            step.state === "pending" ? "text-muted-foreground/55" : "text-foreground",
+          )}
+        >
+          {step.label}
+        </p>
+        {step.substeps.length > 0 ? (
+          <div
+            key={step.substeps.join("\u001f")}
+            className="space-y-0.5 [animation:cad-review-substep-in_180ms_var(--motion-ease-out)]"
+          >
+            {step.substeps.map((substep) => (
+              <p key={substep} className="truncate text-[11px] leading-4 text-muted-foreground/72">
+                {substep}
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -654,6 +947,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const timestampFormat = settings.timestampFormat;
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
+  const displayCadReviewWorkLog = settings.displayCadReviewWorkLog;
   const navigate = useNavigate();
   const rawSearch = useSearch({
     strict: false,
@@ -877,23 +1171,33 @@ export default function ChatView(props: ChatViewProps) {
   const cadExploded = useUiStateStore((store) =>
     cadUiStateKey ? (store.cadExplodedByThreadId[cadUiStateKey] ?? false) : false,
   );
+  const activeCadReview = (activeThread?.reviews ?? []).find(
+    (review) =>
+      review.status === "requested" ||
+      review.status === "planning" ||
+      review.status === "capturing-baseline" ||
+      review.status === "reviewing" ||
+      review.status === "deep-diving" ||
+      review.status === "synthesizing",
+  );
+  const cadReviewInProgress = activeCadReview !== undefined;
   const setCadExploded = useUiStateStore((store) => store.setCadExploded);
   const requestCadZoomToFit = useUiStateStore((store) => store.requestCadZoomToFit);
   const toggleCadExploded = useCallback(
     (exploded: boolean) => {
-      if (!cadUiStateKey) {
+      if (!cadUiStateKey || cadReviewInProgress) {
         return;
       }
       setCadExploded(cadUiStateKey, exploded);
     },
-    [cadUiStateKey, setCadExploded],
+    [cadReviewInProgress, cadUiStateKey, setCadExploded],
   );
   const zoomCadToFit = useCallback(() => {
-    if (!cadUiStateKey) {
+    if (!cadUiStateKey || cadReviewInProgress) {
       return;
     }
     requestCadZoomToFit(cadUiStateKey);
-  }, [cadUiStateKey, requestCadZoomToFit]);
+  }, [cadReviewInProgress, cadUiStateKey, requestCadZoomToFit]);
 
   useEffect(() => {
     if (routeKind !== "server") {
@@ -1304,6 +1608,17 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
+  const cadReviewWorkLogEntries = useMemo(
+    () => workLogEntries.filter(isCadReviewWorkLogEntry),
+    [workLogEntries],
+  );
+  const timelineWorkLogEntries = useMemo(
+    () =>
+      displayCadReviewWorkLog
+        ? workLogEntries
+        : workLogEntries.filter((entry) => !isCadReviewWorkLogEntry(entry)),
+    [displayCadReviewWorkLog, workLogEntries],
+  );
   const latestTurnHasToolActivity = useMemo(
     () => hasToolActivityForTurn(threadActivities, activeLatestTurn?.turnId),
     [activeLatestTurn?.turnId, threadActivities],
@@ -1599,9 +1914,9 @@ export default function ChatView(props: ChatViewProps) {
         timelineMessages,
         activeThread?.proposedPlans ?? [],
         activeThread?.reviews ?? [],
-        workLogEntries,
+        timelineWorkLogEntries,
       ),
-    [activeThread?.proposedPlans, activeThread?.reviews, timelineMessages, workLogEntries],
+    [activeThread?.proposedPlans, activeThread?.reviews, timelineMessages, timelineWorkLogEntries],
   );
   const turnDiffSummaryByAssistantMessageId = useMemo(
     () => new Map<MessageId, TurnDiffSummary>(),
@@ -1665,7 +1980,10 @@ export default function ChatView(props: ChatViewProps) {
       })
     : null;
   const displayGitUi = settings.displayGitUi;
-  const gitStatusQuery = useGitStatus({ environmentId, cwd: displayGitUi ? gitCwd : null });
+  const gitStatusQuery = useGitStatus({
+    environmentId,
+    cwd: displayGitUi ? gitCwd : null,
+  });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -3652,14 +3970,9 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread &&
     (activeThread.externalContext?.provider === "onshape" ||
       activeProject?.externalContext?.provider === "onshape");
-  const cadReviewInProgress = (activeThread.reviews ?? []).some(
-    (review) =>
-      review.status === "requested" ||
-      review.status === "planning" ||
-      review.status === "capturing-baseline" ||
-      review.status === "reviewing" ||
-      review.status === "deep-diving" ||
-      review.status === "synthesizing",
+  const cadReviewOverlaySteps = useMemo(
+    () => deriveCadReviewOverlaySteps(activeThread.reviews ?? [], cadReviewWorkLogEntries),
+    [activeThread.reviews, cadReviewWorkLogEntries],
   );
   const onGenerateCadReview = async () => {
     const api = readEnvironmentApi(activeThread.environmentId);
@@ -3679,6 +3992,19 @@ export default function ChatView(props: ChatViewProps) {
       threadId: activeThread.id,
       reviewRunId: CadReviewId.make(`cad-review-${crypto.randomUUID()}`),
       createdAt,
+    });
+  };
+  const onStopCadReview = async () => {
+    const api = readEnvironmentApi(activeThread.environmentId);
+    if (!api || !activeCadReview) {
+      return;
+    }
+    await api.orchestration.dispatchCommand({
+      type: "thread.review.stop",
+      commandId: newCommandId(),
+      threadId: activeThread.id,
+      reviewRunId: activeCadReview.id,
+      createdAt: new Date().toISOString(),
     });
   };
 
@@ -3752,15 +4078,24 @@ export default function ChatView(props: ChatViewProps) {
               CAD model attached. Start a visual review; the agent will capture standard and
               close-up views, then summarize issues in plain language.
             </p>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={cadReviewInProgress}
-              onClick={() => void onGenerateCadReview()}
-            >
-              {cadReviewInProgress ? "Review in progress" : "Start CAD review"}
-            </Button>
+            {cadReviewInProgress ? (
+              <button
+                type="button"
+                className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-md border border-rose-500/90 bg-rose-500/90 px-[calc(--spacing(2.5)-1px)] text-sm font-medium text-white shadow-xs shadow-rose-500/24 transition-all duration-150 hover:bg-rose-500 hover:text-white active:bg-rose-500 sm:h-7"
+                onClick={() => void onStopCadReview()}
+              >
+                Stop review
+              </button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void onGenerateCadReview()}
+              >
+                Start CAD review
+              </Button>
+            )}
           </div>
         </div>
       ) : null}
@@ -3794,8 +4129,11 @@ export default function ChatView(props: ChatViewProps) {
               timestampFormat={timestampFormat}
               workspaceRoot={activeWorkspaceRoot}
               skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
+              displayCadReviewWorkLog={displayCadReviewWorkLog}
               onIsAtEndChange={onIsAtEndChange}
             />
+
+            <CadReviewProgressOverlay steps={cadReviewOverlaySteps} />
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
             {showScrollToBottom && (

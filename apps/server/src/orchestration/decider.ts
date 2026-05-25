@@ -702,6 +702,28 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.review.stop": {
+      yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      return {
+        ...withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        }),
+        type: "thread.review-stop-requested",
+        payload: {
+          threadId: command.threadId,
+          reviewRunId: command.reviewRunId,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.review.upsert": {
       yield* requireThread({
         readModel,

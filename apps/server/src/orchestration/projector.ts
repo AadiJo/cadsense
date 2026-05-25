@@ -603,6 +603,14 @@ export function projectEvent(
         };
       });
 
+    case "thread.review-stop-requested":
+      return Effect.succeed({
+        ...nextBase,
+        threads: updateThread(nextBase.threads, event.payload.threadId, {
+          updatedAt: event.occurredAt,
+        }),
+      });
+
     case "thread.turn-diff-completed":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(

@@ -283,6 +283,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.displayGitUi !== DEFAULT_UNIFIED_SETTINGS.displayGitUi
         ? ["Display Git UI"]
         : []),
+      ...(settings.displayCadReviewWorkLog !== DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog
+        ? ["CAD review work log"]
+        : []),
       ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
         ? ["Assistant output"]
         : []),
@@ -304,6 +307,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadArchive,
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
+      settings.displayCadReviewWorkLog,
       settings.displayGitUi,
       settings.automaticGitFetchInterval,
       settings.enableAssistantStreaming,
@@ -327,6 +331,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       displayGitUi: DEFAULT_UNIFIED_SETTINGS.displayGitUi,
+      displayCadReviewWorkLog: DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
@@ -462,6 +467,33 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          title="CAD review work log"
+          description="Show detailed CAD review progress entries in the conversation timeline."
+          resetAction={
+            settings.displayCadReviewWorkLog !==
+            DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog ? (
+              <SettingResetButton
+                label="CAD review work log"
+                onClick={() =>
+                  updateSettings({
+                    displayCadReviewWorkLog: DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.displayCadReviewWorkLog}
+              onCheckedChange={(checked) =>
+                updateSettings({ displayCadReviewWorkLog: Boolean(checked) })
+              }
+              aria-label="Show CAD review work log"
+            />
+          }
+        />
+
+        <SettingsRow
           title="Add project starts in"
           description='Leave empty to use "~/" when the Add Project browser opens.'
           resetAction={
@@ -558,6 +590,44 @@ export function GeneralSettingsPanel() {
             <Button render={<Link to="/settings/diagnostics" />} size="xs" variant="outline">
               View diagnostics
             </Button>
+          }
+        />
+      </SettingsSection>
+    </SettingsPageContainer>
+  );
+}
+
+export function CadReviewSettingsPanel() {
+  const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
+
+  return (
+    <SettingsPageContainer>
+      <SettingsSection title="CAD review">
+        <SettingsRow
+          title="Work log"
+          description="Show detailed CAD review progress entries in the conversation timeline."
+          resetAction={
+            settings.displayCadReviewWorkLog !==
+            DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog ? (
+              <SettingResetButton
+                label="CAD review work log"
+                onClick={() =>
+                  updateSettings({
+                    displayCadReviewWorkLog: DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.displayCadReviewWorkLog}
+              onCheckedChange={(checked) =>
+                updateSettings({ displayCadReviewWorkLog: Boolean(checked) })
+              }
+              aria-label="Show CAD review work log"
+            />
           }
         />
       </SettingsSection>

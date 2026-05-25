@@ -1,4 +1,9 @@
-import type { CadView, OnshapeSyncedCadFile } from "@cadsense/contracts";
+import type {
+  CadView,
+  CadViewCommand,
+  OnshapeSyncedCadFile,
+  ScopedThreadRef,
+} from "@cadsense/contracts";
 import {
   BoxIcon,
   ChevronRightIcon,
@@ -24,6 +29,10 @@ import { useQuery } from "@tanstack/react-query";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
 import { buildCadWebGlFailureUserMessage } from "../lib/cadViewerWebGl";
+import {
+  deriveCadAgentViewStateForThread,
+  latestCadAgentViewState,
+} from "../lib/cadAgentViewState";
 import {
   CAD_VIEWER_FRAME_PARENT_SOURCE,
   isCadViewerFrameResponse,
@@ -51,6 +60,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 interface CadPanelProps {
   mode?: DiffPanelMode;
+  threadRef?: ScopedThreadRef;
+  agentControlHost?: boolean;
 }
 
 function CadPanelEmptyState(props: { title: string; detail: string; icon?: "error" }) {
@@ -293,7 +304,11 @@ function errorFromUnknown(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error || "CAD viewer request failed."));
 }
 
-export default function CadPanel({ mode = "inline" }: CadPanelProps) {
+export default function CadPanel({
+  mode = "inline",
+  threadRef: explicitThreadRef,
+  agentControlHost = false,
+}: CadPanelProps) {
   const routeThreadRef = useParams({
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
@@ -310,8 +325,9 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   const draftSession = useComposerDraftStore((store) =>
     routeDraftId ? store.getDraftSession(routeDraftId) : null,
   );
+  const resolvedThreadRef = explicitThreadRef ?? routeThreadRef;
   const activeThread = useStore(
-    useMemo(() => createThreadSelectorByRef(routeThreadRef), [routeThreadRef]),
+    useMemo(() => createThreadSelectorByRef(resolvedThreadRef), [resolvedThreadRef]),
   );
   /** Draft CAD uses `draftSession.threadId`; server threads use `activeThread.id` (must match MCP `CADSENSE_CAD_VIEW_THREAD_ID`). */
   const cadRoutingThreadId = useMemo(
@@ -334,6 +350,15 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     return undefined;
   });
   const activeThreadStarted = threadHasStarted(activeThread);
+  const cadReviewInProgress = (activeThread?.reviews ?? []).some(
+    (review) =>
+      review.status === "requested" ||
+      review.status === "planning" ||
+      review.status === "capturing-baseline" ||
+      review.status === "reviewing" ||
+      review.status === "deep-diving" ||
+      review.status === "synthesizing",
+  );
   const cadUiStateKey =
     activeThread && activeThreadStarted
       ? activeThread.id
@@ -342,6 +367,33 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     cadUiStateKey ? (store.cadExplodedByThreadId[cadUiStateKey] ?? false) : false,
   );
   const setCadExploded = useUiStateStore((store) => store.setCadExploded);
+  const recordCadAgentViewCommand = useUiStateStore((store) => store.recordCadAgentViewCommand);
+  const cadAgentViewState = useUiStateStore((store) =>
+    cadReviewInProgress && cadRoutingThreadId
+      ? (store.cadAgentViewStateByThreadId[cadRoutingThreadId] ?? null)
+      : null,
+  );
+  const derivedCadAgentViewState = useStore(
+    useMemo(
+      () => (store) => {
+        if (!cadReviewInProgress || !activeThread) {
+          return null;
+        }
+        const environmentState = store.environmentStateById?.[activeThread.environmentId];
+        if (!environmentState) {
+          return null;
+        }
+        return deriveCadAgentViewStateForThread(environmentState, activeThread);
+      },
+      [activeThread, cadReviewInProgress],
+    ),
+  );
+  const effectiveCadAgentViewState = useMemo(
+    () => latestCadAgentViewState(derivedCadAgentViewState, cadAgentViewState),
+    [cadAgentViewState, derivedCadAgentViewState],
+  );
+  const agentViewCommand = effectiveCadAgentViewState?.viewCommand ?? null;
+  const agentExploded = effectiveCadAgentViewState?.exploded;
   const cadZoomToFitRequest = useUiStateStore((store) =>
     cadUiStateKey ? (store.cadZoomToFitRequestByThreadId[cadUiStateKey] ?? 0) : 0,
   );
@@ -390,15 +442,6 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   const projectCadScopeKey = activeProject
     ? `${activeProject.environmentId}:${activeProject.id}`
     : (activeThread?.projectId ?? draftSession?.projectId ?? null);
-  const cadReviewInProgress = (activeThread?.reviews ?? []).some(
-    (review) =>
-      review.status === "requested" ||
-      review.status === "planning" ||
-      review.status === "capturing-baseline" ||
-      review.status === "reviewing" ||
-      review.status === "deep-diving" ||
-      review.status === "synthesizing",
-  );
 
   const filesQuery = useQuery({
     queryKey: [
@@ -631,6 +674,62 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     [postFrameRequest],
   );
 
+  const applyCadViewCommand = useCallback(
+    (command: CadViewCommand) => {
+      if (command.type === "set-view") {
+        setFixedView(command.view, command.fit);
+        return;
+      }
+      if (loadStateRef.current !== "loaded") {
+        return;
+      }
+      if (command.type === "set-camera") {
+        const request =
+          command.up === undefined
+            ? {
+                type: "set-camera" as const,
+                direction: command.direction,
+                fit: command.fit,
+                closeUp: command.closeUp,
+              }
+            : {
+                type: "set-camera" as const,
+                direction: command.direction,
+                up: command.up,
+                fit: command.fit,
+                closeUp: command.closeUp,
+              };
+        void postFrameRequest(request, 3_000).catch(() => undefined);
+        return;
+      }
+      if (command.type === "set-component-visibility") {
+        toggleComponent(
+          {
+            id: command.componentId,
+            name: command.componentId,
+            kind: "part",
+            hasChildren: false,
+            visible: !command.visible,
+          },
+          command.visible,
+        );
+        return;
+      }
+      if (command.type === "set-exploded") {
+        if (cadUiStateKey) {
+          setCadExploded(cadUiStateKey, command.exploded);
+          return;
+        }
+        void postFrameRequest({ type: "set-exploded", enabled: command.exploded }, 3_000).catch(
+          () => undefined,
+        );
+        return;
+      }
+      void postFrameRequest({ type: "zoom-to-fit" }, 3_000).catch(() => undefined);
+    },
+    [cadUiStateKey, postFrameRequest, setCadExploded, setFixedView, toggleComponent],
+  );
+
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
       if (!isCadViewerFrameResponse(event.data)) {
@@ -750,20 +849,23 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   );
 
   useEffect(() => {
+    if (agentControlHost) {
+      return;
+    }
     document.body.classList.toggle("cad-fullscreen-mounted", fullscreenMounted);
     document.body.classList.toggle("cad-fullscreen-active", fullscreenMounted && fullscreen);
     return () => {
       document.body.classList.remove("cad-fullscreen-mounted");
       document.body.classList.remove("cad-fullscreen-active");
     };
-  }, [fullscreen, fullscreenMounted]);
+  }, [agentControlHost, fullscreen, fullscreenMounted]);
 
   useEffect(() => {
     if (!cadUiStateKey) {
       return;
     }
-    setCadExploded(cadUiStateKey, false);
-  }, [cadUiStateKey, modelFileIdentityKey, setCadExploded]);
+    setCadExploded(cadUiStateKey, agentExploded ?? false);
+  }, [agentExploded, cadUiStateKey, modelFileIdentityKey, setCadExploded]);
 
   useEffect(() => {
     if (!environmentApi || !cadRoutingThreadId) {
@@ -773,69 +875,28 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
       if (cadRoutingThreadId && command.threadId !== cadRoutingThreadId) {
         return;
       }
-      if (command.type === "set-view") {
-        setFixedView(command.view, command.fit);
-        return;
+      if (agentControlHost) {
+        recordCadAgentViewCommand(cadRoutingThreadId, command);
       }
-      if (loadStateRef.current !== "loaded") {
-        return;
-      }
-      if (command.type === "set-camera") {
-        const request =
-          command.up === undefined
-            ? {
-                type: "set-camera" as const,
-                direction: command.direction,
-                fit: command.fit,
-                closeUp: command.closeUp,
-              }
-            : {
-                type: "set-camera" as const,
-                direction: command.direction,
-                up: command.up,
-                fit: command.fit,
-                closeUp: command.closeUp,
-              };
-        void postFrameRequest(request, 3_000).catch(() => undefined);
-        return;
-      }
-      if (command.type === "set-component-visibility") {
-        toggleComponent(
-          {
-            id: command.componentId,
-            name: command.componentId,
-            kind: "part",
-            hasChildren: false,
-            visible: !command.visible,
-          },
-          command.visible,
-        );
-        return;
-      }
-      if (command.type === "set-exploded") {
-        if (cadUiStateKey) {
-          setCadExploded(cadUiStateKey, command.exploded);
-          return;
-        }
-        void postFrameRequest({ type: "set-exploded", enabled: command.exploded }, 3_000).catch(
-          () => undefined,
-        );
-        return;
-      }
-      void postFrameRequest({ type: "zoom-to-fit" }, 3_000).catch(() => undefined);
+      applyCadViewCommand(command);
     });
   }, [
     cadRoutingThreadId,
-    cadUiStateKey,
+    agentControlHost,
+    applyCadViewCommand,
     environmentApi,
-    postFrameRequest,
-    setCadExploded,
-    setFixedView,
-    toggleComponent,
+    recordCadAgentViewCommand,
   ]);
 
   useEffect(() => {
-    if (!environmentApi || !cadRoutingThreadId) {
+    if (loadState !== "loaded" || !agentViewCommand) {
+      return;
+    }
+    applyCadViewCommand(agentViewCommand);
+  }, [agentViewCommand, applyCadViewCommand, loadState]);
+
+  useEffect(() => {
+    if (!agentControlHost || !environmentApi || !cadRoutingThreadId) {
       return;
     }
     return environmentApi.onshape.onCadHierarchyRequest((req) => {
@@ -859,7 +920,7 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
         }
       })();
     });
-  }, [cadRoutingThreadId, environmentApi, postFrameRequest]);
+  }, [cadRoutingThreadId, agentControlHost, environmentApi, postFrameRequest]);
 
   useEffect(() => {
     if (loadState !== "loaded") {
@@ -878,12 +939,22 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   }, [cadZoomToFitRequest, loadState, postFrameRequest]);
 
   useEffect(() => {
-    if (!environmentApi || !cadRoutingThreadId) {
+    if (!agentControlHost || !environmentApi || !cadRoutingThreadId) {
       return;
     }
     return environmentApi.onshape.onCadScreenshotRequest((req) => {
       if (cadRoutingThreadId && req.threadId !== cadRoutingThreadId) {
         return;
+      }
+      if (req.view) {
+        recordCadAgentViewCommand(cadRoutingThreadId, {
+          commandId: `capture:${req.requestId}`,
+          type: "set-view",
+          threadId: req.threadId,
+          view: req.view,
+          fit: req.fit,
+          createdAt: new Date().toISOString(),
+        });
       }
       const capture = async () => {
         try {
@@ -925,7 +996,13 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
       screenshotCaptureQueueRef.current = queuedCapture.catch(() => undefined);
       void queuedCapture;
     });
-  }, [cadRoutingThreadId, environmentApi, postFrameRequest]);
+  }, [
+    cadRoutingThreadId,
+    agentControlHost,
+    environmentApi,
+    postFrameRequest,
+    recordCadAgentViewCommand,
+  ]);
 
   useEffect(() => {
     if (modelFiles.length === 0) {
@@ -961,15 +1038,10 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     frameLoadStartedAtRef.current = performance.now();
     setLoadState("loading");
     setLoadError(null);
-    const hasLiveFrame = frameActive && iframeRef.current?.contentWindow;
-    if (hasLiveFrame) {
-      setFrameActive(true);
-    } else {
-      setFrameReadySequence(0);
-      setFrameActive(true);
-      setFrameKey((key) => key + 1);
-    }
-  }, [frameActive, modelFileIdentityKey, modelFiles, rejectAllPendingFrameRequests]);
+    setFrameReadySequence(0);
+    setFrameActive(true);
+    setFrameKey((key) => key + 1);
+  }, [modelFileIdentityKey, modelFiles, rejectAllPendingFrameRequests]);
 
   useEffect(() => {
     if (!frameActive || frameReadySequence === 0) {
@@ -1217,6 +1289,13 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
               title="CAD model viewer"
               src={cadViewerFrameUrl()}
               className="absolute inset-0 size-full border-0 bg-transparent"
+            />
+          ) : null}
+          {cadReviewInProgress ? (
+            <div
+              className="absolute inset-0 z-[15] cursor-not-allowed"
+              aria-hidden="true"
+              data-cad-agent-control-interaction-blocker="true"
             />
           ) : null}
           {cadReviewInProgress ? (

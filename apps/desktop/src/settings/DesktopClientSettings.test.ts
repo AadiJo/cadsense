@@ -16,6 +16,7 @@ const clientSettings: ClientSettings = {
   confirmThreadArchive: true,
   confirmThreadDelete: false,
   dismissedProviderUpdateNotificationKeys: [],
+  displayCadReviewWorkLog: false,
   displayGitUi: true,
   diffIgnoreWhitespace: true,
   diffWordWrap: true,

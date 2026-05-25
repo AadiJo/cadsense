@@ -6,6 +6,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   EnvironmentId,
   type EnvironmentApi,
+  type CadReviewReport,
   type MessageId,
   type OrchestrationReadModel,
   type ProjectId,
@@ -467,6 +468,7 @@ function toShellThread(thread: OrchestrationReadModel["threads"][number]) {
     hasPendingApprovals: false,
     hasPendingUserInput: false,
     hasActionableProposedPlan: false,
+    hasActiveReview: false,
   };
 }
 
@@ -3735,6 +3737,118 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(getComputedStyle(stopButton).cursor).toBe("pointer");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("stops an active CAD review from the banner", async () => {
+    const reviewRunId = "cad-review-browser-stop" as CadReviewReport["id"];
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-cad-review-stop" as MessageId,
+      targetText: "cad review stop target",
+    });
+    const onshapeContext = {
+      provider: "onshape" as const,
+      onshape: {
+        connectionId: "onshape_conn",
+        entityId: "onshape_entity",
+        entityKind: "assembly" as const,
+        name: "Drive base",
+        breadcrumb: ["Robot", "Drive base"],
+        reference: {
+          baseUrl: "https://cad.onshape.com",
+          documentId: "doc",
+          wvmKind: "w" as const,
+          wvmId: "workspace",
+          elementId: "element",
+          url: "https://cad.onshape.com/documents/doc/w/workspace/e/element",
+        },
+        lastSyncedRelativePath: "onshape-sync/current.3mf",
+      },
+    };
+    const activeReview: CadReviewReport = {
+      id: reviewRunId,
+      threadId: THREAD_ID,
+      title: "CAD Review",
+      status: "reviewing",
+      whatIsBeingReviewed: "Drive base",
+      commonThemes: [],
+      reviewerTraits: {
+        systems_integration: "Integration, interfaces, mounting, materials, and dependency risk.",
+        program_readiness: "Schedule, team coordination, testability, and realistic ship scope.",
+        mechanical_robustness: "Contact geometry, flex, impact, snagging, wear, and field hazards.",
+        synthesis: "Deduplicates reviewer overlap into prioritized action items.",
+      },
+      personaReports: [],
+      deepDiveReports: [],
+      mergedActionItems: [],
+      evidenceArtifacts: [],
+      toolCallsByReviewer: {
+        systems_integration: [],
+        program_readiness: [],
+        mechanical_robustness: [],
+        synthesis: [],
+      },
+      createdAt: NOW_ISO,
+      updatedAt: NOW_ISO,
+    };
+    const cadSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      projects: snapshot.projects.map((project) =>
+        project.id === PROJECT_ID
+          ? Object.assign({}, project, { externalContext: onshapeContext })
+          : project,
+      ),
+      threads: snapshot.threads.map((thread) =>
+        thread.id === THREAD_ID
+          ? Object.assign({}, thread, {
+              externalContext: onshapeContext,
+              reviews: [activeReview],
+            })
+          : thread,
+      ),
+    };
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: cadSnapshot,
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const stopReviewButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+            (button) => button.textContent?.trim() === "Stop review",
+          ) ?? null,
+        "Unable to find Stop review button.",
+      );
+
+      expect(stopReviewButton.className).toContain("bg-rose-500");
+      expect(getComputedStyle(stopReviewButton).color).toBe("rgb(255, 255, 255)");
+      stopReviewButton.click();
+
+      await vi.waitFor(
+        () => {
+          const stopRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.review.stop",
+          ) as { type?: string; threadId?: string; reviewRunId?: string } | undefined;
+          expect(stopRequest).toMatchObject({
+            type: "thread.review.stop",
+            threadId: THREAD_ID,
+            reviewRunId,
+          });
+        },
+        { timeout: 8_000, interval: 16 },
+      );
     } finally {
       await mounted.cleanup();
     }

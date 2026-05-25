@@ -4,6 +4,7 @@ import type {
   OrchestrationCheckpointSummary,
   CadReviewId,
   CadReviewReport,
+  CadReviewStatus,
   OrchestrationEvent,
   OrchestrationLatestTurn,
   OrchestrationMessage,
@@ -132,6 +133,14 @@ const MAX_THREAD_CHECKPOINTS = 500;
 const MAX_THREAD_PROPOSED_PLANS = 200;
 const MAX_THREAD_ACTIVITIES = 500;
 const EMPTY_THREAD_IDS: ThreadId[] = [];
+const ACTIVE_CAD_REVIEW_STATUSES = new Set<CadReviewStatus>([
+  "requested",
+  "planning",
+  "capturing-baseline",
+  "reviewing",
+  "deep-diving",
+  "synthesizing",
+]);
 
 function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
@@ -214,6 +223,10 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
     checkpointRef: checkpoint.checkpointRef,
     files: checkpoint.files.map((file) => ({ ...file })),
   };
+}
+
+function hasActiveReview(reviews: ReadonlyArray<CadReviewReport> | undefined): boolean {
+  return reviews?.some((review) => ACTIVE_CAD_REVIEW_STATUSES.has(review.status)) ?? false;
 }
 
 function mapProject(
@@ -315,6 +328,7 @@ function mapThreadShell(
     hasPendingApprovals: thread.hasPendingApprovals,
     hasPendingUserInput: thread.hasPendingUserInput,
     hasActionableProposedPlan: thread.hasActionableProposedPlan,
+    hasActiveReview: thread.hasActiveReview,
   };
   return {
     shell,
@@ -416,7 +430,8 @@ function sidebarThreadSummariesEqual(
     left.latestUserMessageAt === right.latestUserMessageAt &&
     left.hasPendingApprovals === right.hasPendingApprovals &&
     left.hasPendingUserInput === right.hasPendingUserInput &&
-    left.hasActionableProposedPlan === right.hasActionableProposedPlan
+    left.hasActionableProposedPlan === right.hasActionableProposedPlan &&
+    left.hasActiveReview === right.hasActiveReview
   );
 }
 
@@ -1079,6 +1094,28 @@ function updateThreadState(
   return writeThreadState(state, nextThread, currentThread);
 }
 
+function updateSidebarThreadSummary(
+  state: EnvironmentState,
+  threadId: ThreadId,
+  updater: (summary: SidebarThreadSummary) => SidebarThreadSummary,
+): EnvironmentState {
+  const currentSummary = state.sidebarThreadSummaryById[threadId];
+  if (!currentSummary) {
+    return state;
+  }
+  const nextSummary = updater(currentSummary);
+  if (sidebarThreadSummariesEqual(currentSummary, nextSummary)) {
+    return state;
+  }
+  return {
+    ...state,
+    sidebarThreadSummaryById: {
+      ...state.sidebarThreadSummaryById,
+      [threadId]: nextSummary,
+    },
+  };
+}
+
 function buildProjectState(
   projects: ReadonlyArray<Project>,
 ): Pick<EnvironmentState, "projectIds" | "projectById"> {
@@ -1569,59 +1606,90 @@ function applyEnvironmentOrchestrationEvent(
       });
 
     case "thread.review-requested":
-      return updateThreadState(state, event.payload.threadId, (thread) => {
-        const review: CadReviewReport = {
-          id: event.payload.reviewRunId,
-          threadId: event.payload.threadId,
-          title: "CAD Review",
-          status: "requested",
-          whatIsBeingReviewed: "",
-          commonThemes: [],
-          reviewerTraits: {
-            systems_integration:
-              "Integration, interfaces, mounting, materials, and dependency risk.",
-            program_readiness:
-              "Schedule, team coordination, testability, and realistic ship scope.",
-            mechanical_robustness:
-              "Contact geometry, flex, impact, snagging, wear, and field hazards.",
-            synthesis: "Deduplicates reviewer overlap into prioritized action items.",
-          },
-          personaReports: [],
-          deepDiveReports: [],
-          mergedActionItems: [],
-          evidenceArtifacts: [],
-          toolCallsByReviewer: {
-            systems_integration: [],
-            program_readiness: [],
-            mechanical_robustness: [],
-            synthesis: [],
-          },
-          createdAt: event.payload.createdAt,
-          updatedAt: event.payload.createdAt,
-        };
-        return {
-          ...thread,
-          reviews: [
-            ...(thread.reviews ?? []).filter((entry) => entry.id !== review.id),
-            review,
+      return updateSidebarThreadSummary(
+        updateThreadState(state, event.payload.threadId, (thread) => {
+          const review: CadReviewReport = {
+            id: event.payload.reviewRunId,
+            threadId: event.payload.threadId,
+            title: "CAD Review",
+            status: "requested",
+            whatIsBeingReviewed: "",
+            commonThemes: [],
+            reviewerTraits: {
+              systems_integration:
+                "Integration, interfaces, mounting, materials, and dependency risk.",
+              program_readiness:
+                "Schedule, team coordination, testability, and realistic ship scope.",
+              mechanical_robustness:
+                "Contact geometry, flex, impact, snagging, wear, and field hazards.",
+              synthesis: "Deduplicates reviewer overlap into prioritized action items.",
+            },
+            personaReports: [],
+            deepDiveReports: [],
+            mergedActionItems: [],
+            evidenceArtifacts: [],
+            toolCallsByReviewer: {
+              systems_integration: [],
+              program_readiness: [],
+              mechanical_robustness: [],
+              synthesis: [],
+            },
+            createdAt: event.payload.createdAt,
+            updatedAt: event.payload.createdAt,
+          };
+          return {
+            ...thread,
+            reviews: [
+              ...(thread.reviews ?? []).filter((entry) => entry.id !== review.id),
+              review,
+            ].toSorted(
+              (left, right) =>
+                left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+            ),
+            updatedAt: event.occurredAt,
+          };
+        }),
+        event.payload.threadId,
+        (summary) => ({
+          ...summary,
+          hasActiveReview: true,
+        }),
+      );
+
+    case "thread.review-upserted": {
+      const existingReviews = Object.values(
+        state.reviewByThreadId?.[event.payload.threadId] ?? {},
+      ) as CadReviewReport[];
+      const nextReviews = [
+        ...existingReviews.filter((entry) => entry.id !== event.payload.review.id),
+        event.payload.review,
+      ];
+      return updateSidebarThreadSummary(
+        updateThreadState(state, event.payload.threadId, (thread) => {
+          const reviews = [
+            ...(thread.reviews ?? []).filter((entry) => entry.id !== event.payload.review.id),
+            event.payload.review,
           ].toSorted(
             (left, right) =>
               left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-          ),
-          updatedAt: event.occurredAt,
-        };
-      });
+          );
+          return {
+            ...thread,
+            reviews,
+            updatedAt: event.occurredAt,
+          };
+        }),
+        event.payload.threadId,
+        (summary) => ({
+          ...summary,
+          hasActiveReview: hasActiveReview(nextReviews),
+        }),
+      );
+    }
 
-    case "thread.review-upserted":
+    case "thread.review-stop-requested":
       return updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
-        reviews: [
-          ...(thread.reviews ?? []).filter((entry) => entry.id !== event.payload.review.id),
-          event.payload.review,
-        ].toSorted(
-          (left, right) =>
-            left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
-        ),
         updatedAt: event.occurredAt,
       }));
 

@@ -1,5 +1,14 @@
 import { Debouncer } from "@tanstack/react-pacer";
+import type { CadViewCommand } from "@cadsense/contracts";
 import { create } from "zustand";
+
+export type CadAgentViewCommand = Extract<CadViewCommand, { type: "set-view" | "set-camera" }>;
+
+export interface CadAgentViewState {
+  readonly viewCommand?: CadAgentViewCommand;
+  readonly exploded?: boolean;
+  readonly updatedAt: string;
+}
 
 export const PERSISTED_STATE_KEY = "cadsense:ui-state:v1";
 const LEGACY_PERSISTED_STATE_KEYS = [
@@ -33,6 +42,7 @@ export interface UiThreadState {
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
   cadExplodedByThreadId: Record<string, boolean>;
   cadZoomToFitRequestByThreadId: Record<string, number>;
+  cadAgentViewStateByThreadId: Record<string, CadAgentViewState>;
 }
 
 export interface UiEndpointState {
@@ -61,6 +71,7 @@ const initialState: UiState = {
   threadChangedFilesExpandedById: {},
   cadExplodedByThreadId: {},
   cadZoomToFitRequestByThreadId: {},
+  cadAgentViewStateByThreadId: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -634,6 +645,7 @@ interface UiStateStore extends UiState {
   clearThreadUi: (threadId: string) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setCadExploded: (threadId: string, exploded: boolean) => void;
+  recordCadAgentViewCommand: (threadId: string, command: CadViewCommand) => void;
   requestCadZoomToFit: (threadId: string) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   toggleProject: (projectId: string) => void;
@@ -656,13 +668,52 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setThreadChangedFilesExpanded: (threadId, turnId, expanded) =>
     set((state) => setThreadChangedFilesExpanded(state, threadId, turnId, expanded)),
   setCadExploded: (threadId, exploded) =>
-    set((state) => ({
-      ...state,
-      cadExplodedByThreadId: {
-        ...state.cadExplodedByThreadId,
-        [threadId]: exploded,
-      },
-    })),
+    set((state) =>
+      state.cadExplodedByThreadId[threadId] === exploded
+        ? state
+        : {
+            ...state,
+            cadExplodedByThreadId: {
+              ...state.cadExplodedByThreadId,
+              [threadId]: exploded,
+            },
+          },
+    ),
+  recordCadAgentViewCommand: (threadId, command) =>
+    set((state) => {
+      const previous = state.cadAgentViewStateByThreadId[threadId];
+      const next =
+        command.type === "set-view" || command.type === "set-camera"
+          ? {
+              ...previous,
+              viewCommand: command,
+              updatedAt: command.createdAt,
+            }
+          : command.type === "set-exploded"
+            ? {
+                ...previous,
+                exploded: command.exploded,
+                updatedAt: command.createdAt,
+              }
+            : previous;
+      if (!next || next === previous) {
+        return state;
+      }
+      if (
+        previous?.updatedAt === next.updatedAt &&
+        previous.viewCommand?.commandId === next.viewCommand?.commandId &&
+        previous.exploded === next.exploded
+      ) {
+        return state;
+      }
+      return {
+        ...state,
+        cadAgentViewStateByThreadId: {
+          ...state.cadAgentViewStateByThreadId,
+          [threadId]: next,
+        },
+      };
+    }),
   requestCadZoomToFit: (threadId) =>
     set((state) => ({
       ...state,

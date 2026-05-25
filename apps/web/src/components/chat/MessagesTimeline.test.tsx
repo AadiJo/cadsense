@@ -322,6 +322,57 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work log");
   });
 
+  it("hides CAD review work logs by default", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Captured baseline CAD screenshot for front",
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain("Captured baseline CAD screenshot");
+    expect(markup).not.toContain("Work log");
+  });
+
+  it("shows CAD review work logs when enabled", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        displayCadReviewWorkLog
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Captured baseline CAD screenshot for front",
+              tone: "tool",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("Captured baseline CAD screenshot");
+    expect(markup).toContain("Work log");
+  });
+
   it("renders mechanism plans, deep dives, and rich CAD finding fields", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(

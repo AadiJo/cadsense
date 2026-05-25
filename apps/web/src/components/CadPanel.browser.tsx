@@ -1,15 +1,21 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { ThreadId } from "@cadsense/contracts";
 import { page } from "vitest/browser";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 import { useUiStateStore } from "../uiStateStore";
 
 const environmentId = "environment-cad-browser";
-const threadId = "thread-cad-browser";
+const threadId = ThreadId.make("thread-cad-browser");
 const projectId = "project-cad-browser";
+const activeReview = {
+  id: "cad-review-browser",
+  status: "reviewing",
+} as const;
 
 let cadFrameUrl = "";
 const observedFrameRequests: unknown[] = [];
+let threadReviews: Array<typeof activeReview> = [];
 let cadViewCommandHandler:
   | ((command: {
       readonly threadId: string;
@@ -83,7 +89,7 @@ vi.mock("../storeSelectors", () => ({
     session: null,
     externalContext: null,
     worktreePath: null,
-    reviews: [],
+    reviews: threadReviews,
   }),
 }));
 
@@ -124,7 +130,7 @@ function delayedReadyFrameUrl(): string {
                 source: "cad-test-frame-observation",
                 request: event.data
               }, "*");
-              if (event.data?.type !== "load-file-urls" && event.data?.type !== "set-exploded") return;
+              if (!["load-file-urls", "set-exploded", "set-view", "set-camera"].includes(event.data?.type)) return;
               parent.postMessage({
                 source: "cadsense-cad-viewer-frame",
                 type: "response",
@@ -155,9 +161,11 @@ describe("CadPanel browser behavior", () => {
     vi.clearAllMocks();
     observedFrameRequests.length = 0;
     cadViewCommandHandler = null;
+    threadReviews = [];
     useUiStateStore.setState({
       cadExplodedByThreadId: {},
       cadZoomToFitRequestByThreadId: {},
+      cadAgentViewStateByThreadId: {},
     });
   });
 
@@ -265,6 +273,66 @@ describe("CadPanel browser behavior", () => {
 
     await vi.waitFor(() => {
       expect(useUiStateStore.getState().cadExplodedByThreadId[projectId]).toBe(true);
+    });
+
+    window.removeEventListener("message", onObservedRequest);
+    await screen.unmount();
+    queryClient.clear();
+  });
+
+  it("replays the composite agent-controlled CAD state after the viewer loads", async () => {
+    cadFrameUrl = delayedReadyFrameUrl();
+    threadReviews = [activeReview];
+    useUiStateStore.getState().recordCadAgentViewCommand(threadId, {
+      commandId: "agent-view-right",
+      threadId,
+      type: "set-view",
+      view: "right",
+      fit: true,
+      createdAt: "2026-05-20T00:00:00.000Z",
+    });
+    useUiStateStore.getState().recordCadAgentViewCommand(threadId, {
+      commandId: "agent-exploded",
+      threadId,
+      type: "set-exploded",
+      exploded: true,
+      createdAt: "2026-05-20T00:00:01.000Z",
+    });
+
+    const onObservedRequest = (event: MessageEvent<unknown>) => {
+      if (
+        typeof event.data === "object" &&
+        event.data !== null &&
+        "source" in event.data &&
+        event.data.source === "cad-test-frame-observation" &&
+        "request" in event.data
+      ) {
+        observedFrameRequests.push(event.data.request);
+      }
+    };
+    window.addEventListener("message", onObservedRequest);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await vi.waitFor(() => {
+      expect(observedFrameRequests).toContainEqual(
+        expect.objectContaining({ type: "set-view", view: "right", fit: true }),
+      );
+      expect(observedFrameRequests).toContainEqual(
+        expect.objectContaining({ type: "set-exploded", enabled: true }),
+      );
     });
 
     window.removeEventListener("message", onObservedRequest);

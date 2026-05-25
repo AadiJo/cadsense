@@ -16,8 +16,6 @@ release-mock/
 .cadsense
 .tmp-*
 .docs/
-AGENTS.md
-CLAUDE.md
 docs/
 .idea/
 apps/web/.playwright

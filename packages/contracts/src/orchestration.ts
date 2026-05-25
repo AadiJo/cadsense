@@ -561,6 +561,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  hasActiveReview: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -824,6 +825,15 @@ export const ThreadReviewGenerateCommand = Schema.Struct({
 });
 export type ThreadReviewGenerateCommand = typeof ThreadReviewGenerateCommand.Type;
 
+export const ThreadReviewStopCommand = Schema.Struct({
+  type: Schema.Literal("thread.review.stop"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  reviewRunId: CadReviewId,
+  createdAt: IsoDateTime,
+});
+export type ThreadReviewStopCommand = typeof ThreadReviewStopCommand.Type;
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -842,6 +852,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
   ThreadReviewGenerateCommand,
+  ThreadReviewStopCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -864,6 +875,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadSessionStopCommand,
   ThreadReviewGenerateCommand,
+  ThreadReviewStopCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -979,6 +991,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.session-stop-requested",
   "thread.session-set",
   "thread.review-requested",
+  "thread.review-stop-requested",
   "thread.review-upserted",
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
@@ -1152,6 +1165,13 @@ export const ThreadReviewRequestedPayload = Schema.Struct({
 });
 export type ThreadReviewRequestedPayload = typeof ThreadReviewRequestedPayload.Type;
 
+export const ThreadReviewStopRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  reviewRunId: CadReviewId,
+  createdAt: IsoDateTime,
+});
+export type ThreadReviewStopRequestedPayload = typeof ThreadReviewStopRequestedPayload.Type;
+
 export const ThreadReviewUpsertedPayload = Schema.Struct({
   threadId: ThreadId,
   review: CadReviewReport,
@@ -1300,6 +1320,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.review-requested"),
     payload: ThreadReviewRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.review-stop-requested"),
+    payload: ThreadReviewStopRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

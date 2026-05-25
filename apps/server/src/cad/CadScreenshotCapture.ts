@@ -104,6 +104,19 @@ export function rejectCadScreenshotPending(requestId: string, message: string): 
   return true;
 }
 
+export function rejectCadScreenshotPendingForThread(threadId: ThreadId, message: string): number {
+  let rejectedCount = 0;
+  for (const [requestId, entry] of pendingByRequestId) {
+    if (entry.threadId !== threadId) {
+      continue;
+    }
+    pendingByRequestId.delete(requestId);
+    Effect.runFork(Deferred.fail(entry.deferred, new Error(message)));
+    rejectedCount += 1;
+  }
+  return rejectedCount;
+}
+
 export function getCadScreenshotPendingExportRoot(requestId: string): string | undefined {
   return pendingByRequestId.get(requestId)?.exportRoot;
 }

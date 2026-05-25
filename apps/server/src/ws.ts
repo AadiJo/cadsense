@@ -19,6 +19,7 @@ import {
   type OrchestrationCommand,
   type GitActionProgressEvent,
   type GitManagerServiceError,
+  type CadReviewStatus,
   OrchestrationDispatchCommandError,
   type OrchestrationEvent,
   type OrchestrationShellStreamEvent,
@@ -550,6 +551,19 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
 }
 
 const PROVIDER_STATUS_DEBOUNCE_MS = 200;
+const ACTIVE_CAD_REVIEW_STATUSES = new Set<CadReviewStatus>([
+  "requested",
+  "planning",
+  "capturing-baseline",
+  "reviewing",
+  "deep-diving",
+  "synthesizing",
+]);
+
+function isActiveCadReviewStatus(status: CadReviewStatus): boolean {
+  return ACTIVE_CAD_REVIEW_STATUSES.has(status);
+}
+
 const OnshapeWorkspaceRouteLayer = OnshapeWorkspaceLive.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -777,6 +791,39 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                   sequence: event.sequence,
                   thread: nextThread,
                 })),
+              ),
+              Effect.catch(() => Effect.succeed(Option.none())),
+            );
+          case "thread.review-stop-requested":
+            return Effect.succeed(Option.none());
+          case "thread.review-upserted":
+            return projectionSnapshotQuery.getThreadDetailById(event.payload.threadId).pipe(
+              Effect.flatMap((threadDetail) =>
+                projectionSnapshotQuery.getThreadShellById(event.payload.threadId).pipe(
+                  Effect.map((thread) => {
+                    if (Option.isNone(thread)) {
+                      return Option.none<OrchestrationShellStreamEvent>();
+                    }
+
+                    const reviews = Option.isSome(threadDetail)
+                      ? (threadDetail.value.reviews ?? [])
+                      : [];
+                    const mergedReviews = [
+                      ...reviews.filter((review) => review.id !== event.payload.review.id),
+                      event.payload.review,
+                    ];
+                    return Option.some({
+                      kind: "thread-upserted" as const,
+                      sequence: event.sequence,
+                      thread: {
+                        ...thread.value,
+                        hasActiveReview: mergedReviews.some((review) =>
+                          isActiveCadReviewStatus(review.status),
+                        ),
+                      },
+                    });
+                  }),
+                ),
               ),
               Effect.catch(() => Effect.succeed(Option.none())),
             );

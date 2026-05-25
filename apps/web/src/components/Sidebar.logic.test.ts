@@ -59,6 +59,7 @@ describe("hasUnseenCompletion", () => {
         hasPendingApprovals: false,
         hasPendingUserInput: false,
         interactionMode: "default",
+        hasActiveReview: false,
         latestTurn: makeLatestTurn(),
         lastVisitedAt: "2026-03-09T10:04:00.000Z",
         session: null,
@@ -477,6 +478,7 @@ describe("resolveThreadStatusPill", () => {
     hasActionableProposedPlan: false,
     hasPendingApprovals: false,
     hasPendingUserInput: false,
+    hasActiveReview: false,
     interactionMode: "plan" as const,
     latestTurn: null,
     lastVisitedAt: undefined,
@@ -518,6 +520,21 @@ describe("resolveThreadStatusPill", () => {
         thread: baseThread,
       }),
     ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows reviewing with a yellow active indicator when a CAD review is running", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          hasActiveReview: true,
+        },
+      }),
+    ).toMatchObject({
+      label: "Reviewing",
+      dotClass: "bg-yellow-500 dark:bg-yellow-300/90",
+      pulse: true,
+    });
   });
 
   it("shows plan ready when a settled plan turn has a proposed plan ready for follow-up", () => {
@@ -615,6 +632,12 @@ describe("resolveProjectStatusIndicator", () => {
           colorClass: "text-amber-600",
           dotClass: "bg-amber-500",
           pulse: false,
+        },
+        {
+          label: "Reviewing",
+          colorClass: "text-yellow-600",
+          dotClass: "bg-yellow-500",
+          pulse: true,
         },
         {
           label: "Working",

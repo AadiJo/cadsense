@@ -2,11 +2,33 @@ import { describe, expect, it } from "vitest";
 import * as Schema from "effect/Schema";
 
 import { ProviderInstanceId } from "./providerInstance.ts";
-import { DEFAULT_SERVER_SETTINGS, ServerSettings, ServerSettingsPatch } from "./settings.ts";
+import {
+  ClientSettingsPatch,
+  ClientSettingsSchema,
+  DEFAULT_CLIENT_SETTINGS,
+  DEFAULT_SERVER_SETTINGS,
+  ServerSettings,
+  ServerSettingsPatch,
+} from "./settings.ts";
 
+const decodeClientSettings = Schema.decodeUnknownSync(ClientSettingsSchema);
+const decodeClientSettingsPatch = Schema.decodeUnknownSync(ClientSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
+
+describe("ClientSettings.displayCadReviewWorkLog", () => {
+  it("defaults CAD review work logs to hidden", () => {
+    expect(DEFAULT_CLIENT_SETTINGS.displayCadReviewWorkLog).toBe(false);
+    expect(decodeClientSettings({}).displayCadReviewWorkLog).toBe(false);
+  });
+
+  it("accepts a patch to show CAD review work logs", () => {
+    expect(decodeClientSettingsPatch({ displayCadReviewWorkLog: true })).toEqual({
+      displayCadReviewWorkLog: true,
+    });
+  });
+});
 
 describe("ServerSettings.providerInstances (slice-2 invariant)", () => {
   it("defaults to an empty record so legacy configs without the key still decode", () => {
