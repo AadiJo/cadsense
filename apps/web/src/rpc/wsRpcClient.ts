@@ -97,6 +97,10 @@ export interface WsRpcClient {
       typeof WS_METHODS.subscribeCadScreenshotRequests
     >;
   };
+  readonly mechbase: {
+    readonly listConnections: RpcUnaryNoArgMethod<typeof WS_METHODS.mechbaseListConnections>;
+    readonly setupConnection: RpcUnaryMethod<typeof WS_METHODS.mechbaseSetupConnection>;
+  };
   readonly shell: {
     readonly openInEditor: (input: {
       readonly cwd: Parameters<LocalApi["shell"]["openInEditor"]>[0];
@@ -255,6 +259,12 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
             tag: WS_METHODS.subscribeCadScreenshotRequests,
           },
         ),
+    },
+    mechbase: {
+      listConnections: () =>
+        transport.request((client) => client[WS_METHODS.mechbaseListConnections]({})),
+      setupConnection: (input) =>
+        transport.request((client) => client[WS_METHODS.mechbaseSetupConnection](input)),
     },
     shell: {
       openInEditor: (input) =>

@@ -31,6 +31,7 @@ import {
   OrchestrationReplayEventsError,
   FilesystemBrowseError,
   OnshapeRpcError,
+  MechbaseRpcError,
   type OnshapeListSyncedCadFilesResult,
   type OnshapeSyncedCadFile,
   ThreadId,
@@ -96,6 +97,9 @@ import { OnshapeWorkspaceLive } from "./onshape/Layers/OnshapeWorkspace.ts";
 import { OnshapeIndexRepositoryLive } from "./persistence/Layers/OnshapeIndex.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
+import { ServerSecretStore } from "./auth/Services/ServerSecretStore.ts";
+import { MECHBASE_API_KEY_SECRET_NAME, validateMechbaseApiKey } from "./mechbase/MechbaseApi.ts";
+import { decodeMechbaseApiKey, encodeMechbaseApiKey } from "./mechbase/MechbaseConnection.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
@@ -129,6 +133,7 @@ import { buildCadModelUrl } from "./cad/cadModelHttpPath.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isOnshapeRpcError = Schema.is(OnshapeRpcError);
+const isMechbaseRpcError = Schema.is(MechbaseRpcError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -1427,6 +1432,74 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               ),
             ),
             { "rpc.aggregate": "onshape" },
+          ),
+        [WS_METHODS.mechbaseListConnections]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.mechbaseListConnections,
+            Effect.gen(function* () {
+              const secretStore = yield* ServerSecretStore;
+              const storedApiKey = yield* secretStore.get(MECHBASE_API_KEY_SECRET_NAME);
+              if (storedApiKey === null) {
+                return { connections: [] };
+              }
+              yield* Effect.tryPromise(() =>
+                validateMechbaseApiKey(decodeMechbaseApiKey(storedApiKey)),
+              );
+              return {
+                connections: [
+                  {
+                    displayName: "Mechbase" as const,
+                    apiKeyConfigured: true,
+                  },
+                ],
+              };
+            }).pipe(
+              Effect.provide(ServerSecretStoreLive),
+              Effect.mapError(
+                (cause) =>
+                  new MechbaseRpcError({
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Failed to list Mechbase connections.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "mechbase" },
+          ),
+        [WS_METHODS.mechbaseSetupConnection]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.mechbaseSetupConnection,
+            Effect.gen(function* () {
+              const apiKey = input.apiKey.trim();
+              if (apiKey.length === 0) {
+                return yield* new MechbaseRpcError({ message: "Mechbase API key is required." });
+              }
+              yield* Effect.tryPromise(() => validateMechbaseApiKey(apiKey));
+              const secretStore = yield* ServerSecretStore;
+              yield* secretStore.set(MECHBASE_API_KEY_SECRET_NAME, encodeMechbaseApiKey(apiKey));
+              return {
+                connection: {
+                  displayName: "Mechbase" as const,
+                  apiKeyConfigured: true,
+                },
+              };
+            }).pipe(
+              Effect.provide(ServerSecretStoreLive),
+              Effect.mapError((cause) =>
+                isMechbaseRpcError(cause)
+                  ? cause
+                  : new MechbaseRpcError({
+                      message:
+                        cause instanceof Error
+                          ? cause.message
+                          : "Failed to set up Mechbase connection.",
+                      cause,
+                    }),
+              ),
+            ),
+            { "rpc.aggregate": "mechbase" },
           ),
         [WS_METHODS.onshapeImportUrl]: (input) =>
           observeRpcEffect(

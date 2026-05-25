@@ -55,6 +55,12 @@ import { makeCadViewCodexMcpConfig } from "../../cad/CadViewMcp.ts";
 import { normalizeCodexStreamDelta, normalizeCodexTranscriptSnippet } from "../codexWireText.ts";
 import { ServerConfig } from "../../config.ts";
 import {
+  MECHBASE_API_KEY_SECRET_NAME,
+  validateMechbaseApiKey,
+} from "../../mechbase/MechbaseApi.ts";
+import { decodeMechbaseApiKey } from "../../mechbase/MechbaseConnection.ts";
+import { makeMechbaseCodexMcpConfig } from "../../mechbase/MechbaseMcp.ts";
+import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
   makeCodexSessionRuntime,
@@ -71,6 +77,25 @@ const isCodexSessionRuntimeThreadIdMissingError = Schema.is(
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 
 const PROVIDER = ProviderDriverKind.make("codex");
+
+function makeMechbaseApiKeySecretPath(secretsDir: string): string {
+  return `${secretsDir.replace(/[\\/]+$/, "")}/${MECHBASE_API_KEY_SECRET_NAME}.bin`;
+}
+
+function mergeCodexThreadStartConfigs(
+  ...configs: ReadonlyArray<Record<string, unknown>>
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  const mergedMcpServers: Record<string, unknown> = {};
+  for (const config of configs) {
+    Object.assign(merged, config);
+    const existingMcpServers =
+      config.mcp_servers && typeof config.mcp_servers === "object" ? config.mcp_servers : {};
+    Object.assign(mergedMcpServers, existingMcpServers);
+  }
+  merged.mcp_servers = mergedMcpServers;
+  return merged;
+}
 
 export interface CodexAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
@@ -293,9 +318,50 @@ function itemTitle(itemType: CanonicalItemType): string | undefined {
   }
 }
 
+function humanizeMcpIdentifier(value: string): string {
+  const withoutLocalPrefix = value
+    .replace(/^cadsense[-_]/i, "")
+    .replace(/^mcp[-_]/i, "")
+    .replace(/[-_]?mcp$/i, "");
+  return withoutLocalPrefix
+    .replace(/[-_.]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function resolveMcpToolTitle(item: CodexLifecycleItem): string | undefined {
+  if (item.type !== "mcpToolCall") {
+    return undefined;
+  }
+
+  const explicitTitle =
+    "toolTitle" in item && typeof item.toolTitle === "string"
+      ? trimText(item.toolTitle)
+      : undefined;
+  const server = "server" in item ? trimText(item.server) : undefined;
+  const tool = "tool" in item ? trimText(item.tool) : undefined;
+  const displayTarget = explicitTitle ?? server ?? tool;
+  if (!displayTarget) {
+    return undefined;
+  }
+
+  const normalizedServer = server?.toLowerCase() ?? "";
+  const normalizedTool = tool?.toLowerCase() ?? "";
+  if (normalizedServer.includes("mechbase") || normalizedTool.includes("mechbase")) {
+    return "Queried Mechbase";
+  }
+
+  const displayName = humanizeMcpIdentifier(displayTarget);
+  return displayName ? `Used ${displayName}` : undefined;
+}
+
 function itemDetail(item: CodexLifecycleItem): string | undefined {
   const candidates = [
     "command" in item ? item.command : undefined,
+    "toolTitle" in item ? item.toolTitle : undefined,
+    "tool" in item ? item.tool : undefined,
     "title" in item ? item.title : undefined,
     "summary" in item ? item.summary : undefined,
     "text" in item ? item.text : undefined,
@@ -498,6 +564,7 @@ function mapItemLifecycle(
       : lifecycle === "item.completed"
         ? "completed"
         : undefined;
+  const title = resolveMcpToolTitle(item) ?? itemTitle(itemType);
 
   return {
     ...runtimeEventBase(event, canonicalThreadId),
@@ -505,7 +572,7 @@ function mapItemLifecycle(
     payload: {
       itemType,
       ...(status ? { status } : {}),
-      ...(itemTitle(itemType) ? { title: itemTitle(itemType) } : {}),
+      ...(title ? { title } : {}),
       ...(detail ? { detail } : {}),
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
@@ -1467,15 +1534,29 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const validatedMechbase = yield* fileSystem
+          .readFile(makeMechbaseApiKeySecretPath(serverConfig.secretsDir))
+          .pipe(
+            Effect.flatMap((storedApiKey) => {
+              const apiKey = decodeMechbaseApiKey(storedApiKey);
+              return Effect.tryPromise(() => validateMechbaseApiKey(apiKey)).pipe(
+                Effect.as({ apiKey }),
+              );
+            }),
+            Effect.catch(() => Effect.succeed(null)),
+          );
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
           cwd: input.cwd ?? process.cwd(),
           binaryPath: codexConfig.binaryPath,
-          codexThreadStartConfig: makeCadViewCodexMcpConfig(
-            serverConfig,
-            input.cadViewThreadId ?? input.threadId,
-            options?.cadViewMcpExportRoot,
+          codexThreadStartConfig: mergeCodexThreadStartConfigs(
+            makeCadViewCodexMcpConfig(
+              serverConfig,
+              input.cadViewThreadId ?? input.threadId,
+              options?.cadViewMcpExportRoot,
+            ),
+            validatedMechbase ? makeMechbaseCodexMcpConfig(validatedMechbase.apiKey) : {},
           ),
           ...(options?.environment ? { environment: options.environment } : {}),
           ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),

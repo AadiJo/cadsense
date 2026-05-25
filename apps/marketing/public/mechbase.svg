@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-label="Mechbase">
+  <rect x="1" y="1" width="46" height="46" rx="11" fill="#24204a"/>
+  <rect x="1" y="1" width="46" height="46" rx="11" fill="url(#glow)" fill-opacity=".38"/>
+  <rect x="1" y="1" width="46" height="46" rx="11" stroke="#6d65a9" stroke-opacity=".78"/>
+  <path d="M24 14v4m0-4h-3m3 0h3M15 22.5h3m12 0h3M17.5 19h13c1.38 0 2.5 1.12 2.5 2.5v8c0 1.38-1.12 2.5-2.5 2.5h-13a2.5 2.5 0 0 1-2.5-2.5v-8c0-1.38 1.12-2.5 2.5-2.5Zm4.5 6h.01M26 25h.01M20 32v2h8v-2" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(14 9) rotate(50) scale(42)">
+      <stop stop-color="#7586ff"/>
+      <stop offset=".54" stop-color="#8066d6" stop-opacity=".62"/>
+      <stop offset="1" stop-color="#181726" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+</svg>

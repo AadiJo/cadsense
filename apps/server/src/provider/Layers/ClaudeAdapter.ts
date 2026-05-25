@@ -68,6 +68,12 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeCadViewClaudeMcpServers } from "../../cad/CadViewMcp.ts";
 import { ServerConfig } from "../../config.ts";
+import {
+  MECHBASE_API_KEY_SECRET_NAME,
+  validateMechbaseApiKey,
+} from "../../mechbase/MechbaseApi.ts";
+import { decodeMechbaseApiKey } from "../../mechbase/MechbaseConnection.ts";
+import { makeMechbaseClaudeMcpServers } from "../../mechbase/MechbaseMcp.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
@@ -89,6 +95,9 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJ
 const decodeUnknownJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
+function makeMechbaseApiKeySecretPath(secretsDir: string): string {
+  return `${secretsDir.replace(/[\\/]+$/, "")}/${MECHBASE_API_KEY_SECRET_NAME}.bin`;
+}
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -2898,6 +2907,17 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
       };
+      const validatedMechbase = yield* fileSystem
+        .readFile(makeMechbaseApiKeySecretPath(serverConfig.secretsDir))
+        .pipe(
+          Effect.flatMap((storedApiKey) => {
+            const apiKey = decodeMechbaseApiKey(storedApiKey);
+            return Effect.tryPromise(() => validateMechbaseApiKey(apiKey)).pipe(
+              Effect.as({ apiKey }),
+            );
+          }),
+          Effect.catch(() => Effect.succeed(null)),
+        );
       const queryOptions: ClaudeQueryOptions = {
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
@@ -2921,7 +2941,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         includePartialMessages: true,
         canUseTool,
         env: claudeEnvironment,
-        mcpServers: makeCadViewClaudeMcpServers(serverConfig, threadId),
+        mcpServers: {
+          ...makeCadViewClaudeMcpServers(serverConfig, threadId),
+          ...(validatedMechbase ? makeMechbaseClaudeMcpServers(validatedMechbase.apiKey) : {}),
+        },
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };

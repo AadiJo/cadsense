@@ -73,6 +73,12 @@ import {
   OnshapeSyncProjectResult,
 } from "./onshape.ts";
 import {
+  MechbaseListConnectionsResult,
+  MechbaseRpcError,
+  MechbaseSetupConnectionInput,
+  MechbaseSetupConnectionResult,
+} from "./mechbase.ts";
+import {
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -186,6 +192,8 @@ export const WS_METHODS = {
   onshapeSearchIndex: "onshape.searchIndex",
   onshapeSyncProject: "onshape.syncProject",
   onshapeListSyncedCadFiles: "onshape.listSyncedCadFiles",
+  mechbaseListConnections: "mechbase.listConnections",
+  mechbaseSetupConnection: "mechbase.setupConnection",
   cadSetView: "cad.setView",
   cadScreenshotUpload: "cad.screenshotUpload",
   cadHierarchyUpload: "cad.hierarchyUpload",
@@ -342,6 +350,18 @@ export const WsOnshapeListSyncedCadFilesRpc = Rpc.make(WS_METHODS.onshapeListSyn
   payload: OnshapeListSyncedCadFilesInput,
   success: OnshapeListSyncedCadFilesResult,
   error: OnshapeRpcError,
+});
+
+export const WsMechbaseListConnectionsRpc = Rpc.make(WS_METHODS.mechbaseListConnections, {
+  payload: Schema.Struct({}),
+  success: MechbaseListConnectionsResult,
+  error: MechbaseRpcError,
+});
+
+export const WsMechbaseSetupConnectionRpc = Rpc.make(WS_METHODS.mechbaseSetupConnection, {
+  payload: MechbaseSetupConnectionInput,
+  success: MechbaseSetupConnectionResult,
+  error: MechbaseRpcError,
 });
 
 export const WsCadSetViewRpc = Rpc.make(WS_METHODS.cadSetView, {
@@ -617,6 +637,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOnshapeSearchIndexRpc,
   WsOnshapeSyncProjectRpc,
   WsOnshapeListSyncedCadFilesRpc,
+  WsMechbaseListConnectionsRpc,
+  WsMechbaseSetupConnectionRpc,
   WsCadSetViewRpc,
   WsCadScreenshotUploadRpc,
   WsCadHierarchyUploadRpc,

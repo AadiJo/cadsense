@@ -667,6 +667,94 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       }),
   );
 
+  it.effect("maps Mechbase MCP tool calls to a readable lifecycle title", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-mcp-mechbase-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("mcp_call_1"),
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          completedAtMs: 1767225600000,
+          item: {
+            id: "mcp_call_1",
+            type: "mcpToolCall",
+            server: "cadsense-mechbase",
+            tool: "search_mechbase",
+            status: "completed",
+            arguments: { query: "swerve module" },
+            result: { content: [] },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const event = yield* Fiber.join(eventsFiber);
+      assert.equal(event._tag, "Some");
+      if (event._tag !== "Some") {
+        return;
+      }
+      assert.equal(event.value.type, "item.completed");
+      if (event.value.type !== "item.completed") {
+        return;
+      }
+      assert.equal(event.value.payload.itemType, "mcp_tool_call");
+      assert.equal(event.value.payload.title, "Queried Mechbase");
+    }),
+  );
+
+  it.effect("maps generic MCP tool calls to a server-specific lifecycle title", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runHead(adapter.streamEvents).pipe(Effect.forkChild);
+
+      yield* runtime.emit({
+        id: asEventId("evt-mcp-cad-completed"),
+        kind: "notification",
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        itemId: asItemId("mcp_call_2"),
+        payload: {
+          threadId: "thread-1",
+          turnId: "turn-1",
+          completedAtMs: 1767225600000,
+          item: {
+            id: "mcp_call_2",
+            type: "mcpToolCall",
+            server: "cadsense-cad-view",
+            tool: "capture_view",
+            status: "completed",
+            arguments: {},
+            result: { content: [] },
+          },
+        },
+      } satisfies ProviderEvent);
+
+      const event = yield* Fiber.join(eventsFiber);
+      assert.equal(event._tag, "Some");
+      if (event._tag !== "Some") {
+        return;
+      }
+      assert.equal(event.value.type, "item.completed");
+      if (event.value.type !== "item.completed") {
+        return;
+      }
+      assert.equal(event.value.payload.itemType, "mcp_tool_call");
+      assert.equal(event.value.payload.title, "Used Cad View");
+    }),
+  );
+
   it.effect("maps MCP tool call progress when `message` is a structured blob carrying text", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

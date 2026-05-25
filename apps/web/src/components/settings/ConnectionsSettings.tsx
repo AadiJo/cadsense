@@ -1,6 +1,7 @@
 import {
   ChevronDownIcon,
   ChevronsLeftRightEllipsisIcon,
+  BotIcon,
   PlusIcon,
   QrCodeIcon,
   RefreshCwIcon,
@@ -16,6 +17,7 @@ import {
   type DesktopSshEnvironmentTarget,
   type DesktopServerExposureState,
   type EnvironmentId,
+  type MechbaseConnection,
   type OnshapeConnection,
 } from "@cadsense/contracts";
 import * as DateTime from "effect/DateTime";
@@ -1394,6 +1396,43 @@ function OnshapeConnectionListRow({ connection, onEdit }: OnshapeConnectionListR
   );
 }
 
+type MechbaseConnectionListRowProps = {
+  connection: MechbaseConnection;
+  onEdit: () => void;
+};
+
+function MechbaseConnectionListRow({ connection, onEdit }: MechbaseConnectionListRowProps) {
+  return (
+    <div className={ITEM_ROW_CLASSNAME}>
+      <div className={ITEM_ROW_INNER_CLASSNAME}>
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-h-5 items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 text-primary">
+              <BotIcon className="size-3.5" />
+            </span>
+            <h3 className="truncate text-sm font-medium text-foreground">
+              {connection.displayName}
+            </h3>
+            {connection.apiKeyConfigured ? (
+              <span className="rounded-md border border-success/30 bg-success/10 px-1 py-0.5 text-[10px] text-success">
+                API key saved
+              </span>
+            ) : null}
+          </div>
+          <p className="truncate text-xs text-muted-foreground">
+            Mechbase connector credentials are stored in the local backend secret store.
+          </p>
+        </div>
+        <div className="flex w-full shrink-0 items-center gap-2 sm:w-auto sm:justify-end">
+          <Button size="xs" variant="outline" onClick={onEdit}>
+            Update key
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 interface DesktopSshHostRowProps {
   target: DesktopDiscoveredSshHost;
   connectingHostAlias: string | null;
@@ -1527,6 +1566,14 @@ export function ConnectionsSettings() {
   const [onshapeBaseUrl, setOnshapeBaseUrl] = useState("https://cad.onshape.com");
   const [onshapeAccessKeyId, setOnshapeAccessKeyId] = useState("");
   const [onshapeSecretKey, setOnshapeSecretKey] = useState("");
+  const [mechbaseConnections, setMechbaseConnections] = useState<ReadonlyArray<MechbaseConnection>>(
+    [],
+  );
+  const [isLoadingMechbaseConnections, setIsLoadingMechbaseConnections] = useState(false);
+  const [isSavingMechbaseConnection, setIsSavingMechbaseConnection] = useState(false);
+  const [mechbaseConnectionDialogOpen, setMechbaseConnectionDialogOpen] = useState(false);
+  const [mechbaseConnectionError, setMechbaseConnectionError] = useState<string | null>(null);
+  const [mechbaseApiKey, setMechbaseApiKey] = useState("");
   const unsavedDiscoveredSshHosts = useMemo(
     () =>
       discoveredSshHosts.filter((target) => {
@@ -2285,9 +2332,90 @@ export function ConnectionsSettings() {
     resetOnshapeConnectionForm,
   ]);
 
+  const resetMechbaseConnectionForm = useCallback(() => {
+    setMechbaseConnectionError(null);
+    setMechbaseApiKey("");
+  }, []);
+
+  const loadMechbaseConnections = useCallback(async () => {
+    if (primaryEnvironmentId === null) {
+      setMechbaseConnectionError("Primary environment is not available.");
+      setMechbaseConnections([]);
+      return;
+    }
+    const api = readEnvironmentApi(primaryEnvironmentId);
+    if (!api) {
+      setMechbaseConnectionError("Primary environment API is not available.");
+      setMechbaseConnections([]);
+      return;
+    }
+
+    setIsLoadingMechbaseConnections(true);
+    setMechbaseConnectionError(null);
+    try {
+      const result = await api.mechbase.listConnections();
+      setMechbaseConnections(result.connections);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to load Mechbase connections.";
+      setMechbaseConnections([]);
+      setMechbaseConnectionError(message);
+    } finally {
+      setIsLoadingMechbaseConnections(false);
+    }
+  }, [primaryEnvironmentId]);
+
+  const handleOpenMechbaseConnectionDialog = useCallback(() => {
+    setMechbaseConnectionError(null);
+    setMechbaseApiKey("");
+    setMechbaseConnectionDialogOpen(true);
+  }, []);
+
+  const handleSaveMechbaseConnection = useCallback(async () => {
+    const apiKey = mechbaseApiKey.trim();
+    if (!apiKey) {
+      setMechbaseConnectionError("Enter a Mechbase API key.");
+      return;
+    }
+
+    if (primaryEnvironmentId === null) {
+      setMechbaseConnectionError("Primary environment is not available.");
+      return;
+    }
+    const api = readEnvironmentApi(primaryEnvironmentId);
+    if (!api) {
+      setMechbaseConnectionError("Primary environment API is not available.");
+      return;
+    }
+
+    setIsSavingMechbaseConnection(true);
+    setMechbaseConnectionError(null);
+    try {
+      const result = await api.mechbase.setupConnection({ apiKey });
+      setMechbaseConnections([result.connection]);
+      setMechbaseConnectionDialogOpen(false);
+      resetMechbaseConnectionForm();
+      toastManager.add({
+        type: "success",
+        title: "Mechbase connected",
+        description: "Mechbase is ready to use.",
+      });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Failed to save Mechbase connection.";
+      setMechbaseConnectionError(message);
+    } finally {
+      setIsSavingMechbaseConnection(false);
+    }
+  }, [mechbaseApiKey, primaryEnvironmentId, resetMechbaseConnectionForm]);
+
   useEffect(() => {
     void loadOnshapeConnections();
   }, [loadOnshapeConnections]);
+
+  useEffect(() => {
+    void loadMechbaseConnections();
+  }, [loadMechbaseConnections]);
 
   const renderConnectionModeCard = (input: {
     readonly mode: "remote" | "ssh";
@@ -2773,6 +2901,141 @@ export function ConnectionsSettings() {
     </SettingsSection>
   );
 
+  const renderMechbaseConnectionsSection = () => (
+    <SettingsSection
+      title="Mechbase"
+      headerAction={
+        <div className="flex items-center gap-1">
+          <Button
+            size="xs"
+            variant="ghost"
+            className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+            disabled={isLoadingMechbaseConnections}
+            onClick={() => void loadMechbaseConnections()}
+          >
+            {isLoadingMechbaseConnections ? (
+              <RefreshCwIcon className="size-3 animate-spin" />
+            ) : (
+              <RefreshCwIcon className="size-3" />
+            )}
+            Refresh
+          </Button>
+          <Dialog
+            open={mechbaseConnectionDialogOpen}
+            onOpenChange={(open) => {
+              if (isSavingMechbaseConnection) return;
+              setMechbaseConnectionDialogOpen(open);
+              if (!open) resetMechbaseConnectionForm();
+            }}
+          >
+            <DialogTrigger
+              render={
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+                  aria-label="Add Mechbase connection"
+                >
+                  <PlusIcon className="size-3" />
+                  <span>Add connection</span>
+                </Button>
+              }
+            />
+            <DialogPopup className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>
+                  {mechbaseConnections.length > 0
+                    ? "Update Mechbase API key"
+                    : "Add Mechbase connection"}
+                </DialogTitle>
+                <DialogDescription>
+                  API keys are stored in the local backend secret store. Only connection status is
+                  shown in the app. Get a Mechbase API key from{" "}
+                  <a
+                    href="https://mechbase.johari-dev.com/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-medium text-foreground underline underline-offset-2"
+                  >
+                    mechbase.johari-dev.com
+                  </a>
+                  .
+                </DialogDescription>
+              </DialogHeader>
+              <DialogPanel className="space-y-4">
+                <label className="block">
+                  <span className="mb-1.5 block text-xs font-medium text-foreground">API key</span>
+                  <Input
+                    type="password"
+                    value={mechbaseApiKey}
+                    onChange={(event) => setMechbaseApiKey(event.target.value)}
+                    placeholder="Mechbase API key"
+                    disabled={isSavingMechbaseConnection}
+                    spellCheck={false}
+                  />
+                </label>
+                {mechbaseConnectionError ? (
+                  <p className="text-xs text-destructive">{mechbaseConnectionError}</p>
+                ) : null}
+              </DialogPanel>
+              <DialogFooter>
+                <DialogClose
+                  disabled={isSavingMechbaseConnection}
+                  render={<Button variant="outline" disabled={isSavingMechbaseConnection} />}
+                >
+                  Cancel
+                </DialogClose>
+                <Button
+                  disabled={isSavingMechbaseConnection}
+                  onClick={() => void handleSaveMechbaseConnection()}
+                >
+                  {isSavingMechbaseConnection ? (
+                    <>
+                      <Spinner className="size-3.5" />
+                      Savingâ€¦
+                    </>
+                  ) : mechbaseConnections.length > 0 ? (
+                    "Update key"
+                  ) : (
+                    "Add connection"
+                  )}
+                </Button>
+              </DialogFooter>
+            </DialogPopup>
+          </Dialog>
+        </div>
+      }
+    >
+      {mechbaseConnectionError && !mechbaseConnectionDialogOpen ? (
+        <div className={ITEM_ROW_CLASSNAME}>
+          <p className="text-xs text-destructive">{mechbaseConnectionError}</p>
+        </div>
+      ) : null}
+      {mechbaseConnections.map((connection) => (
+        <MechbaseConnectionListRow
+          key={connection.displayName}
+          connection={connection}
+          onEdit={handleOpenMechbaseConnectionDialog}
+        />
+      ))}
+      {mechbaseConnections.length === 0 && !isLoadingMechbaseConnections ? (
+        <div className={ITEM_ROW_CLASSNAME}>
+          <p className="text-xs text-muted-foreground">
+            No Mechbase API key configured. Add a connection here to enable the Mechbase connector.
+          </p>
+        </div>
+      ) : null}
+      {mechbaseConnections.length === 0 && isLoadingMechbaseConnections ? (
+        <div className={ITEM_ROW_CLASSNAME}>
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Spinner className="size-3.5" />
+            Loading Mechbase connectionâ€¦
+          </p>
+        </div>
+      ) : null}
+    </SettingsSection>
+  );
+
   return (
     <SettingsPageContainer>
       {canManageLocalBackend ? (
@@ -2984,6 +3247,7 @@ export function ConnectionsSettings() {
       )}
 
       {renderOnshapeConnectionsSection()}
+      {renderMechbaseConnectionsSection()}
 
       <SettingsSection
         title="Remote environments"

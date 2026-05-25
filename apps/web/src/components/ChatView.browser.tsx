@@ -212,6 +212,7 @@ function createMockEnvironmentApi(input: {
     },
     sourceControl: {} as EnvironmentApi["sourceControl"],
     onshape: {} as EnvironmentApi["onshape"],
+    mechbase: {} as EnvironmentApi["mechbase"],
     vcs: {} as EnvironmentApi["vcs"],
     git: {} as EnvironmentApi["git"],
     orchestration: {

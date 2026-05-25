@@ -29,6 +29,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       publishRepository: rpcClient.sourceControl.publishRepository,
     },
     onshape: rpcClient.onshape,
+    mechbase: rpcClient.mechbase,
     vcs: {
       pull: rpcClient.vcs.pull,
       refreshStatus: rpcClient.vcs.refreshStatus,

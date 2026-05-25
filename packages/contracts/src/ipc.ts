@@ -91,6 +91,11 @@ import type {
   OnshapeSyncProjectResult,
 } from "./onshape.ts";
 import type {
+  MechbaseListConnectionsResult,
+  MechbaseSetupConnectionInput,
+  MechbaseSetupConnectionResult,
+} from "./mechbase.ts";
+import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
@@ -561,6 +566,12 @@ export interface EnvironmentApi {
       callback: (request: CadScreenshotBrowserRequest) => void,
     ) => () => void;
     uploadCadScreenshot: (input: CadScreenshotUploadInput) => Promise<CadScreenshotUploadResult>;
+  };
+  mechbase: {
+    listConnections: () => Promise<MechbaseListConnectionsResult>;
+    setupConnection: (
+      input: MechbaseSetupConnectionInput,
+    ) => Promise<MechbaseSetupConnectionResult>;
   };
   vcs: {
     listRefs: (input: VcsListRefsInput) => Promise<VcsListRefsResult>;
