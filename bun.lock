@@ -17,7 +17,7 @@
     },
     "apps/desktop": {
       "name": "@cadsense/desktop",
-      "version": "0.0.24",
+      "version": "0.0.1",
       "dependencies": {
         "@cadsense/contracts": "workspace:*",
         "@cadsense/shared": "workspace:*",
@@ -50,7 +50,7 @@
     },
     "apps/server": {
       "name": "cadsense",
-      "version": "0.0.24",
+      "version": "0.0.1",
       "bin": {
         "cadsense": "./dist/bin.mjs",
       },
@@ -84,7 +84,7 @@
     },
     "apps/web": {
       "name": "@cadsense/web",
-      "version": "0.0.24",
+      "version": "0.0.1",
       "dependencies": {
         "@base-ui/react": "^1.4.1",
         "@cadsense/client-runtime": "workspace:*",
@@ -170,7 +170,7 @@
     },
     "packages/contracts": {
       "name": "@cadsense/contracts",
-      "version": "0.0.24",
+      "version": "0.0.1",
       "dependencies": {
         "effect": "catalog:",
       },
