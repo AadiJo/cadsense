@@ -255,6 +255,7 @@ vi.mock("~/terminal-links", () => ({
 }));
 
 vi.mock("~/hooks/useSettings", () => ({
+  getClientSettings: () => ({ displayGitUi: true }),
   useSettings: (selector?: (settings: { displayGitUi: boolean }) => unknown) => {
     const settings = { displayGitUi: true };
     return selector ? selector(settings) : settings;

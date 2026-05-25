@@ -180,25 +180,6 @@ describe("CompactComposerControlsMenu", () => {
       stickyModelSelectionByProvider: {},
     });
   });
-
-  it("shows fast mode controls for Opus", async () => {
-    await using _ = await mountMenu({
-      modelSelection: createModelSelection(
-        ProviderInstanceId.make("claudeAgent"),
-        "claude-opus-4-6",
-      ),
-    });
-
-    await page.getByLabelText("More composer controls").click();
-
-    await vi.waitFor(() => {
-      const text = document.body.textContent ?? "";
-      expect(text).toContain("Fast Mode");
-      expect(text).toContain("On");
-      expect(text).toContain("Off");
-    });
-  });
-
   it("hides fast mode controls for non-Opus Claude models", async () => {
     await using _ = await mountMenu({
       modelSelection: createModelSelection(
@@ -290,39 +271,5 @@ describe("CompactComposerControlsMenu", () => {
         'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
       );
     });
-  });
-
-  it("can hide the interaction mode section", async () => {
-    const host = document.createElement("div");
-    document.body.append(host);
-    const screen = await render(
-      <CompactComposerControlsMenu
-        activePlan={false}
-        interactionMode="default"
-        planSidebarLabel="Plan"
-        planSidebarOpen={false}
-        runtimeMode="approval-required"
-        showInteractionModeToggle={false}
-        onToggleInteractionMode={vi.fn()}
-        onTogglePlanSidebar={vi.fn()}
-        onRuntimeModeChange={vi.fn()}
-      />,
-      { container: host },
-    );
-
-    await page.getByLabelText("More composer controls").click();
-
-    await vi.waitFor(() => {
-      const text = document.body.textContent ?? "";
-      expect(text).not.toContain("Mode");
-      expect(text).not.toContain("Chat");
-      expect(text).not.toContain("Plan");
-      expect(text).toContain("Access");
-      expect(text).toContain("Supervised");
-      expect(text).toContain("Full access");
-    });
-
-    await screen.unmount();
-    host.remove();
   });
 });

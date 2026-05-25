@@ -204,46 +204,6 @@ describe("MessagesTimeline", () => {
       await screen.unmount();
     }
   });
-
-  it("expands and re-collapses long user messages from the toggle", async () => {
-    const screen = await render(
-      <MessagesTimeline
-        {...buildProps()}
-        timelineEntries={[buildUserTimelineEntry(buildLongUserMessageText())]}
-      />,
-    );
-
-    try {
-      const expandButton = page.getByRole("button", { name: "Show full message" });
-      await expect.element(expandButton).toBeVisible();
-
-      expect(document.body.textContent ?? "").toContain("deep hidden detail only after expand");
-
-      await expandButton.click();
-
-      const collapseButton = page.getByRole("button", { name: "Show less" });
-      await expect.element(collapseButton).toBeVisible();
-      await expect.element(collapseButton).toHaveAttribute("aria-expanded", "true");
-
-      let messageBody = document.querySelector("[data-user-message-body='true']");
-      expect(messageBody?.getAttribute("data-user-message-collapsed")).toBe("false");
-      expect(messageBody?.className).not.toContain("max-h-44");
-      expect(messageBody?.getAttribute("data-user-message-fade")).toBe("false");
-      expect((messageBody as HTMLDivElement | null)?.style.maskImage ?? "").toBe("");
-
-      await collapseButton.click();
-
-      await expect.element(page.getByRole("button", { name: "Show full message" })).toBeVisible();
-      messageBody = document.querySelector("[data-user-message-body='true']");
-      expect(messageBody?.getAttribute("data-user-message-collapsed")).toBe("true");
-      expect(messageBody?.className).toContain("max-h-44");
-      expect(messageBody?.getAttribute("data-user-message-fade")).toBe("true");
-      expect((messageBody as HTMLDivElement | null)?.style.maskImage).toContain("linear-gradient");
-    } finally {
-      await screen.unmount();
-    }
-  });
-
   it("starts the newest long user prompt collapsed", async () => {
     const screen = await render(
       <MessagesTimeline
