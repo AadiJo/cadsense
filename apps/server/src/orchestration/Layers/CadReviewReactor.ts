@@ -32,6 +32,7 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processEventSafely);
 
   const start: CadReviewReactorShape["start"] = Effect.fn("start")(function* () {
+    yield* cadReviewService.recoverInterruptedReviews();
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
         event.type === "thread.review-requested" ? worker.enqueue(event) : Effect.void,

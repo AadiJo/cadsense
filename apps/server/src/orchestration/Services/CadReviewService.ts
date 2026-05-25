@@ -7,6 +7,7 @@ export interface CadReviewServiceShape {
   readonly generateReview: (
     event: Extract<OrchestrationEvent, { type: "thread.review-requested" }>,
   ) => Effect.Effect<void, never>;
+  readonly recoverInterruptedReviews: () => Effect.Effect<void, never>;
 }
 
 export class CadReviewService extends Context.Service<CadReviewService, CadReviewServiceShape>()(

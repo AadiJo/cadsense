@@ -27,6 +27,7 @@ export const CAD_VIEW_MCP_HIERARCHY_TOOL_NAME = "get_cad_hierarchy";
 export const CAD_VIEW_MCP_COMPONENT_VISIBILITY_TOOL_NAME = "set_cad_component_visibility";
 export const CAD_VIEW_MCP_EXPLODED_TOOL_NAME = "set_cad_exploded";
 export const CAD_VIEW_MCP_ZOOM_TOOL_NAME = "zoom_cad_to_fit";
+export const CAD_VIEW_MCP_CALCULATOR_TOOL_NAME = "frc_mechanical_calculator";
 export const CAD_VIEW_MCP_TOKEN_HEADER = "x-cadsense-cad-view-token";
 export const CAD_VIEW_MCP_TOKEN = randomUUID();
 export const CAD_VIEW_EXPORT_ROOT_ENV = "CADSENSE_CAD_VIEW_EXPORT_ROOT";
@@ -85,12 +86,104 @@ const EXPORT_CAD_SCREENSHOT_TOOL_DESCRIPTION = [
   CAD_VIEW_ORIENTATION_GUIDE,
 ].join("\n");
 
+const FRC_MECHANICAL_CALCULATOR_TOOL_DESCRIPTION = [
+  "Run lightweight FRC mechanical design calculations from measured CAD or user-provided inputs.",
+  "Use this only after identifying the exact inputs needed; do not invent dimensions. Results are first-pass estimates for review triage, not design signoff.",
+  "Supported calculation types:",
+  "- roller_surface_speed: inputs rpm, diameterIn; returns surface speed in ft/s.",
+  "- gear_reduction: inputs drivingTeeth, drivenTeeth, optional inputRpm; returns reduction and output rpm.",
+  "- shaft_deflection_center_load: inputs spanIn, loadLbf, diameterIn, optional modulusPsi; assumes a simply supported round shaft with center point load.",
+  "- compression: inputs gamePieceDiameterIn, gapIn; returns compression in inches and percent of game-piece diameter.",
+].join("\n");
+
 function resolveCadSenseMainScriptForMcpChild(): string {
   const fromArgv = process.argv[1];
   if (typeof fromArgv === "string" && fromArgv.length > 0 && !fromArgv.startsWith("-")) {
     return fromArgv;
   }
   return fileURLToPath(import.meta.url);
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function positiveNumber(value: unknown): number | undefined {
+  const number = finiteNumber(value);
+  return number !== undefined && number > 0 ? number : undefined;
+}
+
+function calculateFrcMechanical(input: unknown): Record<string, unknown> | undefined {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return undefined;
+  }
+  const record = input as Record<string, unknown>;
+  const calculationType = record.calculationType;
+  if (calculationType === "roller_surface_speed") {
+    const rpm = finiteNumber(record.rpm);
+    const diameterIn = positiveNumber(record.diameterIn);
+    if (rpm === undefined || diameterIn === undefined) return undefined;
+    const feetPerSecond = (Math.PI * diameterIn * rpm) / 12 / 60;
+    return {
+      calculationType,
+      inputs: { rpm, diameterIn },
+      result: { feetPerSecond, inchesPerSecond: feetPerSecond * 12 },
+      notes: ["Surface speed assumes no slip and uses the roller outside diameter."],
+    };
+  }
+  if (calculationType === "gear_reduction") {
+    const drivingTeeth = positiveNumber(record.drivingTeeth);
+    const drivenTeeth = positiveNumber(record.drivenTeeth);
+    const inputRpm = finiteNumber(record.inputRpm);
+    if (drivingTeeth === undefined || drivenTeeth === undefined) return undefined;
+    const reduction = drivenTeeth / drivingTeeth;
+    return {
+      calculationType,
+      inputs: { drivingTeeth, drivenTeeth, ...(inputRpm !== undefined ? { inputRpm } : {}) },
+      result: {
+        reduction,
+        ratioLabel: `${drivenTeeth}:${drivingTeeth}`,
+        ...(inputRpm !== undefined ? { outputRpm: inputRpm / reduction } : {}),
+      },
+      notes: ["Reduction is driven teeth divided by driving teeth."],
+    };
+  }
+  if (calculationType === "shaft_deflection_center_load") {
+    const spanIn = positiveNumber(record.spanIn);
+    const loadLbf = positiveNumber(record.loadLbf);
+    const diameterIn = positiveNumber(record.diameterIn);
+    const modulusPsi = positiveNumber(record.modulusPsi) ?? 29_000_000;
+    if (spanIn === undefined || loadLbf === undefined || diameterIn === undefined) {
+      return undefined;
+    }
+    const momentOfInertiaIn4 = (Math.PI * diameterIn ** 4) / 64;
+    const deflectionIn = (loadLbf * spanIn ** 3) / (48 * modulusPsi * momentOfInertiaIn4);
+    return {
+      calculationType,
+      inputs: { spanIn, loadLbf, diameterIn, modulusPsi },
+      result: { momentOfInertiaIn4, deflectionIn },
+      notes: [
+        "First-pass estimate for a simply supported round shaft with a center point load.",
+        "Real roller assemblies may differ because of tube construction, load distribution, bearings, and end constraints.",
+      ],
+    };
+  }
+  if (calculationType === "compression") {
+    const gamePieceDiameterIn = positiveNumber(record.gamePieceDiameterIn);
+    const gapIn = finiteNumber(record.gapIn);
+    if (gamePieceDiameterIn === undefined || gapIn === undefined) return undefined;
+    const compressionIn = gamePieceDiameterIn - gapIn;
+    return {
+      calculationType,
+      inputs: { gamePieceDiameterIn, gapIn },
+      result: {
+        compressionIn,
+        compressionPercent: (compressionIn / gamePieceDiameterIn) * 100,
+      },
+      notes: ["Positive compression means the gap is smaller than the game-piece diameter."],
+    };
+  }
+  return undefined;
 }
 
 export function makeCadViewMcpOrigin(config: Pick<ServerConfigShape, "host" | "port">): string {
@@ -489,6 +582,36 @@ export async function handleCadViewMcpRequest(
             description: "Zoom the CAD viewer to fit the current visible model.",
             inputSchema: { type: "object", properties: {}, additionalProperties: false },
           },
+          {
+            name: CAD_VIEW_MCP_CALCULATOR_TOOL_NAME,
+            description: FRC_MECHANICAL_CALCULATOR_TOOL_DESCRIPTION,
+            inputSchema: {
+              type: "object",
+              properties: {
+                calculationType: {
+                  type: "string",
+                  enum: [
+                    "roller_surface_speed",
+                    "gear_reduction",
+                    "shaft_deflection_center_load",
+                    "compression",
+                  ],
+                },
+                rpm: { type: "number" },
+                diameterIn: { type: "number" },
+                drivingTeeth: { type: "number" },
+                drivenTeeth: { type: "number" },
+                inputRpm: { type: "number" },
+                spanIn: { type: "number" },
+                loadLbf: { type: "number" },
+                modulusPsi: { type: "number" },
+                gamePieceDiameterIn: { type: "number" },
+                gapIn: { type: "number" },
+              },
+              required: ["calculationType"],
+              additionalProperties: false,
+            },
+          },
         ],
       });
     case "tools/call": {
@@ -585,6 +708,15 @@ export async function handleCadViewMcpRequest(
         } catch (error) {
           return jsonRpcError(id, -32603, error instanceof Error ? error.message : String(error));
         }
+      }
+      if (name === CAD_VIEW_MCP_CALCULATOR_TOOL_NAME) {
+        const result = calculateFrcMechanical(args);
+        if (!result) {
+          return jsonRpcError(id, -32602, "Invalid FRC mechanical calculator arguments.");
+        }
+        return jsonRpcResult(id, {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+        });
       }
       return jsonRpcError(id, -32602, "Unknown tool.");
     }

@@ -256,8 +256,10 @@ export type CadReviewPersona = typeof CadReviewPersona.Type;
 
 export const CadReviewStatus = Schema.Literals([
   "requested",
+  "planning",
   "capturing-baseline",
   "reviewing",
+  "deep-diving",
   "synthesizing",
   "completed",
   "partial",
@@ -303,6 +305,13 @@ export const CadReviewFinding = Schema.Struct({
   description: Schema.String,
   evidenceArtifactIds: Schema.Array(TrimmedNonEmptyString),
   confidence: Schema.Literals(["low", "medium", "high"]),
+  severity: Schema.optional(CadReviewPriority),
+  evidence: Schema.optional(Schema.Array(Schema.String)),
+  reasoning: Schema.optional(Schema.String),
+  observedGeometry: Schema.optional(Schema.String),
+  assumption: Schema.optional(Schema.String),
+  specificCheck: Schema.optional(Schema.String),
+  recommendedFix: Schema.optional(Schema.String),
   missingEvidence: Schema.optional(Schema.String),
 });
 export type CadReviewFinding = typeof CadReviewFinding.Type;
@@ -315,8 +324,44 @@ export const CadReviewActionItem = Schema.Struct({
   issueType: Schema.optional(TrimmedNonEmptyString),
   priority: CadReviewPriority,
   sourceFindingIds: Schema.Array(TrimmedNonEmptyString),
+  rationale: Schema.optional(Schema.String),
+  targetGeometry: Schema.optional(Schema.String),
+  verificationSteps: Schema.optional(Schema.Array(Schema.String)),
 });
 export type CadReviewActionItem = typeof CadReviewActionItem.Type;
+
+export const CadReviewMechanismPlan = Schema.Struct({
+  summary: Schema.String,
+  mechanisms: Schema.Array(
+    Schema.Struct({
+      name: TrimmedNonEmptyString,
+      role: Schema.String,
+      visibleEvidence: Schema.Array(Schema.String),
+      suspiciousRegions: Schema.Array(Schema.String),
+      specificChecks: Schema.Array(Schema.String),
+      precedentQueries: Schema.Array(Schema.String),
+    }),
+  ),
+  reviewPriorities: Schema.Array(Schema.String),
+  missingContext: Schema.Array(Schema.String),
+  calculatorNeeds: Schema.Array(Schema.String),
+});
+export type CadReviewMechanismPlan = typeof CadReviewMechanismPlan.Type;
+
+export const CadReviewDeepDiveReport = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  sourceFindingIds: Schema.Array(TrimmedNonEmptyString),
+  focus: TrimmedNonEmptyString,
+  summary: Schema.String,
+  inspectedEvidenceArtifactIds: Schema.Array(TrimmedNonEmptyString),
+  observations: Schema.Array(Schema.String),
+  specificChecks: Schema.Array(Schema.String),
+  recommendedChanges: Schema.Array(Schema.String),
+  confidence: Schema.Literals(["low", "medium", "high"]),
+  missingEvidence: Schema.optional(Schema.String),
+  createdAt: IsoDateTime,
+});
+export type CadReviewDeepDiveReport = typeof CadReviewDeepDiveReport.Type;
 
 export const CadReviewPersonaReport = Schema.Struct({
   persona: CadReviewPersona,
@@ -345,7 +390,9 @@ export const CadReviewReport = Schema.Struct({
   whatIsBeingReviewed: Schema.String,
   commonThemes: Schema.Array(Schema.String),
   reviewerTraits: Schema.Record(CadReviewPersona, Schema.String),
+  reviewPlan: Schema.optional(CadReviewMechanismPlan),
   personaReports: Schema.Array(CadReviewPersonaReport),
+  deepDiveReports: Schema.optional(Schema.Array(CadReviewDeepDiveReport)),
   mergedActionItems: Schema.Array(CadReviewActionItem),
   evidenceArtifacts: Schema.Array(CadReviewEvidenceArtifact),
   toolCallsByReviewer: Schema.Record(CadReviewPersona, Schema.Array(CadReviewToolCall)),

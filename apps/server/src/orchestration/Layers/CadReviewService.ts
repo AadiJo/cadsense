@@ -7,10 +7,13 @@ import {
   type CadScreenshotCaptureHttpResult,
   type CadView,
   type CadReviewActionItem,
+  type CadReviewDeepDiveReport,
   type CadReviewEvidenceArtifact,
   type CadReviewFinding,
+  type CadReviewMechanismPlan,
   type CadReviewPersona,
   type CadReviewPersonaReport,
+  type CadReviewStatus,
   type CadReviewToolCall,
   type OrchestrationMessage,
   type OrchestrationThread,
@@ -21,6 +24,7 @@ import * as DateTime from "effect/DateTime";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -35,6 +39,8 @@ import { CadReviewService, type CadReviewServiceShape } from "../Services/CadRev
 import {
   PERSONAS,
   REVIEWER_TRAIT_SUMMARIES,
+  buildDeepDivePrompt,
+  buildMechanismPlanningPrompt,
   buildReviewerPrompt,
   buildSynthesisPrompt,
   personaLabel,
@@ -42,25 +48,32 @@ import {
 
 const CAD_REVIEW_CHILD_LINK_KIND = "cad-review.child-thread.linked";
 const REVIEWER_TURN_TIMEOUT = Duration.minutes(10);
+const CAD_REVIEW_REVIEWER_CONCURRENCY = 3;
+// Keep baseline capture fast: reviewers can request extra angles, but the automatic pass should
+// avoid monopolizing the CAD viewer before agent reasoning even starts.
 const BASELINE_CAPTURE_SPECS = [
   { view: "isometric", suggestedBaseName: "cad-review-baseline-isometric" },
   { view: "front", suggestedBaseName: "cad-review-baseline-front" },
-  { view: "back", suggestedBaseName: "cad-review-baseline-back" },
-  { view: "left", suggestedBaseName: "cad-review-baseline-left" },
   { view: "right", suggestedBaseName: "cad-review-baseline-right" },
   { view: "top", suggestedBaseName: "cad-review-baseline-top" },
-  { view: "bottom", suggestedBaseName: "cad-review-baseline-bottom" },
   {
     view: "isometric-close-up",
     suggestedBaseName: "cad-review-baseline-isometric-close-up",
   },
-  { view: "front-close-up", suggestedBaseName: "cad-review-baseline-front-close-up" },
   { view: "right-close-up", suggestedBaseName: "cad-review-baseline-right-close-up" },
-  { view: "top-close-up", suggestedBaseName: "cad-review-baseline-top-close-up" },
 ] as const satisfies ReadonlyArray<{
   readonly view: CadView;
   readonly suggestedBaseName: string;
 }>;
+const CAD_REVIEW_ACTIVE_STATUSES = new Set<CadReviewStatus>([
+  "requested",
+  "planning",
+  "capturing-baseline",
+  "reviewing",
+  "deep-diving",
+  "synthesizing",
+]);
+const SCREENSHOT_TIMEOUT_RE = /\btimed out\b/i;
 
 class CadReviewRunError extends Data.TaggedError("CadReviewRunError")<{
   readonly message: string;
@@ -72,8 +85,13 @@ type ChildRunResult =
 
 interface BaselineCaptureRecord {
   readonly result: CadScreenshotCaptureHttpResult;
+  readonly view: CadView;
   readonly createdAt: string;
   readonly activity: OrchestrationThreadActivity;
+}
+
+function isCadReviewActive(status: CadReviewStatus): boolean {
+  return CAD_REVIEW_ACTIVE_STATUSES.has(status);
 }
 
 const serverCommandId = (tag: string): CommandId =>
@@ -128,6 +146,32 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.map(trimText).filter((entry): entry is string => entry !== undefined)
     : [];
+}
+
+function stringArrayFromUnknown(value: unknown): string[] {
+  const direct = stringArray(value);
+  if (direct.length > 0) {
+    return direct;
+  }
+  const single = trimText(value);
+  return single ? [single] : [];
+}
+
+function priorityValue(value: unknown): "critical" | "high" | "medium" | "low" | undefined {
+  const priority = trimText(value);
+  return priority === "critical" ||
+    priority === "high" ||
+    priority === "medium" ||
+    priority === "low"
+    ? priority
+    : undefined;
+}
+
+function confidenceValue(value: unknown): "high" | "medium" | "low" | undefined {
+  const confidence = trimText(value);
+  return confidence === "high" || confidence === "medium" || confidence === "low"
+    ? confidence
+    : undefined;
 }
 
 function objectArray(value: unknown): Array<Record<string, unknown>> {
@@ -418,6 +462,48 @@ function baselineToolActivity(input: {
   };
 }
 
+function buildMechanismPlan(text: string): CadReviewMechanismPlan | undefined {
+  const parsed = extractJsonObject(text);
+  if (!parsed) {
+    return undefined;
+  }
+  const mechanisms = objectArray(parsed.mechanisms).map((entry) => ({
+    name: trimText(entry.name) ?? "Unspecified mechanism",
+    role: trimText(entry.role) ?? "Review this mechanism's role in the subsystem.",
+    visibleEvidence: stringArrayFromUnknown(entry.visibleEvidence),
+    suspiciousRegions: stringArrayFromUnknown(entry.suspiciousRegions),
+    specificChecks: stringArrayFromUnknown(entry.specificChecks),
+    precedentQueries: stringArrayFromUnknown(entry.precedentQueries),
+  }));
+  return {
+    summary: trimText(parsed.summary) ?? truncate(text || "Mechanism plan completed."),
+    mechanisms,
+    reviewPriorities: stringArrayFromUnknown(parsed.reviewPriorities),
+    missingContext: stringArrayFromUnknown(parsed.missingContext),
+    calculatorNeeds: stringArrayFromUnknown(parsed.calculatorNeeds),
+  };
+}
+
+function artifactIdsFromEvidenceText(input: {
+  readonly evidenceText: ReadonlyArray<string>;
+  readonly fallback: ReadonlyArray<string>;
+  readonly artifacts: ReadonlyArray<CadReviewEvidenceArtifact>;
+}): string[] {
+  const matched = new Set<string>();
+  const evidenceLower = input.evidenceText.map((entry) => entry.toLowerCase());
+  for (const artifact of input.artifacts) {
+    const haystacks = [
+      artifact.id.toLowerCase(),
+      artifact.viewName.toLowerCase(),
+      artifact.artifactUri.toLowerCase(),
+    ];
+    if (evidenceLower.some((entry) => haystacks.some((candidate) => entry.includes(candidate)))) {
+      matched.add(artifact.id);
+    }
+  }
+  return matched.size > 0 ? [...matched] : [...input.fallback];
+}
+
 function buildPersonaReport(input: {
   readonly reviewRunId: string;
   readonly persona: Exclude<CadReviewPersona, "synthesis">;
@@ -432,7 +518,12 @@ function buildPersonaReport(input: {
   const topConcerns =
     topConcernsRaw.length > 0
       ? topConcernsRaw.map((entry, index): CadReviewFinding => {
-          const confidence = trimText(entry.confidence);
+          const evidenceText = stringArrayFromUnknown(entry.evidence);
+          const reasoning = trimText(entry.reasoning);
+          const observedGeometry = trimText(entry.observedGeometry);
+          const assumption = trimText(entry.assumption);
+          const specificCheck = trimText(entry.specificCheck);
+          const recommendedFix = trimText(entry.recommendedFix);
           const missingEvidence = trimText(entry.missingEvidence);
           const finding: CadReviewFinding = {
             id: `${input.reviewRunId}:${input.persona}:finding:${index + 1}`,
@@ -442,12 +533,35 @@ function buildPersonaReport(input: {
               trimText(entry.detail) ??
               trimText(entry.summary) ??
               "Reviewer reported this concern without a separate description.",
-            evidenceArtifactIds,
-            confidence:
-              confidence === "high" || confidence === "medium" || confidence === "low"
-                ? confidence
-                : "medium",
+            evidenceArtifactIds: artifactIdsFromEvidenceText({
+              evidenceText,
+              fallback: evidenceArtifactIds,
+              artifacts: input.artifacts,
+            }),
+            confidence: confidenceValue(entry.confidence) ?? "medium",
           };
+          const severity = priorityValue(entry.severity);
+          if (severity) {
+            Object.assign(finding, { severity });
+          }
+          if (evidenceText.length > 0) {
+            Object.assign(finding, { evidence: evidenceText });
+          }
+          if (reasoning) {
+            Object.assign(finding, { reasoning });
+          }
+          if (observedGeometry) {
+            Object.assign(finding, { observedGeometry });
+          }
+          if (assumption) {
+            Object.assign(finding, { assumption });
+          }
+          if (specificCheck) {
+            Object.assign(finding, { specificCheck });
+          }
+          if (recommendedFix) {
+            Object.assign(finding, { recommendedFix });
+          }
           if (missingEvidence) {
             return Object.assign(finding, { missingEvidence });
           }
@@ -465,7 +579,7 @@ function buildPersonaReport(input: {
             ? [finding]
             : [{ ...finding, missingEvidence: "No assistant review text was captured." }];
         })();
-  const parsedConfidence = trimText(parsed?.confidence);
+  const parsedConfidence = confidenceValue(parsed?.confidence);
 
   return {
     persona: input.persona,
@@ -476,11 +590,8 @@ function buildPersonaReport(input: {
     likelyFailureModes: stringArray(parsed?.likelyFailureModes),
     recommendedChanges: stringArray(parsed?.recommendedChanges),
     confidence:
-      parsedConfidence === "high" || parsedConfidence === "medium" || parsedConfidence === "low"
-        ? parsedConfidence
-        : topConcerns.some((finding) => finding.confidence === "low")
-          ? "low"
-          : "medium",
+      parsedConfidence ??
+      (topConcerns.some((finding) => finding.confidence === "low") ? "low" : "medium"),
     ...(trimText(parsed?.missingEvidence)
       ? { missingEvidence: trimText(parsed?.missingEvidence) }
       : {}),
@@ -515,10 +626,83 @@ function failedPersonaReport(input: {
   };
 }
 
+function buildDeepDiveReport(input: {
+  readonly reviewRunId: string;
+  readonly text: string;
+  readonly findings: ReadonlyArray<CadReviewFinding>;
+  readonly artifacts: ReadonlyArray<CadReviewEvidenceArtifact>;
+  readonly toolCalls: ReadonlyArray<CadReviewToolCall>;
+  readonly createdAt: string;
+}): CadReviewDeepDiveReport {
+  const parsed = extractJsonObject(input.text);
+  const sourceFindingIds = stringArrayFromUnknown(parsed?.sourceFindingIds);
+  const fallbackSourceIds = input.findings.map((finding) => finding.id);
+  const observations = stringArrayFromUnknown(parsed?.observations);
+  const evidenceArtifactIds = [
+    ...new Set([
+      ...input.toolCalls.flatMap((toolCall) => toolCall.evidenceArtifactIds),
+      ...input.findings.flatMap((finding) => finding.evidenceArtifactIds),
+    ]),
+  ];
+  return {
+    id: `${input.reviewRunId}:deep-dive:${crypto.randomUUID()}`,
+    sourceFindingIds: sourceFindingIds.length > 0 ? sourceFindingIds : fallbackSourceIds,
+    focus:
+      trimText(parsed?.focus) ??
+      input.findings
+        .map((finding) => finding.title)
+        .filter((title) => title.length > 0)
+        .slice(0, 3)
+        .join("; ") ??
+      "Focused CAD review",
+    summary: trimText(parsed?.summary) ?? truncate(input.text || "Deep dive completed."),
+    inspectedEvidenceArtifactIds:
+      evidenceArtifactIds.length > 0
+        ? evidenceArtifactIds
+        : input.artifacts.map((artifact) => artifact.id),
+    observations,
+    specificChecks: stringArrayFromUnknown(parsed?.specificChecks),
+    recommendedChanges: stringArrayFromUnknown(parsed?.recommendedChanges),
+    confidence: confidenceValue(parsed?.confidence) ?? "medium",
+    ...(trimText(parsed?.missingEvidence)
+      ? { missingEvidence: trimText(parsed?.missingEvidence) }
+      : {}),
+    createdAt: input.createdAt,
+  };
+}
+
+function deepDiveFindingScore(finding: CadReviewFinding): number {
+  const severityScore =
+    finding.severity === "critical"
+      ? 6
+      : finding.severity === "high"
+        ? 5
+        : finding.severity === "medium"
+          ? 3
+          : finding.severity === "low"
+            ? 1
+            : 0;
+  const confidenceScore =
+    finding.confidence === "high" ? 2 : finding.confidence === "medium" ? 1 : 0;
+  const missingEvidenceScore = finding.missingEvidence ? 1 : 0;
+  const specificityGapScore = finding.specificCheck || finding.recommendedFix ? 0 : 2;
+  return severityScore + confidenceScore + missingEvidenceScore + specificityGapScore;
+}
+
+function selectDeepDiveFindings(
+  reports: ReadonlyArray<CadReviewPersonaReport>,
+): CadReviewFinding[] {
+  return reports
+    .flatMap((report) => report.topConcerns)
+    .toSorted((left, right) => deepDiveFindingScore(right) - deepDiveFindingScore(left))
+    .slice(0, 4);
+}
+
 function synthesizeServerSide(input: {
   readonly reviewRunId: string;
   readonly subject: string;
   readonly reports: ReadonlyArray<CadReviewPersonaReport>;
+  readonly deepDiveReports: ReadonlyArray<CadReviewDeepDiveReport>;
   readonly synthesisText: string;
 }): {
   readonly commonThemes: string[];
@@ -540,7 +724,6 @@ function synthesizeServerSide(input: {
   const actionItems =
     parsedActionItems.length > 0
       ? parsedActionItems.map((entry, index): CadReviewActionItem => {
-          const priority = trimText(entry.priority);
           const actionItem: CadReviewActionItem = {
             id: `${input.reviewRunId}:action:${index + 1}`,
             title: trimText(entry.title) ?? `Action item ${index + 1}`,
@@ -548,37 +731,68 @@ function synthesizeServerSide(input: {
               trimText(entry.description) ??
               trimText(entry.detail) ??
               "Follow up on the linked CAD review findings.",
-            priority:
-              priority === "critical" ||
-              priority === "high" ||
-              priority === "medium" ||
-              priority === "low"
-                ? priority
-                : "medium",
+            priority: priorityValue(entry.priority) ?? "medium",
             sourceFindingIds: stringArray(entry.sourceFindingIds),
           };
           const subsystem = trimText(entry.subsystem);
           const issueType = trimText(entry.issueType);
+          const rationale = trimText(entry.rationale);
+          const targetGeometry = trimText(entry.targetGeometry);
+          const verificationSteps = stringArrayFromUnknown(entry.verificationSteps);
           return Object.assign(
             actionItem,
             subsystem ? { subsystem } : {},
             issueType ? { issueType } : {},
+            rationale ? { rationale } : {},
+            targetGeometry ? { targetGeometry } : {},
+            verificationSteps.length > 0 ? { verificationSteps } : {},
           );
         })
-      : input.reports
-          .flatMap((report) => report.topConcerns.map((finding) => ({ report, finding })))
+      : [
+          ...input.deepDiveReports.map((deepDive) => ({ deepDive })),
+          ...input.reports.flatMap((report) =>
+            report.topConcerns.map((finding) => ({ report, finding })),
+          ),
+        ]
           .slice(0, 8)
-          .map(
-            ({ report, finding }, index): CadReviewActionItem => ({
+          .map((entry, index): CadReviewActionItem => {
+            if ("deepDive" in entry) {
+              return {
+                id: `${input.reviewRunId}:action:${index + 1}`,
+                title: entry.deepDive.focus,
+                description:
+                  entry.deepDive.recommendedChanges[0] ??
+                  entry.deepDive.summary ??
+                  "Follow up on the focused CAD review.",
+                subsystem: input.subject,
+                issueType: "focused deep dive",
+                priority: entry.deepDive.confidence === "high" ? "high" : "medium",
+                sourceFindingIds: entry.deepDive.sourceFindingIds,
+                rationale: entry.deepDive.summary,
+                verificationSteps: entry.deepDive.specificChecks,
+              };
+            }
+            const { report, finding } = entry;
+            const actionItem: CadReviewActionItem = {
               id: `${input.reviewRunId}:action:${index + 1}`,
               title: finding.title,
-              description: finding.description,
+              description: finding.recommendedFix ?? finding.description,
               subsystem: input.subject,
               issueType: `${personaLabel(report.persona)} finding`,
-              priority: finding.confidence === "high" ? "high" : "medium",
+              priority: finding.severity ?? (finding.confidence === "high" ? "high" : "medium"),
               sourceFindingIds: [finding.id],
-            }),
-          );
+            };
+            if (finding.reasoning) {
+              Object.assign(actionItem, { rationale: finding.reasoning });
+            }
+            if (finding.observedGeometry) {
+              Object.assign(actionItem, { targetGeometry: finding.observedGeometry });
+            }
+            if (finding.specificCheck) {
+              Object.assign(actionItem, { verificationSteps: [finding.specificCheck] });
+            }
+            return actionItem;
+          });
   return { commonThemes, actionItems };
 }
 
@@ -634,22 +848,47 @@ const make = Effect.gen(function* () {
           ),
         );
         const captures: BaselineCaptureRecord[] = [];
+        const failureDetails: string[] = [];
         for (const spec of BASELINE_CAPTURE_SPECS) {
           const createdAt = yield* nowIso;
-          const result = yield* captureCadScreenshot({
-            threadId: input.thread.id,
-            exportRoot,
-            suggestedBaseName: spec.suggestedBaseName,
-            view: spec.view,
-            fit: true,
-          }).pipe(
-            Effect.mapError(
-              (error) =>
-                new CadReviewRunError({
-                  message: `Failed to capture baseline view '${spec.view}': ${error.message}`,
-                }),
+          const captureExit = yield* Effect.exit(
+            captureCadScreenshot({
+              threadId: input.thread.id,
+              exportRoot,
+              suggestedBaseName: spec.suggestedBaseName,
+              view: spec.view,
+              fit: true,
+            }).pipe(
+              Effect.mapError(
+                (error) =>
+                  new CadReviewRunError({
+                    message: `Failed to capture baseline view '${spec.view}': ${error.message}`,
+                  }),
+              ),
             ),
           );
+          if (Exit.isFailure(captureExit)) {
+            const detail = Cause.pretty(captureExit.cause);
+            failureDetails.push(`${spec.view}: ${detail}`);
+            yield* appendActivity({
+              threadId: input.thread.id,
+              tone: "error",
+              kind: "cad-review.baseline.capture-failed",
+              summary: `Baseline CAD view '${spec.view}' failed`,
+              payload: {
+                reviewRunId: input.reviewRunId,
+                phase: "baseline",
+                view: spec.view,
+                detail,
+              },
+              createdAt,
+            });
+            if (captures.length === 0 && SCREENSHOT_TIMEOUT_RE.test(detail)) {
+              break;
+            }
+            continue;
+          }
+          const result = captureExit.value;
           const activity = baselineToolActivity({
             threadId: input.thread.id,
             view: spec.view,
@@ -665,13 +904,21 @@ const make = Effect.gen(function* () {
             payload: activity.payload as Record<string, unknown>,
             createdAt,
           });
-          captures.push({ result, createdAt, activity });
+          captures.push({ result, view: spec.view, createdAt, activity });
+        }
+        if (captures.length === 0) {
+          return yield* new CadReviewRunError({
+            message:
+              failureDetails.length > 0
+                ? `No baseline CAD screenshots were captured. ${failureDetails.join("; ")}`
+                : "No baseline CAD screenshots were captured.",
+          });
         }
         const artifacts = captures.map((capture, index) =>
           baselineArtifactFromCapture({
             reviewRunId: input.reviewRunId,
             index,
-            view: BASELINE_CAPTURE_SPECS[index]!.view,
+            view: capture.view,
             absolutePath: capture.result.absolutePath,
             createdAt: capture.createdAt,
           }),
@@ -810,51 +1057,47 @@ const make = Effect.gen(function* () {
     readonly prompt: string;
     readonly createdAt: string;
   }) =>
-    cadViewScheduler.enqueue(
-      input.parentThread.id,
-      `${input.reviewRunId}:${input.persona}`,
-      Effect.gen(function* () {
-        const childThreadId = yield* createChildThread(input);
-        yield* orchestrationEngine.dispatch({
-          type: "thread.turn.start",
-          commandId: serverCommandId("cad-review-child-turn"),
-          threadId: childThreadId,
-          message: {
-            messageId: MessageId.make(`user:${input.reviewRunId}:${input.persona}`),
-            role: "user",
-            text: input.prompt,
-            attachments: [],
-          },
-          modelSelection: input.parentThread.modelSelection,
-          runtimeMode: input.parentThread.runtimeMode,
-          interactionMode: input.parentThread.interactionMode,
-          createdAt: input.createdAt,
-        });
-        const completed = yield* waitForChildTurn(childThreadId).pipe(
-          Effect.timeoutOption(REVIEWER_TURN_TIMEOUT),
-          Effect.flatMap((option) =>
-            Option.match(option, {
-              onNone: () =>
-                Effect.fail(
-                  new CadReviewRunError({
-                    message: `Timed out waiting for '${childThreadId}'.`,
-                  }),
-                ),
-              onSome: (childThread) => Effect.succeed(childThread),
-            }),
-          ),
-        );
-        return { ok: true, childThread: completed } satisfies ChildRunResult;
-      }).pipe(
-        Effect.matchCauseEffect({
-          onFailure: (cause) =>
-            Effect.succeed({
-              ok: false,
-              error: Cause.pretty(cause),
-            } satisfies ChildRunResult),
-          onSuccess: (result) => Effect.succeed(result),
-        }),
-      ),
+    Effect.gen(function* () {
+      const childThreadId = yield* createChildThread(input);
+      yield* orchestrationEngine.dispatch({
+        type: "thread.turn.start",
+        commandId: serverCommandId("cad-review-child-turn"),
+        threadId: childThreadId,
+        message: {
+          messageId: MessageId.make(`user:${input.reviewRunId}:${input.persona}`),
+          role: "user",
+          text: input.prompt,
+          attachments: [],
+        },
+        modelSelection: input.parentThread.modelSelection,
+        runtimeMode: input.parentThread.runtimeMode,
+        interactionMode: input.parentThread.interactionMode,
+        createdAt: input.createdAt,
+      });
+      const completed = yield* waitForChildTurn(childThreadId).pipe(
+        Effect.timeoutOption(REVIEWER_TURN_TIMEOUT),
+        Effect.flatMap((option) =>
+          Option.match(option, {
+            onNone: () =>
+              Effect.fail(
+                new CadReviewRunError({
+                  message: `Timed out waiting for '${childThreadId}'.`,
+                }),
+              ),
+            onSome: (childThread) => Effect.succeed(childThread),
+          }),
+        ),
+      );
+      return { ok: true, childThread: completed } satisfies ChildRunResult;
+    }).pipe(
+      Effect.matchCauseEffect({
+        onFailure: (cause) =>
+          Effect.succeed({
+            ok: false,
+            error: Cause.pretty(cause),
+          } satisfies ChildRunResult),
+        onSuccess: (result) => Effect.succeed(result),
+      }),
     );
 
   const artifactsFromChild = (input: {
@@ -882,8 +1125,40 @@ const make = Effect.gen(function* () {
     });
   };
 
-  const generateReview: CadReviewServiceShape["generateReview"] = (event) =>
-    Effect.gen(function* () {
+  const generateReview: CadReviewServiceShape["generateReview"] = (event) => {
+    let activeThreadForFailure: OrchestrationThread | undefined;
+    let activeReviewForFailure: CadReviewReport | undefined;
+
+    const failActiveReview = (cause: Cause.Cause<unknown>) =>
+      Effect.gen(function* () {
+        if (!activeThreadForFailure || !activeReviewForFailure) {
+          return;
+        }
+        const detail = Cause.pretty(cause);
+        const failedAt = yield* nowIso;
+        const failedReview: CadReviewReport = {
+          ...activeReviewForFailure,
+          status: "failed",
+          activePersona: undefined,
+          error: `CAD review failed: ${detail}`,
+          updatedAt: failedAt,
+        };
+        yield* appendActivity({
+          threadId: activeThreadForFailure.id,
+          tone: "error",
+          kind: "cad-review.failed",
+          summary: "CAD review failed",
+          payload: {
+            reviewRunId: failedReview.id,
+            phase: failedReview.status,
+            detail,
+          },
+          createdAt: failedAt,
+        });
+        yield* upsertReview(activeThreadForFailure.id, failedReview);
+      });
+
+    return Effect.gen(function* () {
       const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(
         event.payload.threadId,
       );
@@ -891,6 +1166,7 @@ const make = Effect.gen(function* () {
         return;
       }
       const thread = threadOption.value;
+      activeThreadForFailure = thread;
       const snapshot = yield* projectionSnapshotQuery.getCommandReadModel();
       const projectTitle = snapshot.projects.find(
         (project) => project.id === thread.projectId,
@@ -909,6 +1185,7 @@ const make = Effect.gen(function* () {
         commonThemes: [],
         reviewerTraits: REVIEWER_TRAIT_SUMMARIES,
         personaReports: [],
+        deepDiveReports: [],
         mergedActionItems: [],
         evidenceArtifacts: [],
         toolCallsByReviewer: {
@@ -920,6 +1197,7 @@ const make = Effect.gen(function* () {
         createdAt,
         updatedAt,
       };
+      activeReviewForFailure = review;
 
       yield* appendActivity({
         threadId: thread.id,
@@ -963,6 +1241,8 @@ const make = Effect.gen(function* () {
         });
       } else {
         Object.assign(review, {
+          status: "failed",
+          activePersona: undefined,
           error: `Baseline capture failed: ${baselineCapture.error}`,
           updatedAt,
         });
@@ -978,13 +1258,91 @@ const make = Effect.gen(function* () {
           },
           createdAt: updatedAt,
         });
+        yield* upsertReview(thread.id, review);
+        return;
       }
       yield* upsertReview(thread.id, review);
 
+      updatedAt = yield* nowIso;
+      Object.assign(review, { status: "planning", activePersona: "synthesis", updatedAt });
+      yield* upsertReview(thread.id, review);
+      yield* appendActivity({
+        threadId: thread.id,
+        tone: "info",
+        kind: "cad-review.planning.started",
+        summary: "CAD review mechanism planning started",
+        payload: {
+          reviewRunId: review.id,
+          phase: "planning",
+          agent: "mechanism planning",
+        },
+        createdAt: updatedAt,
+      });
+
+      const baselineArtifacts = review.evidenceArtifacts.filter(
+        (artifact) => artifact.scope === "baseline",
+      );
+      const planningChild = yield* runChildReviewer({
+        parentThread: thread,
+        reviewRunId: review.id,
+        persona: "synthesis",
+        title: `${review.title} - mechanism planning`,
+        prompt: buildMechanismPlanningPrompt({
+          subject,
+          baselineArtifacts,
+        }),
+        createdAt: updatedAt,
+      });
+      const planningAt = yield* nowIso;
+      if (planningChild.ok) {
+        const planningArtifacts = artifactsFromChild({
+          reviewRunId: review.id,
+          childThread: planningChild.childThread,
+          scope: "persona",
+          persona: "synthesis",
+          createdAt: planningAt,
+        });
+        const planningToolCalls = toolCallsFromActivities({
+          reviewRunId: review.id,
+          persona: "synthesis",
+          phase: "planning",
+          activities: planningChild.childThread.activities,
+          artifacts: [...review.evidenceArtifacts, ...planningArtifacts],
+        });
+        Object.assign(review, {
+          reviewPlan: buildMechanismPlan(assistantText(planningChild.childThread.messages)),
+          evidenceArtifacts: [...review.evidenceArtifacts, ...planningArtifacts],
+          toolCallsByReviewer: {
+            ...review.toolCallsByReviewer,
+            synthesis: [...review.toolCallsByReviewer.synthesis, ...planningToolCalls],
+          },
+          updatedAt: planningAt,
+        });
+      }
+      yield* appendActivity({
+        threadId: thread.id,
+        tone: planningChild.ok ? "info" : "error",
+        kind: planningChild.ok ? "cad-review.planning.completed" : "cad-review.planning.failed",
+        summary: planningChild.ok
+          ? "CAD review mechanism planning completed"
+          : "CAD review mechanism planning failed; continuing with persona passes",
+        payload: {
+          reviewRunId: review.id,
+          phase: "planning",
+          agent: "mechanism planning",
+          ...(planningChild.ok ? { childThreadId: planningChild.childThread.id } : {}),
+          ...(planningChild.ok ? {} : { detail: planningChild.error }),
+        },
+        createdAt: planningAt,
+      });
+      yield* upsertReview(thread.id, review);
+
+      updatedAt = yield* nowIso;
+      Object.assign(review, { status: "reviewing", activePersona: undefined, updatedAt });
+      yield* upsertReview(thread.id, review);
+      const reviewerStarts = [];
       for (const persona of PERSONAS) {
         updatedAt = yield* nowIso;
-        Object.assign(review, { status: "reviewing", activePersona: persona, updatedAt });
-        yield* upsertReview(thread.id, review);
         yield* appendActivity({
           threadId: thread.id,
           tone: "info",
@@ -998,21 +1356,32 @@ const make = Effect.gen(function* () {
           },
           createdAt: updatedAt,
         });
+        reviewerStarts.push({ persona, startedAt: updatedAt });
+      }
 
-        const personaChild = yield* runChildReviewer({
-          parentThread: thread,
-          reviewRunId: review.id,
-          persona,
-          title: `${review.title} - ${personaLabel(persona)}`,
-          prompt: buildReviewerPrompt({
+      const reviewerBaselineArtifacts = review.evidenceArtifacts.filter(
+        (artifact) => artifact.scope === "baseline",
+      );
+      const personaRuns = yield* Effect.forEach(
+        reviewerStarts,
+        ({ persona, startedAt }) =>
+          runChildReviewer({
+            parentThread: thread,
+            reviewRunId: review.id,
             persona,
-            subject,
-            baselineArtifacts: review.evidenceArtifacts.filter(
-              (artifact) => artifact.scope === "baseline",
-            ),
-          }),
-          createdAt: updatedAt,
-        });
+            title: `${review.title} - ${personaLabel(persona)}`,
+            prompt: buildReviewerPrompt({
+              persona,
+              subject,
+              baselineArtifacts: reviewerBaselineArtifacts,
+              reviewPlan: review.reviewPlan,
+            }),
+            createdAt: startedAt,
+          }).pipe(Effect.map((personaChild) => ({ persona, personaChild }))),
+        { concurrency: Math.min(CAD_REVIEW_REVIEWER_CONCURRENCY, reviewerStarts.length) },
+      );
+
+      for (const { persona, personaChild } of personaRuns) {
         const reportAt = yield* nowIso;
         if (personaChild.ok) {
           const personaArtifacts = artifactsFromChild({
@@ -1081,6 +1450,95 @@ const make = Effect.gen(function* () {
         yield* upsertReview(thread.id, review);
       }
 
+      const deepDiveFindings = selectDeepDiveFindings(
+        review.personaReports.filter((report) => report.status === "completed"),
+      );
+      if (deepDiveFindings.length > 0) {
+        updatedAt = yield* nowIso;
+        Object.assign(review, { status: "deep-diving", activePersona: "synthesis", updatedAt });
+        yield* upsertReview(thread.id, review);
+        yield* appendActivity({
+          threadId: thread.id,
+          tone: "info",
+          kind: "cad-review.deep-dive.started",
+          summary: "CAD review focused deep dive started",
+          payload: {
+            reviewRunId: review.id,
+            phase: "deep-dive",
+            agent: "focused deep dive",
+            findingIds: deepDiveFindings.map((finding) => finding.id),
+          },
+          createdAt: updatedAt,
+        });
+        const deepDiveChild = yield* runChildReviewer({
+          parentThread: thread,
+          reviewRunId: review.id,
+          persona: "synthesis",
+          title: `${review.title} - focused deep dive`,
+          prompt: buildDeepDivePrompt({
+            subject,
+            reviewPlan: review.reviewPlan,
+            findings: deepDiveFindings,
+            baselineArtifacts: review.evidenceArtifacts.filter(
+              (artifact) => artifact.scope === "baseline",
+            ),
+          }),
+          createdAt: updatedAt,
+        });
+        const deepDiveAt = yield* nowIso;
+        if (deepDiveChild.ok) {
+          const deepDiveArtifacts = artifactsFromChild({
+            reviewRunId: review.id,
+            childThread: deepDiveChild.childThread,
+            scope: "persona",
+            persona: "synthesis",
+            createdAt: deepDiveAt,
+          });
+          const deepDiveToolCalls = toolCallsFromActivities({
+            reviewRunId: review.id,
+            persona: "synthesis",
+            phase: "deep-dive",
+            activities: deepDiveChild.childThread.activities,
+            artifacts: [...review.evidenceArtifacts, ...deepDiveArtifacts],
+          });
+          const nextArtifacts = [...review.evidenceArtifacts, ...deepDiveArtifacts];
+          const deepDiveReport = buildDeepDiveReport({
+            reviewRunId: review.id,
+            text: assistantText(deepDiveChild.childThread.messages),
+            findings: deepDiveFindings,
+            artifacts: nextArtifacts,
+            toolCalls: deepDiveToolCalls,
+            createdAt: deepDiveAt,
+          });
+          Object.assign(review, {
+            evidenceArtifacts: nextArtifacts,
+            deepDiveReports: [...(review.deepDiveReports ?? []), deepDiveReport],
+            toolCallsByReviewer: {
+              ...review.toolCallsByReviewer,
+              synthesis: [...review.toolCallsByReviewer.synthesis, ...deepDiveToolCalls],
+            },
+            updatedAt: deepDiveAt,
+          });
+        }
+        yield* appendActivity({
+          threadId: thread.id,
+          tone: deepDiveChild.ok ? "info" : "error",
+          kind: deepDiveChild.ok ? "cad-review.deep-dive.completed" : "cad-review.deep-dive.failed",
+          summary: deepDiveChild.ok
+            ? "CAD review focused deep dive completed"
+            : "CAD review focused deep dive failed; continuing to synthesis",
+          payload: {
+            reviewRunId: review.id,
+            phase: "deep-dive",
+            agent: "focused deep dive",
+            ...(deepDiveChild.ok ? { childThreadId: deepDiveChild.childThread.id } : {}),
+            ...(deepDiveChild.ok ? {} : { detail: deepDiveChild.error }),
+          },
+          createdAt: deepDiveAt,
+        });
+        yield* upsertReview(thread.id, review);
+      }
+
       updatedAt = yield* nowIso;
       Object.assign(review, { status: "synthesizing", activePersona: "synthesis", updatedAt });
       yield* upsertReview(thread.id, review);
@@ -1094,7 +1552,20 @@ const make = Effect.gen(function* () {
               reviewRunId: review.id,
               persona: "synthesis",
               title: `${review.title} - synthesis`,
-              prompt: buildSynthesisPrompt({ subject, reports: review.personaReports }),
+              prompt: buildSynthesisPrompt({
+                subject,
+                reports: review.personaReports,
+                reviewPlan: review.reviewPlan,
+                deepDiveReports: (review.deepDiveReports ?? []).map((report) => ({
+                  focus: report.focus,
+                  summary: report.summary,
+                  sourceFindingIds: report.sourceFindingIds,
+                  observations: report.observations,
+                  specificChecks: report.specificChecks,
+                  recommendedChanges: report.recommendedChanges,
+                  confidence: report.confidence,
+                })),
+              }),
               createdAt: updatedAt,
             })
           : null;
@@ -1123,6 +1594,7 @@ const make = Effect.gen(function* () {
         reviewRunId: review.id,
         subject,
         reports: review.personaReports,
+        deepDiveReports: review.deepDiveReports ?? [],
         synthesisText,
       });
       const failedReports = review.personaReports.filter((report) => report.status === "failed");
@@ -1172,11 +1644,64 @@ const make = Effect.gen(function* () {
       yield* upsertReview(thread.id, review);
     }).pipe(
       Effect.catchCause((cause) =>
-        Effect.logWarning("cad review generation failed", { cause: String(cause) }),
+        Effect.logWarning("cad review generation failed", { cause: Cause.pretty(cause) }).pipe(
+          Effect.flatMap(() =>
+            isCadReviewActive(activeReviewForFailure?.status ?? "failed")
+              ? failActiveReview(cause).pipe(
+                  Effect.catchCause((upsertCause) =>
+                    Effect.logWarning("failed to mark interrupted CAD review as failed", {
+                      cause: Cause.pretty(upsertCause),
+                    }),
+                  ),
+                )
+              : Effect.void,
+          ),
+        ),
+      ),
+    );
+  };
+
+  const recoverInterruptedReviews: CadReviewServiceShape["recoverInterruptedReviews"] = () =>
+    Effect.gen(function* () {
+      const snapshot = yield* projectionSnapshotQuery.getSnapshot();
+      for (const thread of snapshot.threads) {
+        for (const review of thread.reviews ?? []) {
+          if (!isCadReviewActive(review.status)) {
+            continue;
+          }
+          const failedAt = yield* nowIso;
+          const failedReview: CadReviewReport = {
+            ...review,
+            status: "failed",
+            activePersona: undefined,
+            error:
+              review.error ??
+              "CAD review was interrupted before it completed. Start a new CAD review to run it again.",
+            updatedAt: failedAt,
+          };
+          yield* appendActivity({
+            threadId: thread.id,
+            tone: "error",
+            kind: "cad-review.interrupted-recovered",
+            summary: "Interrupted CAD review marked failed",
+            payload: {
+              reviewRunId: review.id,
+              previousStatus: review.status,
+            },
+            createdAt: failedAt,
+          });
+          yield* upsertReview(thread.id, failedReview);
+        }
+      }
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("failed to recover interrupted CAD reviews", {
+          cause: Cause.pretty(cause),
+        }),
       ),
     );
 
-  return { generateReview } satisfies CadReviewServiceShape;
+  return { generateReview, recoverInterruptedReviews } satisfies CadReviewServiceShape;
 });
 
 export const CadReviewServiceLive = Layer.effect(CadReviewService, make);

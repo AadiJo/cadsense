@@ -165,6 +165,38 @@ describe("CadViewMcp", () => {
       "set_cad_component_visibility",
       "set_cad_exploded",
       "zoom_cad_to_fit",
+      "frc_mechanical_calculator",
     ]);
+  });
+
+  it("runs FRC mechanical calculator tool calls", async () => {
+    const response = await handleCadViewMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 4,
+        method: "tools/call",
+        params: {
+          name: "frc_mechanical_calculator",
+          arguments: {
+            calculationType: "compression",
+            gamePieceDiameterIn: 14,
+            gapIn: 13.5,
+          },
+        },
+      },
+      {
+        setView: vi.fn(),
+        sendControl: vi.fn(),
+        getHierarchy: vi.fn().mockResolvedValue({ components: [] }),
+        captureScreenshot: vi.fn(),
+      },
+    );
+
+    expect(response).toMatchObject({ jsonrpc: "2.0", id: 4 });
+    const text = (response as { result: { content: { text: string }[] } }).result.content[0]!.text;
+    expect(JSON.parse(text)).toMatchObject({
+      calculationType: "compression",
+      result: { compressionIn: 0.5 },
+    });
   });
 });

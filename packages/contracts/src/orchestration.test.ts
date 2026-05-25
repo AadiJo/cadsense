@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
+  CadReviewReport,
   ModelSelection,
   OrchestrationCommand,
   OrchestrationEvent,
@@ -38,6 +39,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const decodeCadReviewReport = Schema.decodeUnknownEffect(CadReviewReport);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
 
 function getOptionValue(
@@ -245,6 +247,129 @@ it.effect("preserves explicit provider and runtime mode in thread.turn.start", (
     assert.strictEqual(parsed.modelSelection?.instanceId, "codex");
     assert.strictEqual(parsed.runtimeMode, "full-access");
     assert.strictEqual(parsed.interactionMode, DEFAULT_PROVIDER_INTERACTION_MODE);
+  }),
+);
+
+it.effect("decodes CAD reviews with planning, deep dives, and rich finding details", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeCadReviewReport({
+      id: "review-1",
+      threadId: "thread-1",
+      title: "Intake CAD Review",
+      status: "deep-diving",
+      activePersona: "synthesis",
+      whatIsBeingReviewed: "Intake",
+      commonThemes: ["Roller path needs measurable compression checks."],
+      reviewerTraits: {
+        systems_integration: "Integration",
+        program_readiness: "Readiness",
+        mechanical_robustness: "Robustness",
+        synthesis: "Synthesis",
+      },
+      reviewPlan: {
+        summary: "Inspect intake rollers and frame interface.",
+        mechanisms: [
+          {
+            name: "Intake roller path",
+            role: "Acquire game pieces from the floor.",
+            visibleEvidence: ["Top view shows two rollers."],
+            suspiciousRegions: ["Roller-to-floor transition"],
+            specificChecks: ["Measure roller compression progression."],
+            precedentQueries: ["FRC intake roller compression technical binder"],
+          },
+        ],
+        reviewPriorities: ["Compression path"],
+        missingContext: ["Game piece diameter"],
+        calculatorNeeds: ["Shaft deflection from unsupported span"],
+      },
+      personaReports: [
+        {
+          persona: "mechanical_robustness",
+          status: "completed",
+          summary: "Roller span needs a deflection check.",
+          topConcerns: [
+            {
+              id: "finding-1",
+              title: "Unsupported roller span",
+              description: "The roller appears end-supported across the intake width.",
+              evidenceArtifactIds: ["artifact-1"],
+              confidence: "medium",
+              severity: "high",
+              evidence: ["isometric view"],
+              reasoning: "Compression may vary across the span.",
+              observedGeometry: "Long roller supported at side plates.",
+              assumption: "Roller takes game-piece compression load.",
+              specificCheck: "Measure shaft span and calculate deflection.",
+              recommendedFix: "Add support or increase shaft/tube stiffness.",
+            },
+          ],
+          repeatedPatterns: [],
+          likelyFailureModes: [],
+          recommendedChanges: [],
+          confidence: "medium",
+          evidenceArtifactIds: ["artifact-1"],
+          toolCallIds: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      deepDiveReports: [
+        {
+          id: "deep-1",
+          sourceFindingIds: ["finding-1"],
+          focus: "Unsupported roller span",
+          summary: "Close the concern with a shaft deflection calculation.",
+          inspectedEvidenceArtifactIds: ["artifact-1"],
+          observations: ["No mid-span support is visible."],
+          specificChecks: ["Measure span, shaft OD, material, and expected compression load."],
+          recommendedChanges: ["Add mid-span support if deflection is too high."],
+          confidence: "medium",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      mergedActionItems: [
+        {
+          id: "action-1",
+          title: "Run roller span deflection check",
+          description: "Measure the roller span and calculate deflection before release.",
+          priority: "high",
+          sourceFindingIds: ["finding-1"],
+          rationale: "Compression consistency depends on shaft stiffness.",
+          targetGeometry: "Upper intake roller",
+          verificationSteps: ["Measure span", "Calculate deflection"],
+        },
+      ],
+      evidenceArtifacts: [
+        {
+          id: "artifact-1",
+          scope: "baseline",
+          viewName: "isometric",
+          artifactUri: "C:/tmp/intake.png",
+          status: "captured",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        },
+      ],
+      toolCallsByReviewer: {
+        systems_integration: [],
+        program_readiness: [],
+        mechanical_robustness: [],
+        synthesis: [],
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    assert.strictEqual(parsed.status, "deep-diving");
+    assert.strictEqual(
+      parsed.reviewPlan?.calculatorNeeds[0],
+      "Shaft deflection from unsupported span",
+    );
+    assert.strictEqual(parsed.personaReports[0]?.topConcerns[0]?.severity, "high");
+    assert.strictEqual(parsed.deepDiveReports?.[0]?.focus, "Unsupported roller span");
+    assert.deepStrictEqual(parsed.mergedActionItems[0]?.verificationSteps, [
+      "Measure span",
+      "Calculate deflection",
+    ]);
   }),
 );
 

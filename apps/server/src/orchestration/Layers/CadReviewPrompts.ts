@@ -1,5 +1,7 @@
 import type {
   CadReviewEvidenceArtifact,
+  CadReviewFinding,
+  CadReviewMechanismPlan,
   CadReviewPersona,
   CadReviewPersonaReport,
 } from "@cadsense/contracts";
@@ -80,38 +82,128 @@ export function buildReviewerPrompt(input: {
   readonly persona: Exclude<CadReviewPersona, "synthesis">;
   readonly subject: string;
   readonly baselineArtifacts: ReadonlyArray<CadReviewEvidenceArtifact>;
+  readonly reviewPlan: CadReviewMechanismPlan | undefined;
 }): string {
   return [
     `You are the ${personaLabel(input.persona)} CAD reviewer for ${input.subject}.`,
     PERSONA_PROMPTS[input.persona],
     "",
+    "The review must go one level deeper than generic risk categories. For each significant concern, identify the exact mechanism/part region, the visible geometry that triggered the concern, what measurement or calculation would close the question, and the lowest-effort CAD change that would reduce risk.",
+    "Use FRC-specific precedent language when relevant: roller compression, bumper/frame perimeter, unsupported shaft span, dead/live axle choice, gearbox/motor placement, belt/chain tensioning, sensor/wire routing, hard stops, service removal path, tread wear, carpet clearance, and mechanism handoff geometry.",
+    "If a ReCalc-style engineering calculator or hand calculation would help, use the frc_mechanical_calculator MCP tool when the needed inputs are visible or provided. If inputs are missing, name the calculation and list the CAD measurements needed instead of faking a numeric result.",
+    "",
+    ...(input.reviewPlan
+      ? [
+          "Mechanism plan from the planning pass:",
+          JSON.stringify(input.reviewPlan, null, 2),
+          "",
+          "Use this plan to choose targeted deep checks. You may challenge it if the CAD evidence contradicts it.",
+          "",
+        ]
+      : []),
     "Use the baseline screenshots below as the primary evidence packet. Inspect those files before moving the live CAD camera.",
     "Do not recapture standard isometric/front/back/left/right/top/bottom views that are already listed below.",
-    "Use cadsense-cad-view MCP only when you need new evidence not covered by the baseline, such as the current interactive camera or a targeted close-up preset.",
+    "Use cadsense-cad-view MCP when the baseline leaves uncertainty. Prefer targeted exploration: toggle assemblies, parts, sketches, fasteners, covers, or adjacent subsystems on and off in the hierarchy to isolate the geometry you are judging.",
+    "When you move the live camera, favor non-standard angles that expose hidden interfaces, undersides, internal clearances, oblique load paths, tool access, wire paths, pinch points, and collision envelopes instead of repeating orthographic or default isometric views.",
+    "Capture additional evidence only when the hierarchy state or camera angle reveals something materially useful for a finding, and name the isolated item or camera purpose in your evidence notes.",
     "Ground every concern in visible CAD evidence. Do not invent issues that are not supported by the captures or current view.",
     "",
     "Baseline artifacts already requested:",
     ...input.baselineArtifacts.map((artifact) => `- ${artifact.viewName}: ${artifact.artifactUri}`),
     "",
     "Return a concise JSON object only, with keys: summary, topConcerns, repeatedPatterns, likelyFailureModes, recommendedChanges, confidence, missingEvidence.",
-    "topConcerns must be an array of objects with title, description, evidence, reasoning, severity, confidence, and optional missingEvidence.",
+    "topConcerns must be an array of objects with title, description, evidence, reasoning, severity, observedGeometry, assumption, specificCheck, recommendedFix, confidence, and optional missingEvidence.",
+    "Use severity values critical, high, medium, or low. specificCheck should be a concrete measurement/test/calculation, not a generic instruction.",
     "Write concerns in the style of an experienced FRC reviewer: collaborative, specific, and grounded in visible evidence. Avoid vague comments and avoid unsupported certainty.",
+  ].join("\n");
+}
+
+export function buildMechanismPlanningPrompt(input: {
+  readonly subject: string;
+  readonly baselineArtifacts: ReadonlyArray<CadReviewEvidenceArtifact>;
+}): string {
+  return [
+    `Plan a deep FRC CAD review for ${input.subject}.`,
+    "Act as the lead reviewer before specialist passes run. Your job is not to produce the final review; it is to identify what the reviewers must inspect deeply.",
+    "Classify visible mechanisms and suspicious regions from the baseline evidence. Prefer mechanism-specific language over generic risk labels.",
+    "For each mechanism, list visible evidence, suspicious regions, concrete checks to perform, and RAG/search queries that would retrieve relevant old FRC binder or Chief Delphi precedent.",
+    "Include calculatorNeeds for engineering checks that would benefit from a ReCalc-style tool or the frc_mechanical_calculator MCP tool, such as beam/shaft deflection, roller surface speed, gear ratio, belt center distance, compression, motor power, current draw, or clearance stack-up.",
+    "Do not invent exact dimensions. If a dimension is required, write the dimension to measure.",
+    "",
+    "Baseline artifacts already requested:",
+    ...input.baselineArtifacts.map((artifact) => `- ${artifact.viewName}: ${artifact.artifactUri}`),
+    "",
+    "Return JSON only with keys: summary, mechanisms, reviewPriorities, missingContext, calculatorNeeds.",
+    "mechanisms must be objects with name, role, visibleEvidence, suspiciousRegions, specificChecks, precedentQueries.",
+  ].join("\n");
+}
+
+export function buildDeepDivePrompt(input: {
+  readonly subject: string;
+  readonly reviewPlan: CadReviewMechanismPlan | undefined;
+  readonly findings: ReadonlyArray<CadReviewFinding>;
+  readonly baselineArtifacts: ReadonlyArray<CadReviewEvidenceArtifact>;
+}): string {
+  return [
+    `Deep-dive the highest-risk CAD review findings for ${input.subject}.`,
+    "Your job is to turn broad reviewer concerns into specific engineering follow-up. Inspect the CAD with cadsense-cad-view MCP where useful. Isolate parts or move the camera before making recommendations.",
+    "For each focus finding, answer: exactly what geometry looks wrong or underdefined, what check/measurement/calculation would prove it, what FRC precedent or known design pattern applies, and what minimal CAD change should be tried first.",
+    "Prefer concrete, inspectable wording. Include likely target ranges only when they are standard FRC practice or directly supported by retrieved/contextual evidence; otherwise state the needed measurement instead of guessing.",
+    "If a ReCalc-style calculator would help and the inputs are available, use frc_mechanical_calculator. Otherwise name the calculation and required inputs.",
+    "",
+    ...(input.reviewPlan ? ["Mechanism plan:", JSON.stringify(input.reviewPlan, null, 2), ""] : []),
+    "Focus findings:",
+    JSON.stringify(
+      input.findings.map((finding) => ({
+        id: finding.id,
+        title: finding.title,
+        description: finding.description,
+        observedGeometry: finding.observedGeometry,
+        specificCheck: finding.specificCheck,
+        recommendedFix: finding.recommendedFix,
+        missingEvidence: finding.missingEvidence,
+      })),
+      null,
+      2,
+    ),
+    "",
+    "Baseline artifacts:",
+    ...input.baselineArtifacts.map((artifact) => `- ${artifact.viewName}: ${artifact.artifactUri}`),
+    "",
+    "Return JSON only with keys: focus, sourceFindingIds, summary, observations, specificChecks, recommendedChanges, confidence, missingEvidence.",
   ].join("\n");
 }
 
 export function buildSynthesisPrompt(input: {
   readonly subject: string;
   readonly reports: ReadonlyArray<CadReviewPersonaReport>;
+  readonly reviewPlan: CadReviewMechanismPlan | undefined;
+  readonly deepDiveReports: ReadonlyArray<{
+    readonly focus: string;
+    readonly summary: string;
+    readonly sourceFindingIds: ReadonlyArray<string>;
+    readonly observations: ReadonlyArray<string>;
+    readonly specificChecks: ReadonlyArray<string>;
+    readonly recommendedChanges: ReadonlyArray<string>;
+    readonly confidence: "low" | "medium" | "high";
+  }>;
 }): string {
   return [
     `Synthesize this CAD review for ${input.subject}.`,
     "Act as the lead reviewer who merges specialist findings into one practical engineering review.",
     "Merge overlap, preserve meaningful disagreement, identify cross-subsystem dependencies, and prioritize concrete follow-up work by build risk and competitive value.",
+    "Use the mechanism plan and deep-dive reports to make the final action items specific. Avoid action items that only say improve robustness, improve packaging, or verify serviceability. Each action item should name a subsystem/region and a concrete check or CAD change.",
+    "For each action item, include rationale, targetGeometry, and verificationSteps when available.",
     "Do not simply concatenate the persona reports. Deduplicate, cluster related issues, and convert them into an implementation plan.",
     "Return JSON only with keys: commonThemes, blockingIssues, actionItems, suggestedBuildOrder, and unresolvedQuestions.",
     "blockingIssues must be the small set of concerns that could prevent manufacturing, integration, testing, or safe competition use.",
-    "actionItems must be objects with title, description, subsystem, issueType, priority, rationale, sourceFindingIds.",
+    "actionItems must be objects with title, description, subsystem, issueType, priority, rationale, targetGeometry, verificationSteps, sourceFindingIds.",
     "suggestedBuildOrder must stage the work from lowest-risk validation to full integration.",
+    "",
+    ...(input.reviewPlan ? ["Mechanism plan:", JSON.stringify(input.reviewPlan, null, 2), ""] : []),
+    ...(input.deepDiveReports.length > 0
+      ? ["Deep-dive reports:", JSON.stringify(input.deepDiveReports, null, 2), ""]
+      : []),
     "",
     JSON.stringify(
       input.reports.map((report) => ({

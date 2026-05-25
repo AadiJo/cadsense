@@ -1,0 +1,937 @@
+{
+  "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16",
+  "threadId": "a002829a-94b9-4bf0-a054-6569d6b49b1e",
+  "title": "6423-24-01b - Intake / Fresh CAD review rerun with CAD panel loaded CAD Review",
+  "status": "completed",
+  "whatIsBeingReviewed": "6423-24-01b - Intake / Fresh CAD review rerun with CAD panel loaded",
+  "commonThemes": [
+    "Outer-side intake mechanisms and roller-end interfaces appear exposed, creating overlapping concerns about impact damage, snagging/debris accumulation, pinch/jam behavior, and interference with adjacent systems.",
+    "The side support architecture looks adjustment- and tolerance-sensitive, with multiple plates, pivots, spacers, and fasteners carrying roller alignment and shock loads; reviewers consistently flagged stiffness, fatigue, mirrored-assembly drift, and service complexity.",
+    "Integration readiness is underdefined in the visible CAD: mounting hardpoints, protected wire routing, and sensor packaging are not obvious, suggesting cross-team coordination risk and possible late packaging rework.",
+    "The intake entry and feed path do not visibly show a strongly guided, passive centering strategy; reviewers differed on severity, but several noted narrow tuning margin, abrupt transitions, and risk of off-center pickups or jams.",
+    "Serviceability and debug access appear weak from the current evidence, with dense top-side packaging and a mostly closed underside likely slowing inspection, adjustment, and pit repair cycles."
+  ],
+  "reviewerTraits": {
+    "systems_integration": "Integration, interfaces, mounting, materials, manufacturability, and dependency risk.",
+    "program_readiness": "Schedule, team coordination, electronics/programming/manufacturing impact, testability, and realistic ship scope.",
+    "mechanical_robustness": "Contact geometry, snagging, flex, impact, field interaction, jam paths, wear, and fatigue risk.",
+    "synthesis": "Merges overlap, preserves disagreement, and turns review findings into prioritized action items."
+  },
+  "personaReports": [
+    {
+      "persona": "systems_integration",
+      "status": "completed",
+      "summary": "Baseline views show a compact intake assembly with twin upper rollers, exposed side linkages, and a plate-on-standoff base. The main risks visible in CAD are side-impact/snags at the exposed mechanisms, alignment/tolerance sensitivity in the roller-support structure, and unclear hard-mount/interface definition to the parent system.",
+      "topConcerns": [
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:1",
+          "title": "Exposed side mechanisms sit outside the protected base envelope",
+          "description": "Both side views and the isometric show moving linkage/roller hardware projecting above and laterally beyond the simple rectangular base. That creates integration risk with adjacent structure, wiring, and game-piece contact, and it raises impact/snag risk because the mechanisms do not appear guarded by the outer frame footprint.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+          ],
+          "confidence": "high"
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:2",
+          "title": "Upper roller assembly appears sensitive to bracket stiffness and alignment",
+          "description": "Front, back, top, and isometric views show two long rollers/tubes carried by relatively compact side supports with limited visible cross-bracing near the roller plane. Any side plate flex or hole-position error is likely to shift roller parallelism, affecting intake consistency and increasing dependency on tight fabrication tolerances.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+          ],
+          "confidence": "medium"
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:3",
+          "title": "Robot mounting/interface strategy is not obvious from the visible base",
+          "description": "The bottom view shows a mostly continuous underside plate with four corner standoffs/feet, but no clearly visible slotted mounts, datum rails, or dedicated hardpoint pattern for integration to the parent chassis. That suggests dependency risk on external brackets/spacers or hidden hardware not evidenced in the packet.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+          ],
+          "confidence": "medium",
+          "missingEvidence": "No close-up of intended chassis mounting features or interface drawings is provided."
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:4",
+          "title": "High part-count side assemblies imply assembly and service complexity",
+          "description": "The side structures combine multiple plates, pivots, spacers, and fasteners in a tight package. That visible stack-up increases tolerance accumulation, makes side-to-side synchronization more fragile, and will complicate replacement or adjustment if one roller/support is damaged.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+          ],
+          "confidence": "medium"
+        }
+      ],
+      "repeatedPatterns": [
+        "Side-loaded mechanisms are concentrated at the outer edges rather than being protected inside the frame footprint.",
+        "Several functions appear to depend on stacked plate geometry and precise fastener spacing.",
+        "The design favors compact packaging but leaves little visible margin for guarding, access, or adjustment."
+      ],
+      "likelyFailureModes": [
+        "Side impact bends or misaligns exposed linkage/roller support hardware.",
+        "Roller shafts lose parallelism from plate flex or fabrication tolerance stack-up, reducing intake performance.",
+        "Integration slips late because final chassis mounting relies on non-obvious custom spacers/brackets.",
+        "Service events take longer because side assemblies are dense and hardware access is limited."
+      ],
+      "recommendedChanges": [
+        "Bring exposed side mechanisms inside a protective outer envelope or add simple guards tied to the base structure.",
+        "Increase visible stiffness around the roller-support path with clearer triangulation or cross-members near the bearing supports.",
+        "Define and expose dedicated mounting hardpoints with a simple repeatable interface pattern to the parent chassis.",
+        "Reduce stack-up sensitivity by consolidating side plates/spacers where possible and standardizing adjustment features."
+      ],
+      "confidence": "medium",
+      "evidenceArtifactIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+      ],
+      "toolCallIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:518fd10b-f7c3-47bd-bfe7-9127c759ffd3:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:c35d97f3-c35f-4f71-89cf-71732bf9e3eb:3",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:af15876d-d9bd-4b73-8535-13d14575272b:4",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:ed757d11-d1c5-418f-851d-11894b814949:6",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:57834fe3-5b51-4ff5-8ff9-73e1d5457d7f:8",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:efa7cd97-3517-49b9-8b6d-ef6f194b73e7:11",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:4f53a18b-3597-477f-93d5-8921ad67edd7:13"
+      ],
+      "createdAt": "2026-05-18T22:33:44.373Z",
+      "updatedAt": "2026-05-18T22:33:44.373Z"
+    },
+    {
+      "persona": "program_readiness",
+      "status": "completed",
+      "summary": "CAD appears mechanically plausible as a fresh intake concept, but it does not look program-ready or ship-scope-ready yet. The visible design uses most of the footprint for the intake itself, relies on adjustment-sensitive side mechanisms, and does not show obvious provisions for sensors, wire-safe routing, or quick manufacturing/service loops. Main readiness risk is not one catastrophic geometry issue; it is schedule drag from packaging, tuning, and cross-team dependency.",
+      "topConcerns": [
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:1",
+          "title": "Electronics and sensor packaging is not visibly reserved",
+          "description": "Across the isometric, top, front, and back views, the rollers and side structures occupy nearly the full width and most of the top-side real estate. There is no clearly visible protected lane, bracket set, or isolated pocket for beam breaks, wiring, or a small local control/sensor package near the intake path. That creates immediate coordination risk between CAD, electronics, and programming because integration points appear to be deferred rather than designed in.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:persona:program_readiness:1"
+          ],
+          "confidence": "medium",
+          "missingEvidence": "Internal packaging layout, planned wire routing, and sensor mounting scheme are not visible in the provided captures."
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:2",
+          "title": "Side mechanism looks adjustment-heavy for manufacturing and tuning",
+          "description": "Both side views show multi-plate linkage geometry with many fasteners and several closely packed rollers/idlers. That usually means more stack-up sensitivity, more mirrored-assembly error opportunities, and longer bring-up time before programming can get repeatable behavior. For realistic ship scope, this is a concern because intake performance may depend on careful symmetry and preload rather than robust nominal geometry.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:persona:program_readiness:1"
+          ],
+          "confidence": "high"
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:3",
+          "title": "Feed path compliance and game-piece control are not obviously robust",
+          "description": "The front/back views show the upper rollers sitting low over a curved internal panel, but there is no clearly visible large passive funnel, side compression feature, or obvious staged centering feature at the entry. The mechanism may work, but the visible geometry suggests a narrow tuning window for off-center pickups and transitions, which pushes risk into driver practice, programming thresholds, and repeated pit iteration.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:persona:program_readiness:1"
+          ],
+          "confidence": "medium",
+          "missingEvidence": "No close-up section or motion-range evidence was provided to confirm actual compression, gap progression, or hard-stop positions."
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:4",
+          "title": "Testability and service access look weak from the current evidence",
+          "description": "The bottom view is essentially a closed plate and the top-side mechanism is densely packed around the rollers. No obvious inspection windows, quick-adjust references, or access-first service features are visible. That increases cycle time for debugging jams, replacing wear parts, and isolating whether failures are electrical, control, or mechanical during events.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:persona:program_readiness:1"
+          ],
+          "confidence": "medium",
+          "missingEvidence": "Fastener access strategy and service procedure are not visible in the screenshots."
+        }
+      ],
+      "repeatedPatterns": [
+        "Mechanism complexity is concentrated at both side plates with mirrored custom geometry and many fasteners.",
+        "The intake consumes most of the available footprint, leaving little visibly dedicated integration space for non-mechanical systems.",
+        "Visible readiness risk comes from tuning and integration burden more than from a single obvious interference."
+      ],
+      "likelyFailureModes": [
+        "Extended assembly and iteration time caused by left/right symmetry drift, preload differences, or roller alignment stack-up.",
+        "Programming blocked or delayed by late-added sensors and wire routing because dedicated mounts are not visibly designed in.",
+        "Inconsistent acquisition on off-center or partially controlled pieces if the visible entry geometry does not provide enough passive centering/compliance.",
+        "Pit-side debugging taking too long because access to the active mechanism and underside appears limited from the current design evidence."
+      ],
+      "recommendedChanges": [
+        "Reserve and model explicit sensor and wire-routing features now: protected wire path, connector landing area, and at least one visible sensor boss near the intake path.",
+        "Reduce tuning burden by simplifying the side mechanism where possible, or add hard references and adjustment datums so mirrored assembly can be reproduced quickly.",
+        "Add clearly visible passive control features for the entry and transfer path: funneling, compliance, or staged compression that does not rely on precise tuning alone.",
+        "Design for serviceability before release: access to roller hardware, rapid swap path for wear items, and inspection access for jams.",
+        "If schedule is tight, cut scope toward the simplest version that preserves full-width acquisition but minimizes custom moving geometry and deferred integration work."
+      ],
+      "confidence": "medium",
+      "evidenceArtifactIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:persona:program_readiness:1"
+      ],
+      "toolCallIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:9125df09-0929-4395-891b-a305072187c9:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:c3dfa3c3-2b31-4b51-9d3f-7173c5a5a77f:2",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:b3a95d51-437f-4f71-bdc1-cf4d4d112b2d:6",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:b70513cf-ffaf-4da3-9fcb-5ffb6355bf07:7",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:e77131f3-c533-47cd-9b15-39e9997d91b7:9",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:a9737569-a1cb-4ba3-852d-5f3795bd1fd7:11",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:f58f5daf-e9ab-45b5-892b-ad0f3981c3b5:13",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:7327bde3-9ff7-4d99-a7c7-1787c1597115:15",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:ef7db3ad-9dd1-47f7-a58f-833d9d79e989:17"
+      ],
+      "createdAt": "2026-05-18T22:34:47.886Z",
+      "updatedAt": "2026-05-18T22:34:47.886Z"
+    },
+    {
+      "persona": "mechanical_robustness",
+      "status": "completed",
+      "summary": "Baseline views show a compact intake with large exposed roller ends, open side linkages, and several hard plate transitions around the entry path. The most supportable robustness risks are pinch/jam exposure at the roller-side interfaces, impact/fatigue loading in the side support/link arms, and debris snagging in the open side pockets and abrupt intake-edge geometry.",
+      "topConcerns": [
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:1",
+          "title": "Exposed pinch and jam zones at both roller ends",
+          "description": "In the isometric, front, back, and top views, the upper roller ends, spacers, and nearby side linkage/hardware are all exposed with very little shielding. Anything entering off-center can catch at the roller-end/side-plate interface instead of being centered cleanly into the full roller width.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+          ],
+          "confidence": "high"
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:2",
+          "title": "Side intake support appears vulnerable to impact-driven twist/fatigue",
+          "description": "The left and right views show the intake load path carried through offset side plates/link arms with visible bolt groups and long lever arms up to the roller assembly. That geometry looks sensitive to repeated front-corner hits or asymmetric game-piece loading, which could work fasteners and fatigue the plate around pivots and hole clusters.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+          ],
+          "confidence": "medium"
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:3",
+          "title": "Open side pockets create snag/debris accumulation opportunities",
+          "description": "The top and isometric views show open triangular side pockets and exposed internal hardware near the intake throat. Those cavities can trap string, field tape, or fragments, especially when material arrives from the corners rather than straight-on.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+          ],
+          "confidence": "medium"
+        },
+        {
+          "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:4",
+          "title": "Abrupt leading transitions may concentrate contact and wear",
+          "description": "At the intake mouth, the visible plate edges and discrete guide surfaces transition quickly into the roller zone rather than presenting a continuous funnel. That increases the chance of concentrated contact on corners/edges, especially during glancing impacts or partial-width pickup.",
+          "evidenceArtifactIds": [
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+            "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+          ],
+          "confidence": "medium",
+          "missingEvidence": "A closer throat/detail view would help confirm exact edge offsets and whether small fillets/chamfers already mitigate this."
+        }
+      ],
+      "repeatedPatterns": [
+        "Exposed moving or contacting geometry near both outer sides of the intake",
+        "Several bolt-hole clusters located near major load-transfer pivots and brackets",
+        "Hard geometric transitions instead of fully enclosed or continuously guided flow surfaces"
+      ],
+      "likelyFailureModes": [
+        "Off-center game pieces or loose field material wedge at a roller end and stall or partially jam the intake",
+        "Repeated corner-first impacts bend or loosen the side intake arms/brackets, shifting roller alignment",
+        "Accumulated debris in the side pockets increases drag or creates intermittent snagging",
+        "Local wear grows at leading plate edges and at roller-end adjacent contact points, degrading pickup consistency over time"
+      ],
+      "recommendedChanges": [
+        "Add simple side guards/fences or end-cap shielding around both roller ends to reduce off-axis entry into pinch zones",
+        "Shorten or stiffen the side support load path with gussets, double-shear support where possible, or larger local section around pivots and dense hole groups",
+        "Close or smooth the open side pockets near the throat so loose material has fewer places to hook or collect",
+        "Blend the intake entry into a more continuous funnel with larger radii/chamfers and fewer abrupt exposed edges",
+        "Review fastener retention and fatigue margin at the side pivots/brackets because those locations appear to carry the highest repeated shock load"
+      ],
+      "confidence": "medium",
+      "evidenceArtifactIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+      ],
+      "toolCallIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:37a9996f-9511-4b55-b3b3-557341558581:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:01e58319-1105-437d-b71f-c1f3556d41b7:3",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:952dbb0d-bf71-4f0b-8775-51a5496d7759:5",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:8143ef31-5175-4fb9-9f91-4993d7530939:7",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:e5fb5733-6345-4b93-a31f-6195117d856f:9",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:1b7d1fa7-932f-45fb-9b23-8d03ddb3416b:10",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:edd52baf-118f-4959-8b05-65b3712f03c1:13"
+      ],
+      "createdAt": "2026-05-18T22:35:35.260Z",
+      "updatedAt": "2026-05-18T22:35:35.260Z"
+    }
+  ],
+  "mergedActionItems": [
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:action:1",
+      "title": "Add side protection and roller-end guarding",
+      "description": "Bring exposed side mechanisms inside a protective envelope where possible, or add guards/fences/end caps tied to the base structure. Prioritize shielding the roller-end and side-plate interfaces to reduce off-axis jams, snagging, debris ingestion, and impact damage to exposed hardware.",
+      "subsystem": "intake structure",
+      "issueType": "robustness",
+      "priority": "high",
+      "sourceFindingIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:3"
+      ]
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:action:2",
+      "title": "Stiffen and simplify the side support load path",
+      "description": "Reduce alignment and fatigue sensitivity by increasing stiffness near the roller supports and pivots, shortening unsupported lever arms, and consolidating stacked side-plate/spacer geometry where possible. Review gussets, double-shear support, cross-bracing near the roller plane, and fastener retention at dense hole clusters.",
+      "subsystem": "side linkage and roller supports",
+      "issueType": "structural",
+      "priority": "high",
+      "sourceFindingIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:2",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:4",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:2",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:2"
+      ]
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:action:3",
+      "title": "Define explicit chassis, sensor, and wire-routing interfaces in CAD",
+      "description": "Model the integration interfaces directly instead of leaving them implicit. Add visible chassis hardpoints or slot patterns, protected wire paths, connector landing space, and at least one sensor mounting provision near the intake path so mechanical, electrical, and programming work can proceed without late bracket or routing rework.",
+      "subsystem": "system integration",
+      "issueType": "integration",
+      "priority": "high",
+      "sourceFindingIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:3",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:1"
+      ]
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:action:4",
+      "title": "Refine the intake mouth and feed path for passive centering",
+      "description": "Rework the entry geometry to provide a more continuous funnel and clearer staged compression or compliance through the throat. This addresses the shared concern that the current geometry may rely too heavily on precise tuning; exact severity remains uncertain because section and motion-range evidence were not provided.",
+      "subsystem": "game-piece path",
+      "issueType": "performance",
+      "priority": "medium",
+      "sourceFindingIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:3",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:1",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:4"
+      ]
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:action:5",
+      "title": "Design in service access and assembly datums",
+      "description": "Add inspection and tool access for roller hardware, define repeatable left/right assembly references, and provide quick-adjust or quick-swap features for wear items. The goal is to reduce bring-up time, mirrored-assembly drift, and pit-side debug effort caused by dense packaging and hidden stack-ups.",
+      "subsystem": "assembly and serviceability",
+      "issueType": "maintainability",
+      "priority": "medium",
+      "sourceFindingIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:finding:4",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:2",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:finding:4"
+      ]
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:action:6",
+      "title": "Close or smooth debris-catching side pockets",
+      "description": "Reduce open cavities and abrupt hooks near the intake throat so string, tape, or fragments have fewer places to collect. This can be solved with pocket closures, smooth covers, or geometry cleanup that preserves function while lowering intermittent snag risk.",
+      "subsystem": "intake side geometry",
+      "issueType": "robustness",
+      "priority": "medium",
+      "sourceFindingIds": [
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:3",
+        "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:finding:4"
+      ]
+    }
+  ],
+  "evidenceArtifacts": [
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1",
+      "scope": "baseline",
+      "viewName": "isometric",
+      "artifactUri": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png",
+      "mimeType": "image/png",
+      "status": "captured",
+      "createdAt": "2026-05-18T22:32:46.928Z"
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2",
+      "scope": "baseline",
+      "viewName": "front",
+      "artifactUri": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-35-984Z_cad-review-baseline-front.png",
+      "mimeType": "image/png",
+      "status": "captured",
+      "createdAt": "2026-05-18T22:32:46.928Z"
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3",
+      "scope": "baseline",
+      "viewName": "back",
+      "artifactUri": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-37-562Z_cad-review-baseline-back.png",
+      "mimeType": "image/png",
+      "status": "captured",
+      "createdAt": "2026-05-18T22:32:46.928Z"
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4",
+      "scope": "baseline",
+      "viewName": "left",
+      "artifactUri": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-39-140Z_cad-review-baseline-left.png",
+      "mimeType": "image/png",
+      "status": "captured",
+      "createdAt": "2026-05-18T22:32:46.928Z"
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5",
+      "scope": "baseline",
+      "viewName": "right",
+      "artifactUri": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-40-706Z_cad-review-baseline-right.png",
+      "mimeType": "image/png",
+      "status": "captured",
+      "createdAt": "2026-05-18T22:32:46.928Z"
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6",
+      "scope": "baseline",
+      "viewName": "top",
+      "artifactUri": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-42-287Z_cad-review-baseline-top.png",
+      "mimeType": "image/png",
+      "status": "captured",
+      "createdAt": "2026-05-18T22:32:46.928Z"
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7",
+      "scope": "baseline",
+      "viewName": "bottom",
+      "artifactUri": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png",
+      "mimeType": "image/png",
+      "status": "captured",
+      "createdAt": "2026-05-18T22:32:46.928Z"
+    },
+    {
+      "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:persona:program_readiness:1",
+      "scope": "persona",
+      "persona": "program_readiness",
+      "viewName": "captured view",
+      "artifactUri": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-34-19-274Z_cad-review-detail-current-camera.png",
+      "mimeType": "image/png",
+      "status": "captured",
+      "createdAt": "2026-05-18T22:34:47.886Z"
+    }
+  ],
+  "toolCallsByReviewer": {
+    "systems_integration": [
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:518fd10b-f7c3-47bd-bfe7-9127c759ffd3:1",
+        "persona": "systems_integration",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:33:05.412Z",
+        "completedAt": "2026-05-18T22:33:05.412Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:c35d97f3-c35f-4f71-89cf-71732bf9e3eb:3",
+        "persona": "systems_integration",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-37-562Z_cad-review-baseline-back.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-37-562Z_cad-review-baseline-back.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:33:05.438Z",
+        "completedAt": "2026-05-18T22:33:05.438Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:af15876d-d9bd-4b73-8535-13d14575272b:4",
+        "persona": "systems_integration",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-35-984Z_cad-review-baseline-front.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-35-984Z_cad-review-baseline-front.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:33:05.439Z",
+        "completedAt": "2026-05-18T22:33:05.439Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:ed757d11-d1c5-418f-851d-11894b814949:6",
+        "persona": "systems_integration",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-39-140Z_cad-review-baseline-left.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-39-140Z_cad-review-baseline-left.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:33:05.445Z",
+        "completedAt": "2026-05-18T22:33:05.445Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:57834fe3-5b51-4ff5-8ff9-73e1d5457d7f:8",
+        "persona": "systems_integration",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-40-706Z_cad-review-baseline-right.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-40-706Z_cad-review-baseline-right.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:33:15.038Z",
+        "completedAt": "2026-05-18T22:33:15.038Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:efa7cd97-3517-49b9-8b6d-ef6f194b73e7:11",
+        "persona": "systems_integration",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-42-287Z_cad-review-baseline-top.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-42-287Z_cad-review-baseline-top.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:33:15.051Z",
+        "completedAt": "2026-05-18T22:33:15.051Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:systems_integration:tool:4f53a18b-3597-477f-93d5-8921ad67edd7:13",
+        "persona": "systems_integration",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:33:15.065Z",
+        "completedAt": "2026-05-18T22:33:15.065Z"
+      }
+    ],
+    "program_readiness": [
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:9125df09-0929-4395-891b-a305072187c9:1",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:06.612Z",
+        "completedAt": "2026-05-18T22:34:06.612Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:c3dfa3c3-2b31-4b51-9d3f-7173c5a5a77f:2",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-35-984Z_cad-review-baseline-front.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-35-984Z_cad-review-baseline-front.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:06.612Z",
+        "completedAt": "2026-05-18T22:34:06.612Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:b3a95d51-437f-4f71-bdc1-cf4d4d112b2d:6",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-37-562Z_cad-review-baseline-back.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-37-562Z_cad-review-baseline-back.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:06.635Z",
+        "completedAt": "2026-05-18T22:34:06.635Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:b70513cf-ffaf-4da3-9fcb-5ffb6355bf07:7",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-39-140Z_cad-review-baseline-left.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-39-140Z_cad-review-baseline-left.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:06.635Z",
+        "completedAt": "2026-05-18T22:34:06.635Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:e77131f3-c533-47cd-9b15-39e9997d91b7:9",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-40-706Z_cad-review-baseline-right.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-40-706Z_cad-review-baseline-right.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:06.635Z",
+        "completedAt": "2026-05-18T22:34:06.635Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:a9737569-a1cb-4ba3-852d-5f3795bd1fd7:11",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-42-287Z_cad-review-baseline-top.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-42-287Z_cad-review-baseline-top.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:06.643Z",
+        "completedAt": "2026-05-18T22:34:06.643Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:f58f5daf-e9ab-45b5-892b-ad0f3981c3b5:13",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:06.643Z",
+        "completedAt": "2026-05-18T22:34:06.643Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:7327bde3-9ff7-4d99-a7c7-1787c1597115:15",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "export_cad_screenshot",
+        "argumentsSummary": "{\"suggestedBaseName\":\"cad-review-detail-current-camera\"}",
+        "resultSummary": "Saved CAD screenshot to C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-34-19-274Z_cad-review-detail-current-camera.png (under export root: a002829a-94b9-4bf0-a054-6569d6b49b1e/2026-05-18T22-34-19-274Z_cad-review-detail-current-camera.png).",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:persona:program_readiness:1"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:19.279Z",
+        "completedAt": "2026-05-18T22:34:19.279Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:program_readiness:tool:ef7db3ad-9dd1-47f7-a58f-833d9d79e989:17",
+        "persona": "program_readiness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-34-19-274Z_cad-review-detail-current-camera.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-34-19-274Z_cad-review-detail-current-camera.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:persona:program_readiness:1"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:34:22.218Z",
+        "completedAt": "2026-05-18T22:34:22.218Z"
+      }
+    ],
+    "mechanical_robustness": [
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:37a9996f-9511-4b55-b3b3-557341558581:1",
+        "persona": "mechanical_robustness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:35:10.144Z",
+        "completedAt": "2026-05-18T22:35:10.144Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:01e58319-1105-437d-b71f-c1f3556d41b7:3",
+        "persona": "mechanical_robustness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-35-984Z_cad-review-baseline-front.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-35-984Z_cad-review-baseline-front.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:35:10.175Z",
+        "completedAt": "2026-05-18T22:35:10.175Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:952dbb0d-bf71-4f0b-8775-51a5496d7759:5",
+        "persona": "mechanical_robustness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-37-562Z_cad-review-baseline-back.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-37-562Z_cad-review-baseline-back.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:35:10.175Z",
+        "completedAt": "2026-05-18T22:35:10.175Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:8143ef31-5175-4fb9-9f91-4993d7530939:7",
+        "persona": "mechanical_robustness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:35:10.182Z",
+        "completedAt": "2026-05-18T22:35:10.182Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:e5fb5733-6345-4b93-a31f-6195117d856f:9",
+        "persona": "mechanical_robustness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-40-706Z_cad-review-baseline-right.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-40-706Z_cad-review-baseline-right.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:35:10.182Z",
+        "completedAt": "2026-05-18T22:35:10.182Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:1b7d1fa7-932f-45fb-9b23-8d03ddb3416b:10",
+        "persona": "mechanical_robustness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-39-140Z_cad-review-baseline-left.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-39-140Z_cad-review-baseline-left.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:35:10.189Z",
+        "completedAt": "2026-05-18T22:35:10.189Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:mechanical_robustness:tool:edd52baf-118f-4959-8b05-65b3712f03c1:13",
+        "persona": "mechanical_robustness",
+        "phase": "reviewing",
+        "toolName": "image_view",
+        "argumentsSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-42-287Z_cad-review-baseline-top.png",
+        "resultSummary": "C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-42-287Z_cad-review-baseline-top.png",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:35:10.189Z",
+        "completedAt": "2026-05-18T22:35:10.189Z"
+      }
+    ],
+    "synthesis": [
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:synthesis:tool:933b4b67-c521-417b-8d4f-072177958b9b:1",
+        "persona": "synthesis",
+        "phase": "baseline",
+        "toolName": "export_cad_screenshot",
+        "argumentsSummary": "{\"view\":\"isometric\",\"fit\":true,\"suggestedBaseName\":\"cad-review-baseline-isometric\"}",
+        "resultSummary": "Saved CAD screenshot to C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png (under export root: a002829a-94b9-4bf0-a054-6569d6b49b1e/2026-05-18T22-32-34-408Z_cad-review-baseline-isometric.png).",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:1"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:32:34.413Z",
+        "completedAt": "2026-05-18T22:32:34.413Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:synthesis:tool:a3c5954d-fd09-45eb-a1a3-83858195254d:4",
+        "persona": "synthesis",
+        "phase": "baseline",
+        "toolName": "export_cad_screenshot",
+        "argumentsSummary": "{\"view\":\"front\",\"fit\":true,\"suggestedBaseName\":\"cad-review-baseline-front\"}",
+        "resultSummary": "Saved CAD screenshot to C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-35-984Z_cad-review-baseline-front.png (under export root: a002829a-94b9-4bf0-a054-6569d6b49b1e/2026-05-18T22-32-35-984Z_cad-review-baseline-front.png).",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:2"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:32:35.987Z",
+        "completedAt": "2026-05-18T22:32:35.987Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:synthesis:tool:8f3b77eb-4d61-4553-9f4f-d995e9894165:5",
+        "persona": "synthesis",
+        "phase": "baseline",
+        "toolName": "export_cad_screenshot",
+        "argumentsSummary": "{\"view\":\"back\",\"fit\":true,\"suggestedBaseName\":\"cad-review-baseline-back\"}",
+        "resultSummary": "Saved CAD screenshot to C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-37-562Z_cad-review-baseline-back.png (under export root: a002829a-94b9-4bf0-a054-6569d6b49b1e/2026-05-18T22-32-37-562Z_cad-review-baseline-back.png).",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:3"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:32:37.564Z",
+        "completedAt": "2026-05-18T22:32:37.564Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:synthesis:tool:81ef89ab-3731-45eb-a541-2d23eb6f9723:7",
+        "persona": "synthesis",
+        "phase": "baseline",
+        "toolName": "export_cad_screenshot",
+        "argumentsSummary": "{\"view\":\"left\",\"fit\":true,\"suggestedBaseName\":\"cad-review-baseline-left\"}",
+        "resultSummary": "Saved CAD screenshot to C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-39-140Z_cad-review-baseline-left.png (under export root: a002829a-94b9-4bf0-a054-6569d6b49b1e/2026-05-18T22-32-39-140Z_cad-review-baseline-left.png).",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:4"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:32:39.142Z",
+        "completedAt": "2026-05-18T22:32:39.142Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:synthesis:tool:69f5476d-d1c9-418f-bd03-2d35094b5fa9:9",
+        "persona": "synthesis",
+        "phase": "baseline",
+        "toolName": "export_cad_screenshot",
+        "argumentsSummary": "{\"view\":\"right\",\"fit\":true,\"suggestedBaseName\":\"cad-review-baseline-right\"}",
+        "resultSummary": "Saved CAD screenshot to C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-40-706Z_cad-review-baseline-right.png (under export root: a002829a-94b9-4bf0-a054-6569d6b49b1e/2026-05-18T22-32-40-706Z_cad-review-baseline-right.png).",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:5"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:32:40.707Z",
+        "completedAt": "2026-05-18T22:32:40.707Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:synthesis:tool:c3097d19-9d1f-4f3f-97e3-bd83393fc7cd:12",
+        "persona": "synthesis",
+        "phase": "baseline",
+        "toolName": "export_cad_screenshot",
+        "argumentsSummary": "{\"view\":\"top\",\"fit\":true,\"suggestedBaseName\":\"cad-review-baseline-top\"}",
+        "resultSummary": "Saved CAD screenshot to C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-42-287Z_cad-review-baseline-top.png (under export root: a002829a-94b9-4bf0-a054-6569d6b49b1e/2026-05-18T22-32-42-287Z_cad-review-baseline-top.png).",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:6"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:32:42.289Z",
+        "completedAt": "2026-05-18T22:32:42.289Z"
+      },
+      {
+        "id": "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:synthesis:tool:b31fd33f-c9ed-4345-adbb-873f89b9e311:13",
+        "persona": "synthesis",
+        "phase": "baseline",
+        "toolName": "export_cad_screenshot",
+        "argumentsSummary": "{\"view\":\"bottom\",\"fit\":true,\"suggestedBaseName\":\"cad-review-baseline-bottom\"}",
+        "resultSummary": "Saved CAD screenshot to C:\\Users\\Aadi\\.codex\\cadsense-cad-screenshots\\a002829a-94b9-4bf0-a054-6569d6b49b1e\\2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png (under export root: a002829a-94b9-4bf0-a054-6569d6b49b1e/2026-05-18T22-32-43-855Z_cad-review-baseline-bottom.png).",
+        "evidenceArtifactIds": [
+          "cad-review-925e2cc3-b539-4837-8e1b-c16085fcfc16:baseline:baseline:7"
+        ],
+        "status": "completed",
+        "createdAt": "2026-05-18T22:32:43.857Z",
+        "completedAt": "2026-05-18T22:32:43.857Z"
+      }
+    ]
+  },
+  "createdAt": "2026-05-18T22:32:15.625Z",
+  "updatedAt": "2026-05-18T22:36:09.566Z"
+}

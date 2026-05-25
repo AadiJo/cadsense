@@ -17,8 +17,6 @@ export const MAX_SCREENSHOT_BYTES = 25 * 1024 * 1024;
 
 const cadScreenshotRequestPubSub = Effect.runSync(PubSub.unbounded<CadScreenshotBrowserRequest>());
 
-export const cadScreenshotRequestStream = Stream.fromPubSub(cadScreenshotRequestPubSub);
-
 export const publishCadScreenshotRequest = (
   event: CadScreenshotBrowserRequest,
 ): Effect.Effect<void> => PubSub.publish(cadScreenshotRequestPubSub, event);
@@ -28,9 +26,21 @@ interface CadScreenshotPending {
   readonly threadId: string;
   readonly exportRoot: string;
   readonly suggestedBaseName: string | undefined;
+  readonly browserRequest: CadScreenshotBrowserRequest;
 }
 
 const pendingByRequestId = new Map<string, CadScreenshotPending>();
+
+export const cadScreenshotRequestStream = Stream.unwrap(
+  Effect.gen(function* () {
+    const subscription = yield* PubSub.subscribe(cadScreenshotRequestPubSub);
+    const pendingRequests = [...pendingByRequestId.values()].map((entry) => entry.browserRequest);
+    return Stream.concat(
+      Stream.fromIterable(pendingRequests),
+      Stream.fromSubscription(subscription),
+    );
+  }),
+);
 
 export const startCadScreenshotCaptureEffect = (input: {
   readonly threadId: ThreadId;
@@ -50,12 +60,6 @@ export const startCadScreenshotCaptureEffect = (input: {
   Effect.gen(function* () {
     const requestId = randomUUID();
     const deferred = yield* Deferred.make<CadScreenshotCaptureHttpResult, Error>();
-    pendingByRequestId.set(requestId, {
-      deferred,
-      threadId: input.threadId,
-      exportRoot: input.exportRoot,
-      suggestedBaseName: input.suggestedBaseName,
-    });
     const browserRequest: CadScreenshotBrowserRequest = {
       requestId,
       threadId: input.threadId,
@@ -63,6 +67,13 @@ export const startCadScreenshotCaptureEffect = (input: {
       fit: input.fit,
       suggestedBaseName: input.suggestedBaseName,
     };
+    pendingByRequestId.set(requestId, {
+      deferred,
+      threadId: input.threadId,
+      exportRoot: input.exportRoot,
+      suggestedBaseName: input.suggestedBaseName,
+      browserRequest,
+    });
     return {
       requestId,
       browserRequest,
