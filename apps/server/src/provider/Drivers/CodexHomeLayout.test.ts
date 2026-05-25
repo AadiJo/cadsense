@@ -12,6 +12,7 @@ import {
   resolveCodexHomeLayout,
 } from "./CodexHomeLayout.ts";
 const decodeCodexSettingsValue = Schema.decodeSync(CodexSettings);
+const describeSymlinkDependent = process.platform === "win32" ? describe.skip : describe;
 
 const decodeCodexSettings = (input: {
   readonly enabled?: boolean;
@@ -81,7 +82,7 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
     );
   });
 
-  describe("materializeCodexShadowHome", () => {
+  describeSymlinkDependent("materializeCodexShadowHome", () => {
     it.effect("materializes a shadow home with shared state links and private auth", () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

@@ -485,32 +485,34 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("fails when config directory is not writable", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const { keybindingsConfigPath } = yield* ServerConfig;
-      const { dirname } = yield* Path.Path;
-      yield* writeKeybindingsConfig(keybindingsConfigPath, [
-        { key: "mod+j", command: "terminal.toggle" },
-      ]);
-      yield* fs.chmod(dirname(keybindingsConfigPath), 0o500);
+  if (process.platform !== "win32") {
+    it.effect("fails when config directory is not writable", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { keybindingsConfigPath } = yield* ServerConfig;
+        const { dirname } = yield* Path.Path;
+        yield* writeKeybindingsConfig(keybindingsConfigPath, [
+          { key: "mod+j", command: "terminal.toggle" },
+        ]);
+        yield* fs.chmod(dirname(keybindingsConfigPath), 0o500);
 
-      const result = yield* Effect.gen(function* () {
-        const keybindings = yield* Keybindings;
-        return yield* keybindings.upsertKeybindingRule({
-          key: "mod+shift+r",
-          command: "script.run-tests.run",
-        });
-      }).pipe(toDetailResult);
-      assertFailure(result, "failed to write keybindings config");
+        const result = yield* Effect.gen(function* () {
+          const keybindings = yield* Keybindings;
+          return yield* keybindings.upsertKeybindingRule({
+            key: "mod+shift+r",
+            command: "script.run-tests.run",
+          });
+        }).pipe(toDetailResult);
+        assertFailure(result, "failed to write keybindings config");
 
-      yield* fs.chmod(dirname(keybindingsConfigPath), 0o700);
+        yield* fs.chmod(dirname(keybindingsConfigPath), 0o700);
 
-      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
-      const persistedView = persisted.map(({ key, command }) => ({ key, command }));
-      assert.deepEqual(persistedView, [{ key: "mod+j", command: "terminal.toggle" }]);
-    }).pipe(Effect.provide(makeKeybindingsLayer())),
-  );
+        const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+        const persistedView = persisted.map(({ key, command }) => ({ key, command }));
+        assert.deepEqual(persistedView, [{ key: "mod+j", command: "terminal.toggle" }]);
+      }).pipe(Effect.provide(makeKeybindingsLayer())),
+    );
+  }
 
   it.effect("caches loaded resolved config across repeated reads", () =>
     Effect.gen(function* () {

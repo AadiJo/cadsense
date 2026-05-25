@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { GitCommandError, type SourceControlProviderError } from "@cadsense/contracts";
@@ -111,7 +112,8 @@ it.effect("clones a looked-up repository into the requested destination", () =>
     const parent = yield* fs.makeTempDirectoryScoped({
       prefix: "cadsense-source-control-clone-parent-",
     });
-    const destinationPath = `${parent}/cadsense`;
+    const path = yield* Path.Path;
+    const destinationPath = path.join(parent, "cadsense");
     const cloneCalls: Array<{ cwd: string; args: ReadonlyArray<string> }> = [];
 
     yield* Effect.gen(function* () {

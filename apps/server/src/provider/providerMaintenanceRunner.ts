@@ -76,7 +76,13 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
         const child = yield* input.spawner
-          .spawn(ChildProcess.make(input.command, [...input.args]))
+          .spawn(
+            ChildProcess.make(input.command, [...input.args], {
+              // Windows package-manager CLIs are usually .cmd shims, which
+              // require shell resolution when spawned by bare command name.
+              shell: process.platform === "win32",
+            }),
+          )
           .pipe(
             Effect.mapError(
               (cause) =>

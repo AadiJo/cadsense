@@ -145,7 +145,7 @@ describe("providerMaintenance", () => {
 
         expect(
           packageToolUpdate.resolve({
-            binaryPath: "package-tool",
+            binaryPath: packageToolPath,
             platform: "darwin",
             env: {
               PATH: vitePlusBinDir,
@@ -214,7 +214,7 @@ describe("providerMaintenance", () => {
 
         expect(
           scopedPackageToolUpdate.resolve({
-            binaryPath: "scoped-package-tool",
+            binaryPath: scopedPackageToolPath,
             platform: "darwin",
             env: {
               PATH: pnpmHomeDir,
@@ -273,7 +273,7 @@ describe("providerMaintenance", () => {
 
         expect(
           nativePackageToolUpdate.resolve({
-            binaryPath: "native-package-tool",
+            binaryPath: nativePackageToolPath,
             platform: "darwin",
             env: {
               PATH: nativeBinDir,
@@ -308,7 +308,7 @@ describe("providerMaintenance", () => {
 
         expect(
           scopedPackageToolUpdate.resolve({
-            binaryPath: "scoped-package-tool",
+            binaryPath: scopedPackageToolPath,
             platform: "darwin",
             env: {
               PATH: nativeBinDir,
@@ -378,97 +378,105 @@ describe("providerMaintenance", () => {
     });
   });
 
-  it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("cadsense-npm-capabilities");
-      const binDir = path.join(tempDir, "bin");
-      const packageBinDir = path.join(
-        tempDir,
-        "lib",
-        "node_modules",
-        "@example",
-        "package-tool",
-        "bin",
-      );
-      mkdirSync(binDir, { recursive: true });
-      mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = path.join(packageBinDir, "package-tool.js");
-      const symlinkPath = path.join(binDir, "package-tool");
-      writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      chmodSync(packageBinPath, 0o755);
-      symlinkSync(packageBinPath, symlinkPath);
+  if (process.platform !== "win32") {
+    it.effect("keeps npm updates for binaries symlinked into npm's global node_modules tree", () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("cadsense-npm-capabilities");
+        const binDir = path.join(tempDir, "bin");
+        const packageBinDir = path.join(
+          tempDir,
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+        );
+        mkdirSync(binDir, { recursive: true });
+        mkdirSync(packageBinDir, { recursive: true });
+        const packageBinPath = path.join(packageBinDir, "package-tool.js");
+        const symlinkPath = path.join(binDir, "package-tool");
+        writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+        chmodSync(packageBinPath, 0o755);
+        symlinkSync(packageBinPath, symlinkPath);
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: symlinkPath,
-        platform: "darwin",
-        env: {
-          PATH: "",
-        },
-      }).pipe(Effect.provide(NodeServices.layer));
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: symlinkPath,
+            platform: "darwin",
+            env: {
+              PATH: "",
+            },
+          },
+        ).pipe(Effect.provide(NodeServices.layer));
 
-      expect(capabilities).toEqual({
-        provider: driver("packageTool"),
-        packageName: "@example/package-tool",
-        update: {
-          command: "npm install -g @example/package-tool@latest",
+        expect(capabilities).toEqual({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          update: {
+            command: "npm install -g @example/package-tool@latest",
 
-          executable: "npm",
+            executable: "npm",
 
-          args: ["install", "-g", "@example/package-tool@latest"],
+            args: ["install", "-g", "@example/package-tool@latest"],
 
-          lockKey: "npm-global",
-        },
-      });
-    }),
-  );
+            lockKey: "npm-global",
+          },
+        });
+      }),
+    );
 
-  it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
-    Effect.gen(function* () {
-      const tempDir = yield* makeTempDir("cadsense-pnpm-realpath-capabilities");
-      const binDir = path.join(tempDir, "bin");
-      const packageBinDir = path.join(
-        tempDir,
-        ".local",
-        "share",
-        "pnpm",
-        "global",
-        "5",
-        "node_modules",
-        "@example",
-        "package-tool",
-        "bin",
-      );
-      mkdirSync(binDir, { recursive: true });
-      mkdirSync(packageBinDir, { recursive: true });
-      const packageBinPath = path.join(packageBinDir, "package-tool.js");
-      const symlinkPath = path.join(binDir, "package-tool");
-      writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
-      chmodSync(packageBinPath, 0o755);
-      symlinkSync(packageBinPath, symlinkPath);
+    it.effect("uses Effect FileSystem realPath when detecting pnpm global symlinks", () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("cadsense-pnpm-realpath-capabilities");
+        const binDir = path.join(tempDir, "bin");
+        const packageBinDir = path.join(
+          tempDir,
+          ".local",
+          "share",
+          "pnpm",
+          "global",
+          "5",
+          "node_modules",
+          "@example",
+          "package-tool",
+          "bin",
+        );
+        mkdirSync(binDir, { recursive: true });
+        mkdirSync(packageBinDir, { recursive: true });
+        const packageBinPath = path.join(packageBinDir, "package-tool.js");
+        const symlinkPath = path.join(binDir, "package-tool");
+        writeFileSync(packageBinPath, "#!/usr/bin/env node\n");
+        chmodSync(packageBinPath, 0o755);
+        symlinkSync(packageBinPath, symlinkPath);
 
-      const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
-        binaryPath: symlinkPath,
-        platform: "darwin",
-        env: {
-          PATH: "",
-        },
-      }).pipe(Effect.provide(NodeServices.layer));
+        const capabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          {
+            binaryPath: symlinkPath,
+            platform: "darwin",
+            env: {
+              PATH: "",
+            },
+          },
+        ).pipe(Effect.provide(NodeServices.layer));
 
-      expect(capabilities).toEqual({
-        provider: driver("packageTool"),
-        packageName: "@example/package-tool",
-        update: {
-          command: "pnpm add -g @example/package-tool@latest",
+        expect(capabilities).toEqual({
+          provider: driver("packageTool"),
+          packageName: "@example/package-tool",
+          update: {
+            command: "pnpm add -g @example/package-tool@latest",
 
-          executable: "pnpm",
+            executable: "pnpm",
 
-          args: ["add", "-g", "@example/package-tool@latest"],
+            args: ["add", "-g", "@example/package-tool@latest"],
 
-          lockKey: "pnpm-global",
-        },
-      });
-    }),
-  );
+            lockKey: "pnpm-global",
+          },
+        });
+      }),
+    );
+  }
 
   it("disables one-click updates for explicit custom binary paths it cannot safely map", () => {
     expect(

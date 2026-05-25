@@ -125,6 +125,7 @@ function mockSpawnerLayer(
   handler: (
     command: string,
     args: ReadonlyArray<string>,
+    options: { readonly shell?: boolean | string },
   ) => {
     readonly stdout?: string;
     readonly stderr?: string;
@@ -138,8 +139,15 @@ function mockSpawnerLayer(
       const childProcess = command as unknown as {
         readonly command: string;
         readonly args: ReadonlyArray<string>;
+        readonly options?: {
+          readonly shell?: boolean | string;
+        };
       };
-      return Effect.succeed(mockHandle(handler(childProcess.command, childProcess.args)));
+      const handlerOptions =
+        childProcess.options?.shell !== undefined ? { shell: childProcess.options.shell } : {};
+      return Effect.succeed(
+        mockHandle(handler(childProcess.command, childProcess.args, handlerOptions)),
+      );
     }),
   );
 }
@@ -318,6 +326,43 @@ describe("providerMaintenanceRunner", () => {
       );
     },
   );
+
+  it.effect("uses shell mode for provider update commands on Windows", () => {
+    const calls: Array<{
+      command: string;
+      args: ReadonlyArray<string>;
+      shell?: boolean | string;
+    }> = [];
+    return Effect.gen(function* () {
+      const { registry } = yield* makeRegistry(baseProvider);
+      const runner = yield* makeTestRunner(registry);
+
+      const result = yield* runner.updateProvider(CODEX_DRIVER);
+
+      assert.deepStrictEqual(calls, [
+        {
+          command: "npm",
+          args: ["install", "-g", "@openai/codex@latest"],
+          shell: process.platform === "win32",
+        },
+      ]);
+      assert.strictEqual(result.providers[0]?.updateState?.status, "succeeded");
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          latestVersionHttpClient("0.0.0"),
+          mockSpawnerLayer((command, args, options) => {
+            calls.push({
+              command,
+              args,
+              ...(options.shell !== undefined ? { shell: options.shell } : {}),
+            });
+            return { stdout: "updated" };
+          }),
+        ),
+      ),
+    );
+  });
 
   it.effect("updates a single provider instance without touching sibling instances", () => {
     const calls: Array<{ command: string; args: ReadonlyArray<string> }> = [];

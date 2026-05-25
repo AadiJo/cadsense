@@ -35,6 +35,7 @@ import {
 } from "@cadsense/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import { ServerConfig } from "../../config.ts";
@@ -157,18 +158,20 @@ describe("ProviderInstanceRegistryLive — multi-instance codex slice", () => {
       // Snapshots identify themselves by instanceId + driver — this is
       // what makes per-instance routing distinguishable downstream.
       const personalSnapshot = yield* personal!.snapshot.getSnapshot;
+      const path = yield* Path.Path;
+      const codexGroupKey = (homePath: string) => `codex:home:${path.resolve(homePath)}`;
       expect(personalSnapshot.instanceId).toBe(personalId);
       expect(personalSnapshot.driver).toBe(codexDriverKind);
       expect(personalSnapshot.enabled).toBe(false);
       expect(personalSnapshot.continuation?.groupKey).toBe(
-        "codex:home:/home/julius/.codex_personal",
+        codexGroupKey("/home/julius/.codex_personal"),
       );
 
       const workSnapshot = yield* work!.snapshot.getSnapshot;
       expect(workSnapshot.instanceId).toBe(workId);
       expect(workSnapshot.driver).toBe(codexDriverKind);
       expect(workSnapshot.enabled).toBe(false);
-      expect(workSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(workSnapshot.continuation?.groupKey).toBe(codexGroupKey("/home/julius/.codex"));
 
       // Nothing goes to the unavailable bucket — both drivers are registered.
       const unavailable = yield* registry.listUnavailable;
@@ -337,16 +340,21 @@ describe("ProviderInstanceRegistryLive — all drivers slice", () => {
       // — that's enough signal to validate the stamping wrapper without
       // spawning real binaries.
       const codexSnapshot = yield* codex!.snapshot.getSnapshot;
+      const path = yield* Path.Path;
+      const codexGroupKey = (homePath: string) => `codex:home:${path.resolve(homePath)}`;
+      const claudeGroupKey = (homePath: string) => `claude:home:${path.resolve(homePath)}`;
       expect(codexSnapshot.instanceId).toBe(codexId);
       expect(codexSnapshot.driver).toBe(codexDriverKind);
       expect(codexSnapshot.enabled).toBe(false);
-      expect(codexSnapshot.continuation?.groupKey).toBe("codex:home:/home/julius/.codex");
+      expect(codexSnapshot.continuation?.groupKey).toBe(codexGroupKey("/home/julius/.codex"));
 
       const claudeSnapshot = yield* claude!.snapshot.getSnapshot;
       expect(claudeSnapshot.instanceId).toBe(claudeId);
       expect(claudeSnapshot.driver).toBe(claudeDriverKind);
       expect(claudeSnapshot.enabled).toBe(false);
-      expect(claudeSnapshot.continuation?.groupKey).toBe("claude:home:/home/julius/.claude-work");
+      expect(claudeSnapshot.continuation?.groupKey).toBe(
+        claudeGroupKey("/home/julius/.claude-work"),
+      );
 
       const cursorSnapshot = yield* cursor!.snapshot.getSnapshot;
       expect(cursorSnapshot.instanceId).toBe(cursorId);

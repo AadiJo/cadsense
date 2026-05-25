@@ -59,7 +59,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
-        expect(resolved).toContain("public/brand/logo.svg");
+        expect(resolved?.replaceAll("\\", "/")).toContain("public/brand/logo.svg");
       }),
     );
 

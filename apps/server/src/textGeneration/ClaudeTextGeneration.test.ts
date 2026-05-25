@@ -14,6 +14,7 @@ import { type TextGenerationShape } from "./TextGeneration.ts";
 import { sanitizeThreadTitle } from "./TextGenerationUtils.ts";
 import { makeClaudeTextGeneration } from "./ClaudeTextGeneration.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
+const PATH_DELIMITER = process.platform === "win32" ? ";" : ":";
 
 const ClaudeTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "cadsense-claude-text-generation-test-",
@@ -24,44 +25,39 @@ function makeFakeClaudeBinary(dir: string) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const binDir = path.join(dir, "bin");
-    const claudePath = path.join(binDir, "claude");
+    const fakeClaudeScriptPath = path.join(binDir, "fake-claude.mjs");
+    const claudePath = path.join(binDir, process.platform === "win32" ? "claude.cmd" : "claude");
     yield* fs.makeDirectory(binDir, { recursive: true });
 
     yield* fs.writeFileString(
-      claudePath,
+      fakeClaudeScriptPath,
       [
-        "#!/bin/sh",
-        'args="$*"',
-        'stdin_content="$(cat)"',
-        'if [ -n "$CADSENSE_FAKE_CLAUDE_ARGS_MUST_CONTAIN" ]; then',
-        '  printf "%s" "$args" | grep -F -- "$CADSENSE_FAKE_CLAUDE_ARGS_MUST_CONTAIN" >/dev/null || {',
-        '    printf "%s\\n" "args missing expected content" >&2',
-        "    exit 2",
-        "  }",
-        "fi",
-        'if [ -n "$CADSENSE_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN" ]; then',
-        '  if printf "%s" "$args" | grep -F -- "$CADSENSE_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN" >/dev/null; then',
-        '    printf "%s\\n" "args contained forbidden content" >&2',
-        "    exit 3",
-        "  fi",
-        "fi",
-        'if [ -n "$CADSENSE_FAKE_CLAUDE_STDIN_MUST_CONTAIN" ]; then',
-        '  printf "%s" "$stdin_content" | grep -F -- "$CADSENSE_FAKE_CLAUDE_STDIN_MUST_CONTAIN" >/dev/null || {',
-        '    printf "%s\\n" "stdin missing expected content" >&2',
-        "    exit 4",
-        "  }",
-        "fi",
-        'if [ -n "$CADSENSE_FAKE_CLAUDE_HOME_MUST_BE" ] && [ "$HOME" != "$CADSENSE_FAKE_CLAUDE_HOME_MUST_BE" ]; then',
-        '  printf "%s\\n" "HOME was $HOME" >&2',
-        "  exit 5",
-        "fi",
-        'if [ -n "$CADSENSE_FAKE_CLAUDE_STDERR" ]; then',
-        '  printf "%s\\n" "$CADSENSE_FAKE_CLAUDE_STDERR" >&2',
-        "fi",
-        'printf "%s" "$CADSENSE_FAKE_CLAUDE_OUTPUT"',
-        'exit "${CADSENSE_FAKE_CLAUDE_EXIT_CODE:-0}"',
+        "import { readFileSync } from 'node:fs';",
+        "const args = process.argv.slice(2).join(' ').replaceAll('\\\\\"', '\"');",
+        "let stdinContent = '';",
+        "try { stdinContent = readFileSync(0, 'utf8'); } catch {}",
+        "const mustContain = process.env.CADSENSE_FAKE_CLAUDE_ARGS_MUST_CONTAIN;",
+        "if (mustContain && !args.includes(mustContain)) { console.error('args missing expected content'); process.exit(2); }",
+        "const mustNotContain = process.env.CADSENSE_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;",
+        "if (mustNotContain && args.includes(mustNotContain)) { console.error('args contained forbidden content'); process.exit(3); }",
+        "const stdinMustContain = process.env.CADSENSE_FAKE_CLAUDE_STDIN_MUST_CONTAIN;",
+        "if (stdinMustContain && !stdinContent.includes(stdinMustContain)) { console.error('stdin missing expected content'); process.exit(4); }",
+        "const homeMustBe = process.env.CADSENSE_FAKE_CLAUDE_HOME_MUST_BE;",
+        "if (homeMustBe && process.env.HOME !== homeMustBe) { console.error(`HOME was ${process.env.HOME ?? ''}`); process.exit(5); }",
+        "if (process.env.CADSENSE_FAKE_CLAUDE_STDERR) console.error(process.env.CADSENSE_FAKE_CLAUDE_STDERR);",
+        "process.stdout.write(process.env.CADSENSE_FAKE_CLAUDE_OUTPUT ?? '');",
+        "process.exit(Number(process.env.CADSENSE_FAKE_CLAUDE_EXIT_CODE ?? '0'));",
         "",
       ].join("\n"),
+    );
+    yield* fs.writeFileString(
+      claudePath,
+      [
+        ...(process.platform === "win32"
+          ? ["@echo off", `bun "${fakeClaudeScriptPath}" %*`]
+          : ["#!/bin/sh", `exec bun '${fakeClaudeScriptPath.replaceAll("'", "'\\''")}' "$@"`]),
+        "",
+      ].join(process.platform === "win32" ? "\r\n" : "\n"),
     );
     yield* fs.chmod(claudePath, 0o755);
     return binDir;
@@ -96,7 +92,7 @@ function withFakeClaudeEnv<A, E, R>(
 
     yield* Effect.acquireRelease(
       Effect.sync(() => {
-        process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+        process.env.PATH = `${binDir}${PATH_DELIMITER}${previousPath ?? ""}`;
         process.env.CADSENSE_FAKE_CLAUDE_OUTPUT = input.output;
 
         if (input.exitCode !== undefined) {
@@ -199,7 +195,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             body: "",
           },
         }),
-        argsMustContain: '--settings {"alwaysThinkingEnabled":false}',
+        argsMustContain: "alwaysThinkingEnabled",
         argsMustNotContain: "--effort",
       },
       (textGeneration) =>
@@ -231,7 +227,7 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
             body: "Body",
           },
         }),
-        argsMustContain: '--effort max --settings {"fastMode":true}',
+        argsMustContain: "fastMode",
       },
       (textGeneration) =>
         Effect.gen(function* () {

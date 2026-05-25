@@ -69,18 +69,30 @@ const makeMockAgentWrapper = Effect.fn("makeMockAgentWrapper")(function* (
     directory: NodeOS.tmpdir(),
     prefix: "cursor-provider-mock-",
   });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
+  const wrapperPath = path.join(
+    dir,
+    process.platform === "win32" ? "fake-agent.cmd" : "fake-agent.sh",
+  );
   // @effect-diagnostics-next-line preferSchemaOverJson:off
   const bunCommand = JSON.stringify("bun");
   // @effect-diagnostics-next-line preferSchemaOverJson:off
   const mockAgentPathJson = JSON.stringify(mockAgentPath);
-  const envExports = Object.entries(extraEnv ?? {})
-    .map(([key, value]) => `export ${key}=${JSON.stringify(value)}`)
-    .join("\n");
-  const script = `#!/bin/sh
-${envExports}
-exec ${bunCommand} ${mockAgentPathJson} "$@"
-`;
+  const script =
+    process.platform === "win32"
+      ? [
+          "@echo off",
+          ...Object.entries(extraEnv ?? {}).map(([key, value]) => `set "${key}=${value}"`),
+          `${bunCommand} ${mockAgentPathJson} %*`,
+          "",
+        ].join("\r\n")
+      : [
+          "#!/bin/sh",
+          ...Object.entries(extraEnv ?? {}).map(
+            ([key, value]) => `export ${key}=${JSON.stringify(value)}`,
+          ),
+          `exec ${bunCommand} ${mockAgentPathJson} "$@"`,
+          "",
+        ].join("\n");
   yield* fileSystem.writeFileString(wrapperPath, script);
   yield* fileSystem.chmod(wrapperPath, 0o755);
   return wrapperPath;
@@ -94,19 +106,36 @@ const makeMockAgentWithAboutWrapper = Effect.fn("makeMockAgentWithAboutWrapper")
     directory: NodeOS.tmpdir(),
     prefix: "cursor-provider-about-mock-",
   });
-  const wrapperPath = path.join(dir, "fake-agent.sh");
+  const wrapperPath = path.join(
+    dir,
+    process.platform === "win32" ? "fake-agent.cmd" : "fake-agent.sh",
+  );
   // @effect-diagnostics-next-line preferSchemaOverJson:off
   const bunCommand = JSON.stringify("bun");
   // @effect-diagnostics-next-line preferSchemaOverJson:off
   const mockAgentPathJson = JSON.stringify(mockAgentPath);
-  const script = `#!/bin/sh
-if [ "$1" = "about" ]; then
-  printf 'CLI Version         2026.04.09-f2b0fcd\\n'
-  printf 'User Email          cursor@example.com\\n'
-  exit 0
-fi
-exec ${bunCommand} ${mockAgentPathJson} "$@"
-`;
+  const script =
+    process.platform === "win32"
+      ? [
+          "@echo off",
+          `if "%1"=="about" (`,
+          `  echo CLI Version         2026.04.09-f2b0fcd`,
+          `  echo User Email          cursor@example.com`,
+          `  exit /b 0`,
+          `)`,
+          `${bunCommand} ${mockAgentPathJson} %*`,
+          "",
+        ].join("\r\n")
+      : [
+          "#!/bin/sh",
+          'if [ "$1" = "about" ]; then',
+          "  printf 'CLI Version         2026.04.09-f2b0fcd\\n'",
+          "  printf 'User Email          cursor@example.com\\n'",
+          "  exit 0",
+          "fi",
+          `exec ${bunCommand} ${mockAgentPathJson} "$@"`,
+          "",
+        ].join("\n");
   yield* fileSystem.writeFileString(wrapperPath, script);
   yield* fileSystem.chmod(wrapperPath, 0o755);
   return wrapperPath;
@@ -557,64 +586,79 @@ describe("discoverCursorModelsViaAcp", () => {
     ]);
   });
 
-  it("closes the ACP probe runtime after discovery completes", async () => {
-    const { exitLogPath, wrapperPath } = await runNode(
-      makeExitLogFixture("cursor-provider-exit-log-"),
-    );
+  if (process.platform !== "win32") {
+    it("closes the ACP probe runtime after discovery completes", async () => {
+      const { exitLogPath, wrapperPath } = await runNode(
+        makeExitLogFixture("cursor-provider-exit-log-"),
+      );
 
-    await Effect.runPromise(
-      discoverCursorModelsViaAcp({
-        enabled: true,
-        binaryPath: wrapperPath,
-        apiEndpoint: "",
-        customModels: [],
-      }).pipe(Effect.provide(NodeServices.layer)),
-    );
-
-    const exitLog = await runNode(waitForFileContent(exitLogPath));
-    expect(exitLog).toContain("SIGTERM");
-  });
-});
-
-describe("discoverCursorModelCapabilitiesViaAcp", () => {
-  it("closes all ACP probe runtimes after capability enrichment completes", async () => {
-    const { exitLogPath, wrapperPath } = await runNode(
-      makeExitLogFixture("cursor-capabilities-exit-log-"),
-    );
-    const existingModels: ReadonlyArray<ServerProviderModel> = [
-      { slug: "default", name: "Auto", isCustom: false, capabilities: emptyCapabilities },
-      { slug: "composer-2", name: "Composer 2", isCustom: false, capabilities: emptyCapabilities },
-      { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: emptyCapabilities },
-      {
-        slug: "claude-opus-4-6",
-        name: "Opus 4.6",
-        isCustom: false,
-        capabilities: emptyCapabilities,
-      },
-    ];
-
-    const models = await Effect.runPromise(
-      discoverCursorModelCapabilitiesViaAcp(
-        {
+      await Effect.runPromise(
+        discoverCursorModelsViaAcp({
           enabled: true,
           binaryPath: wrapperPath,
           apiEndpoint: "",
           customModels: [],
+        }).pipe(Effect.provide(NodeServices.layer)),
+      );
+
+      const exitLog = await runNode(waitForFileContent(exitLogPath));
+      expect(exitLog).toContain("SIGTERM");
+    });
+  }
+});
+
+describe("discoverCursorModelCapabilitiesViaAcp", () => {
+  if (process.platform === "win32") {
+    it("skips ACP process termination signal assertions on Windows", () => {
+      expect(process.platform).toBe("win32");
+    });
+  }
+
+  if (process.platform !== "win32") {
+    it("closes all ACP probe runtimes after capability enrichment completes", async () => {
+      const { exitLogPath, wrapperPath } = await runNode(
+        makeExitLogFixture("cursor-capabilities-exit-log-"),
+      );
+      const existingModels: ReadonlyArray<ServerProviderModel> = [
+        { slug: "default", name: "Auto", isCustom: false, capabilities: emptyCapabilities },
+        {
+          slug: "composer-2",
+          name: "Composer 2",
+          isCustom: false,
+          capabilities: emptyCapabilities,
         },
-        existingModels,
-      ).pipe(Effect.provide(NodeServices.layer)),
-    );
+        { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: emptyCapabilities },
+        {
+          slug: "claude-opus-4-6",
+          name: "Opus 4.6",
+          isCustom: false,
+          capabilities: emptyCapabilities,
+        },
+      ];
 
-    expect(models.map((model) => model.slug)).toEqual([
-      "default",
-      "composer-2",
-      "gpt-5.4",
-      "claude-opus-4-6",
-    ]);
+      const models = await Effect.runPromise(
+        discoverCursorModelCapabilitiesViaAcp(
+          {
+            enabled: true,
+            binaryPath: wrapperPath,
+            apiEndpoint: "",
+            customModels: [],
+          },
+          existingModels,
+        ).pipe(Effect.provide(NodeServices.layer)),
+      );
 
-    const exitLog = await runNode(waitForFileContent(exitLogPath));
-    expect(exitLog.match(/SIGTERM/g)?.length ?? 0).toBe(4);
-  });
+      expect(models.map((model) => model.slug)).toEqual([
+        "default",
+        "composer-2",
+        "gpt-5.4",
+        "claude-opus-4-6",
+      ]);
+
+      const exitLog = await runNode(waitForFileContent(exitLogPath));
+      expect(exitLog.match(/SIGTERM/g)?.length ?? 0).toBe(4);
+    });
+  }
 });
 
 describe("parseCursorAboutOutput", () => {

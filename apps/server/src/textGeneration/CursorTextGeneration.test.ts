@@ -34,20 +34,36 @@ const CursorTextGenerationTestLayer = ServerConfig.layerTest(process.cwd(), {
 
 function makeAcpAgentWrapper(dir: string, env: Record<string, string>): string {
   const binDir = path.join(dir, "bin");
-  const agentPath = path.join(binDir, "agent");
+  const wrapperScriptPath = path.join(binDir, "agent-wrapper.mjs");
+  const agentPath = path.join(binDir, process.platform === "win32" ? "agent.cmd" : "agent");
   mkdirSync(binDir, { recursive: true });
   writeFileSync(
-    agentPath,
+    wrapperScriptPath,
     [
-      "#!/bin/sh",
-      ...Object.entries(env).map(([key, value]) => `export ${key}=${shellSingleQuote(value)}`),
-      'if [ "$1" != "acp" ]; then',
-      '  printf "%s\\n" "unexpected args: $*" >&2',
-      "  exit 11",
-      "fi",
-      `exec bun ${JSON.stringify(mockAgentPath)}`,
+      "import { spawn } from 'node:child_process';",
+      `const extraEnv = ${JSON.stringify(env)};`,
+      `const mockAgentPath = ${JSON.stringify(mockAgentPath)};`,
+      "if (process.argv[2] !== 'acp') { console.error(`unexpected args: ${process.argv.slice(2).join(' ')}`); process.exit(11); }",
+      "const child = spawn('bun', [mockAgentPath, ...process.argv.slice(2)], { stdio: 'inherit', env: { ...process.env, ...extraEnv } });",
+      "child.on('exit', (code, signal) => process.exit(code ?? (signal ? 1 : 0)));",
       "",
     ].join("\n"),
+    "utf8",
+  );
+  writeFileSync(
+    agentPath,
+    process.platform === "win32"
+      ? ["@echo off", `bun "${wrapperScriptPath}" %*`, ""].join("\r\n")
+      : [
+          "#!/bin/sh",
+          ...Object.entries(env).map(([key, value]) => `export ${key}=${shellSingleQuote(value)}`),
+          'if [ "$1" != "acp" ]; then',
+          '  printf "%s\\n" "unexpected args: $*" >&2',
+          "  exit 11",
+          "fi",
+          `exec bun ${JSON.stringify(mockAgentPath)} "$@"`,
+          "",
+        ].join("\n"),
     "utf8",
   );
   chmodSync(agentPath, 0o755);
@@ -234,39 +250,41 @@ it.layer(CursorTextGenerationTestLayer)("CursorTextGeneration", (it) => {
     ),
   );
 
-  it.effect("closes the ACP child process after text generation completes", () => {
-    const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "cadsense-cursor-text-exit-log-"));
-    const exitLogPath = path.join(exitLogDir, "exit.log");
+  if (process.platform !== "win32") {
+    it.effect("closes the ACP child process after text generation completes", () => {
+      const exitLogDir = mkdtempSync(path.join(os.tmpdir(), "cadsense-cursor-text-exit-log-"));
+      const exitLogPath = path.join(exitLogDir, "exit.log");
 
-    return withFakeAcpAgent(
-      {
-        CADSENSE_ACP_EXIT_LOG_PATH: exitLogPath,
-        CADSENSE_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
-          subject: "Close runtime after generation",
-          body: "",
-        }),
-      },
-      (textGeneration) =>
-        Effect.gen(function* () {
-          const generated = yield* textGeneration.generateCommitMessage({
-            cwd: process.cwd(),
-            branch: "feature/cursor-runtime-close",
-            stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
-            stagedPatch:
-              "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
-            modelSelection: {
-              instanceId: ProviderInstanceId.make("cursor"),
-              model: "composer-2",
-            },
-          });
+      return withFakeAcpAgent(
+        {
+          CADSENSE_ACP_EXIT_LOG_PATH: exitLogPath,
+          CADSENSE_ACP_PROMPT_RESPONSE_TEXT: JSON.stringify({
+            subject: "Close runtime after generation",
+            body: "",
+          }),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const generated = yield* textGeneration.generateCommitMessage({
+              cwd: process.cwd(),
+              branch: "feature/cursor-runtime-close",
+              stagedSummary: "M apps/server/src/textGeneration/CursorTextGeneration.ts",
+              stagedPatch:
+                "diff --git a/apps/server/src/textGeneration/CursorTextGeneration.ts b/apps/server/src/textGeneration/CursorTextGeneration.ts",
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("cursor"),
+                model: "composer-2",
+              },
+            });
 
-          expect(generated.subject).toBe("Close runtime after generation");
+            expect(generated.subject).toBe("Close runtime after generation");
 
-          const exitLog = yield* waitForFileContent(exitLogPath);
-          expect(exitLog).toContain("exit:0");
+            const exitLog = yield* waitForFileContent(exitLogPath);
+            expect(exitLog).toContain("exit:0");
 
-          rmSync(exitLogDir, { recursive: true, force: true });
-        }),
-    );
-  });
+            rmSync(exitLogDir, { recursive: true, force: true });
+          }),
+      );
+    });
+  }
 });

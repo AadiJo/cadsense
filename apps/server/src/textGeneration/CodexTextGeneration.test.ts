@@ -43,8 +43,114 @@ function makeFakeCodexBinary(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const binDir = path.join(dir, "bin");
-    const codexPath = path.join(binDir, "codex");
+    const codexPath = path.join(binDir, process.platform === "win32" ? "codex.cmd" : "codex");
+    const fakeCodexScriptPath = path.join(binDir, "fake-codex.mjs");
     yield* fs.makeDirectory(binDir, { recursive: true });
+
+    if (process.platform === "win32") {
+      yield* fs.writeFileString(
+        fakeCodexScriptPath,
+        [
+          "import { readFileSync, writeFileSync } from 'node:fs';",
+          "const args = process.argv.slice(2);",
+          'let outputPath = "";',
+          "let seenImage = false;",
+          "let seenFastServiceTier = false;",
+          'let seenReasoningEffort = "";',
+          "for (let index = 0; index < args.length; index += 1) {",
+          "  const arg = args[index];",
+          "  if (arg === '--image') {",
+          "    index += 1;",
+          "    if (args[index]) seenImage = true;",
+          "    continue;",
+          "  }",
+          "  if (arg === '--config') {",
+          "    index += 1;",
+          "    const value = args[index] ?? '';",
+          '    if (value === "service_tier=\\"fast\\"" || value === "service_tier=fast") seenFastServiceTier = true;',
+          "    if (value.startsWith('model_reasoning_effort=')) seenReasoningEffort = value;",
+          "    continue;",
+          "  }",
+          "  if (arg === '--output-last-message') {",
+          "    index += 1;",
+          "    outputPath = args[index] ?? '';",
+          "    continue;",
+          "  }",
+          "}",
+          "let stdinContent = '';",
+          "try { stdinContent = readFileSync(0, 'utf8'); } catch {}",
+          ...(input.requireImage
+            ? [
+                "if (!seenImage) {",
+                "  console.error('missing --image input');",
+                "  process.exit(2);",
+                "}",
+              ]
+            : []),
+          ...(input.requireFastServiceTier
+            ? [
+                "if (!seenFastServiceTier) {",
+                "  console.error('missing fast service tier config');",
+                "  process.exit(5);",
+                "}",
+              ]
+            : []),
+          ...(input.requireReasoningEffort !== undefined
+            ? [
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                `if (seenReasoningEffort !== ${JSON.stringify(`model_reasoning_effort="${input.requireReasoningEffort}"`)} && seenReasoningEffort !== ${JSON.stringify(`model_reasoning_effort=${input.requireReasoningEffort}`)}) {`,
+                "  console.error(`unexpected reasoning effort config: ${seenReasoningEffort}`);",
+                "  process.exit(6);",
+                "}",
+              ]
+            : []),
+          ...(input.forbidReasoningEffort
+            ? [
+                "if (seenReasoningEffort) {",
+                "  console.error(`reasoning effort config should be omitted: ${seenReasoningEffort}`);",
+                "  process.exit(7);",
+                "}",
+              ]
+            : []),
+          ...(input.stdinMustContain !== undefined
+            ? [
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                `if (!stdinContent.includes(${JSON.stringify(input.stdinMustContain)})) {`,
+                "  console.error('stdin missing expected content');",
+                "  process.exit(3);",
+                "}",
+              ]
+            : []),
+          ...(input.stdinMustNotContain !== undefined
+            ? [
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                `if (stdinContent.includes(${JSON.stringify(input.stdinMustNotContain)})) {`,
+                "  console.error('stdin contained forbidden content');",
+                "  process.exit(4);",
+                "}",
+              ]
+            : []),
+          ...(input.stderr !== undefined
+            ? [
+                // @effect-diagnostics-next-line preferSchemaOverJson:off
+                `console.error(${JSON.stringify(input.stderr)});`,
+              ]
+            : []),
+          "if (outputPath) {",
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          `  writeFileSync(outputPath, ${JSON.stringify(input.output)});`,
+          "}",
+          `process.exit(${input.exitCode ?? 0});`,
+          "",
+        ].join("\n"),
+      );
+      yield* fs.writeFileString(
+        codexPath,
+        ["@echo off", `bun "${fakeCodexScriptPath}" %*`, ""].join("\r\n"),
+      );
+      yield* fs.chmod(codexPath, 0o755);
+      return codexPath;
+    }
 
     yield* fs.writeFileString(
       codexPath,

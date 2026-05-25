@@ -397,8 +397,10 @@ export function resolveCommandPath(
 
   const pathValue = resolvePathEnvironmentVariable(env);
   if (pathValue.length === 0) return null;
+  const pathDelimiter =
+    platform !== "win32" && process.platform === "win32" ? ";" : pathDelimiterForPlatform(platform);
   const pathEntries = pathValue
-    .split(pathDelimiterForPlatform(platform))
+    .split(pathDelimiter)
     .map((entry) => stripWrappingQuotes(entry.trim()))
     .filter((entry) => entry.length > 0);
 
