@@ -26,6 +26,7 @@ const exitTransitionStyle = {
 export interface ComposerBannerStackItem {
   readonly id: string;
   readonly variant: "error" | "info" | "success" | "warning";
+  readonly alertClassName?: string;
   readonly icon: ReactNode;
   readonly title: ReactNode;
   readonly description?: ReactNode;
@@ -164,7 +165,7 @@ function ComposerBannerStackAlert({
   const dismissOnly = item.onDismiss && !item.actions;
 
   return (
-    <Alert variant={item.variant}>
+    <Alert variant={item.variant} className={item.alertClassName}>
       {item.icon}
       <AlertTitle>{item.title}</AlertTitle>
       {item.description ? <AlertDescription>{item.description}</AlertDescription> : null}

@@ -96,7 +96,6 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
-import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useCommandPaletteStore } from "../commandPaletteStore";
 import { buildTemporaryWorktreeBranchName } from "@cadsense/shared/git";
 import { useMediaQuery } from "../hooks/useMediaQuery";
@@ -181,6 +180,7 @@ import {
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
+  threadHasStarted,
 } from "./ChatView.logic";
 import { useChatRoutePanelsMarkOpened } from "./ChatRoutePanels";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
@@ -208,6 +208,7 @@ const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const CAD_REVIEW_PANEL_PREWARM_MS = 1_000;
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -215,6 +216,12 @@ type EnvironmentUnavailableState = {
 };
 
 type ThreadPlanCatalogEntry = Pick<Thread, "id" | "proposedPlans">;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalogEntry[] {
   return useStore(
@@ -654,12 +661,6 @@ export default function ChatView(props: ChatViewProps) {
   });
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
-  const composerRuntimeMode = useComposerDraftStore(
-    (store) => store.getComposerDraft(composerDraftTarget)?.runtimeMode ?? null,
-  );
-  const composerInteractionMode = useComposerDraftStore(
-    (store) => store.getComposerDraft(composerDraftTarget)?.interactionMode ?? null,
-  );
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
@@ -818,9 +819,8 @@ export default function ChatView(props: ChatViewProps) {
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
-  const runtimeMode = composerRuntimeMode ?? activeThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE;
-  const interactionMode =
-    composerInteractionMode ?? activeThread?.interactionMode ?? DEFAULT_INTERACTION_MODE;
+  const runtimeMode = DEFAULT_RUNTIME_MODE;
+  const interactionMode = DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
   const diffOpen = rawSearch.diff === "1";
@@ -870,7 +870,10 @@ export default function ChatView(props: ChatViewProps) {
   const activeProject = useStore(
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
-  const cadUiStateKey = activeThread?.projectId ?? null;
+  const cadUiStateKey =
+    activeThread && threadHasStarted(activeThread)
+      ? activeThread.id
+      : (activeThread?.projectId ?? null);
   const cadExploded = useUiStateStore((store) =>
     cadUiStateKey ? (store.cadExplodedByThreadId[cadUiStateKey] ?? false) : false,
   );
@@ -1262,6 +1265,7 @@ export default function ChatView(props: ChatViewProps) {
       items.push({
         id: `version-mismatch:${versionMismatchDismissKey}`,
         variant: "warning",
+        alertClassName: "bg-background/72 shadow-lg shadow-black/10 backdrop-blur-md",
         icon: <TriangleAlertIcon />,
         title: "Client and server versions differ",
         description: (
@@ -1599,16 +1603,10 @@ export default function ChatView(props: ChatViewProps) {
       ),
     [activeThread?.proposedPlans, activeThread?.reviews, timelineMessages, workLogEntries],
   );
-  const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
-    useTurnDiffSummaries(activeThread);
-  const turnDiffSummaryByAssistantMessageId = useMemo(() => {
-    const byMessageId = new Map<MessageId, TurnDiffSummary>();
-    for (const summary of turnDiffSummaries) {
-      if (!summary.assistantMessageId) continue;
-      byMessageId.set(summary.assistantMessageId, summary);
-    }
-    return byMessageId;
-  }, [turnDiffSummaries]);
+  const turnDiffSummaryByAssistantMessageId = useMemo(
+    () => new Map<MessageId, TurnDiffSummary>(),
+    [],
+  );
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
     for (let index = 0; index < timelineEntries.length; index += 1) {
@@ -1629,8 +1627,7 @@ export default function ChatView(props: ChatViewProps) {
         if (!summary) {
           continue;
         }
-        const turnCount =
-          summary.checkpointTurnCount ?? inferredCheckpointTurnCountByTurnId[summary.turnId];
+        const turnCount = summary.checkpointTurnCount;
         if (typeof turnCount !== "number") {
           break;
         }
@@ -1640,7 +1637,7 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  }, [timelineEntries, turnDiffSummaryByAssistantMessageId]);
 
   const completionSummary = useMemo(() => {
     if (!latestTurnSettled) return null;
@@ -1667,7 +1664,8 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
-  const gitStatusQuery = useGitStatus({ environmentId, cwd: gitCwd });
+  const displayGitUi = settings.displayGitUi;
+  const gitStatusQuery = useGitStatus({ environmentId, cwd: displayGitUi ? gitCwd : null });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -1696,7 +1694,7 @@ export default function ChatView(props: ChatViewProps) {
       ? terminalLaunchContext
       : (storeServerTerminalLaunchContext ?? null);
   // Default true while loading to avoid toolbar flicker.
-  const isGitRepo = gitStatusQuery.data?.isRepo ?? true;
+  const isGitRepo = displayGitUi ? (gitStatusQuery.data?.isRepo ?? true) : true;
   const terminalShortcutLabelOptions = useMemo(
     () => ({
       context: {
@@ -3657,14 +3655,22 @@ export default function ChatView(props: ChatViewProps) {
   const cadReviewInProgress = (activeThread.reviews ?? []).some(
     (review) =>
       review.status === "requested" ||
+      review.status === "planning" ||
       review.status === "capturing-baseline" ||
       review.status === "reviewing" ||
+      review.status === "deep-diving" ||
       review.status === "synthesizing",
   );
   const onGenerateCadReview = async () => {
     const api = readEnvironmentApi(activeThread.environmentId);
     if (!api || !canGenerateCadReview || cadReviewInProgress) {
       return;
+    }
+    if (!diffOpen) {
+      // CAD review screenshots are browser-mediated; mount the CAD panel before the server
+      // publishes baseline capture requests so the first request is not lost.
+      onToggleDiff();
+      await sleep(CAD_REVIEW_PANEL_PREWARM_MS);
     }
     const createdAt = new Date().toISOString();
     await api.orchestration.dispatchCommand({
@@ -3689,7 +3695,7 @@ export default function ChatView(props: ChatViewProps) {
                 reserveTitleBarControlInset &&
                   "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
               )
-            : "pb-2 pt-2 pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] sm:pb-2 sm:pt-2 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)]",
+            : "pb-2 pt-2 pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.25rem)] sm:pb-2 sm:pt-2 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+0.25rem)]",
         )}
       >
         <ChatHeader
@@ -3793,11 +3799,11 @@ export default function ChatView(props: ChatViewProps) {
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
             {showScrollToBottom && (
-              <div className="pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5">
+              <div className="pointer-events-none absolute bottom-36 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5 sm:bottom-40">
                 <button
                   type="button"
                   onClick={() => scrollToEnd(true)}
-                  className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer"
+                  className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border/70 bg-background/92 px-3 py-1 text-muted-foreground text-xs shadow-sm transition-[background-color,color,transform] duration-180 ease-[var(--motion-ease-out)] hover:-translate-y-px hover:bg-background hover:text-foreground hover:cursor-pointer active:translate-y-0 dark:bg-background/88"
                 >
                   <ChevronDownIcon className="size-3.5" />
                   Scroll to bottom
@@ -3809,13 +3815,13 @@ export default function ChatView(props: ChatViewProps) {
           {/* Input bar */}
           <div
             className={cn(
-              "pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pt-1.5 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pt-2",
+              "chat-input-dock pointer-events-none absolute inset-x-0 bottom-0 z-20 pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pt-3 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pt-4",
               isGitRepo
-                ? "pb-[calc(env(safe-area-inset-bottom)+0.25rem)]"
-                : "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]",
+                ? "pb-[calc(env(safe-area-inset-bottom)+0.75rem)]"
+                : "pb-[calc(env(safe-area-inset-bottom)+1.25rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1.5rem)]",
             )}
           >
-            <div className="relative isolate">
+            <div className="pointer-events-auto relative isolate">
               <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
               <div className="relative z-10">
                 <ChatComposer
@@ -3891,27 +3897,29 @@ export default function ChatView(props: ChatViewProps) {
                 />
               </div>
             </div>
-            {isGitRepo && (
-              <BranchToolbar
-                environmentId={activeThread.environmentId}
-                threadId={activeThread.id}
-                {...(routeKind === "draft" && draftId ? { draftId } : {})}
-                onEnvModeChange={onEnvModeChange}
-                {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
-                {...(canOverrideServerThreadEnvMode
-                  ? {
-                      activeThreadBranchOverride: activeThreadBranch,
-                      onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
-                    }
-                  : {})}
-                envLocked={envLocked}
-                onComposerFocusRequest={scheduleComposerFocus}
-                {...(canCheckoutPullRequestIntoThread
-                  ? { onCheckoutPullRequestRequest: openPullRequestDialog }
-                  : {})}
-                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
-                availableEnvironments={logicalProjectEnvironments}
-              />
+            {displayGitUi && isGitRepo && (
+              <div className="pointer-events-auto">
+                <BranchToolbar
+                  environmentId={activeThread.environmentId}
+                  threadId={activeThread.id}
+                  {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                  onEnvModeChange={onEnvModeChange}
+                  {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+                  {...(canOverrideServerThreadEnvMode
+                    ? {
+                        activeThreadBranchOverride: activeThreadBranch,
+                        onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+                      }
+                    : {})}
+                  envLocked={envLocked}
+                  onComposerFocusRequest={scheduleComposerFocus}
+                  {...(canCheckoutPullRequestIntoThread
+                    ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                    : {})}
+                  {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                  availableEnvironments={logicalProjectEnvironments}
+                />
+              </div>
             )}
           </div>
 

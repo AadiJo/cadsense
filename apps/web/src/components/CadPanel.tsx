@@ -3,11 +3,19 @@ import {
   BoxIcon,
   ChevronRightIcon,
   FolderIcon,
+  FolderOpenIcon,
   Maximize2Icon,
   Minimize2Icon,
   SearchIcon,
   XIcon,
 } from "lucide-react";
+import {
+  isSupportedCadModelPath,
+  isObjPreviewCompanionPath,
+  OBJ_MTLLIB_SCAN_MAX_BYTES,
+  parseObjMtllibFilenames,
+  SUPPORTED_CAD_MODEL_EXTENSIONS,
+} from "@cadsense/shared/cad";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams } from "@tanstack/react-router";
@@ -58,6 +66,60 @@ function CadPanelEmptyState(props: { title: string; detail: string; icon?: "erro
         </div>
         <div className="text-sm font-medium">{props.title}</div>
         <div className="mt-1 text-sm text-muted-foreground">{props.detail}</div>
+      </div>
+    </div>
+  );
+}
+
+function LocalCadOpenState(props: {
+  error: string | null;
+  onSelectFiles: (files: ReadonlyArray<File>) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const accept = useMemo(
+    () => SUPPORTED_CAD_MODEL_EXTENSIONS.map((extension) => `.${extension}`).join(","),
+    [],
+  );
+
+  const openPicker = useCallback(() => {
+    inputRef.current?.click();
+  }, []);
+
+  return (
+    <div className="flex min-h-0 flex-1 items-center justify-center bg-card/20 p-6">
+      <div className="grid max-w-sm justify-items-center text-center">
+        <button
+          type="button"
+          className="group flex size-16 items-center justify-center rounded-xl border border-border/75 bg-background/80 shadow-sm transition-[border-color,background-color,box-shadow,transform] duration-180 ease-[var(--motion-ease-out)] hover:-translate-y-0.5 hover:border-primary/45 hover:bg-background hover:shadow-md"
+          aria-label="Open a supported CAD file"
+          onClick={openPicker}
+        >
+          <FolderOpenIcon className="size-8 text-muted-foreground transition-colors group-hover:text-foreground" />
+        </button>
+        <input
+          ref={inputRef}
+          type="file"
+          accept={accept}
+          className="sr-only"
+          multiple
+          onChange={(event) => {
+            const files = Array.from(event.currentTarget.files ?? []);
+            event.currentTarget.value = "";
+            if (files.length > 0) {
+              props.onSelectFiles(files);
+            }
+          }}
+        />
+        <div className="mt-4 text-sm font-medium">Open a supported CAD file</div>
+        <div className="mt-1 max-w-xs text-sm leading-5 text-muted-foreground">
+          Preview a local file for this project only, for example 3MF, STL, STEP, OBJ, or GLB.
+          Select related OBJ material files and textures at the same time to preserve colors.
+        </div>
+        {props.error ? (
+          <div className="mt-3 rounded-md border border-destructive/25 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
+            {props.error}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -304,6 +366,8 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   const [fullscreenMistVisible, setFullscreenMistVisible] = useState(false);
   const [fullscreenMistOpaque, setFullscreenMistOpaque] = useState(false);
   const [components, setComponents] = useState<ReadonlyArray<CadViewerFrameComponentNode>>([]);
+  const [localCadFiles, setLocalCadFiles] = useState<ReadonlyArray<OnshapeSyncedCadFile>>([]);
+  const [localCadFileError, setLocalCadFileError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const fullscreenCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -318,15 +382,21 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
       : activeThread?.externalContext?.provider === "onshape"
         ? activeThread.externalContext.onshape
         : null;
+  const isOnshapeProject = onshapeContext !== null;
   const cwd =
     activeProject?.cwd ?? activeThread?.worktreePath ?? draftSession?.worktreePath ?? null;
   const environmentId = activeThread?.environmentId ?? draftSession?.environmentId;
   const environmentApi = environmentId ? readEnvironmentApi(environmentId) : undefined;
+  const projectCadScopeKey = activeProject
+    ? `${activeProject.environmentId}:${activeProject.id}`
+    : (activeThread?.projectId ?? draftSession?.projectId ?? null);
   const cadReviewInProgress = (activeThread?.reviews ?? []).some(
     (review) =>
       review.status === "requested" ||
+      review.status === "planning" ||
       review.status === "capturing-baseline" ||
       review.status === "reviewing" ||
+      review.status === "deep-diving" ||
       review.status === "synthesizing",
   );
 
@@ -353,11 +423,59 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
   });
 
   const modelFiles = useMemo(() => {
+    if (!isOnshapeProject) {
+      return localCadFiles;
+    }
     const files = filesQuery.data?.files ?? [];
     const preferredOnly = files.filter((file) => file.isPreferred);
     return preferredOnly.length > 0 ? preferredOnly : files;
-  }, [filesQuery.data?.files]);
+  }, [filesQuery.data?.files, isOnshapeProject, localCadFiles]);
   modelFilesRef.current = modelFiles;
+
+  const handleSelectLocalCadFiles = useCallback((files: ReadonlyArray<File>) => {
+    const primaryFile = files[0];
+    if (
+      !primaryFile ||
+      !isSupportedCadModelPath(primaryFile.name) ||
+      isObjPreviewCompanionPath(primaryFile.name)
+    ) {
+      setLocalCadFileError("Choose a supported CAD file such as 3MF, STL, STEP, OBJ, or GLB.");
+      return;
+    }
+    const nextFiles = files.map((file, index) => ({
+      relativePath: file.name,
+      url: URL.createObjectURL(file),
+      isPreferred: index === 0,
+      sizeBytes: file.size,
+    }));
+    setLocalCadFiles((previous) => {
+      for (const file of previous) {
+        if (file.url.startsWith("blob:")) {
+          URL.revokeObjectURL(file.url);
+        }
+      }
+      return nextFiles;
+    });
+    setLocalCadFileError(null);
+    if (primaryFile.name.toLowerCase().endsWith(".obj")) {
+      void primaryFile
+        .slice(0, OBJ_MTLLIB_SCAN_MAX_BYTES)
+        .text()
+        .then((source) => {
+          const selectedNames = new Set(files.map((file) => file.name.toLowerCase()));
+          const missingMaterials = parseObjMtllibFilenames(source).filter(
+            (name) =>
+              !selectedNames.has(name.replaceAll("\\", "/").split("/").pop()!.toLowerCase()),
+          );
+          if (missingMaterials.length > 0) {
+            setLocalCadFileError(
+              `This OBJ references ${missingMaterials.slice(0, 3).join(", ")}. Select the OBJ together with its MTL and texture files to preserve colors.`,
+            );
+          }
+        })
+        .catch(() => undefined);
+    }
+  }, []);
 
   const modelFileIdentityKey = useMemo(
     () => modelFiles.map((file) => `${file.url}:${file.sizeBytes ?? "unknown"}`).join("\0"),
@@ -606,6 +724,29 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
       setFullscreenMistOpaque(false);
     },
     [],
+  );
+
+  useEffect(() => {
+    setLocalCadFiles((previous) => {
+      for (const file of previous) {
+        if (file.url.startsWith("blob:")) {
+          URL.revokeObjectURL(file.url);
+        }
+      }
+      return [];
+    });
+    setLocalCadFileError(null);
+  }, [projectCadScopeKey]);
+
+  useEffect(
+    () => () => {
+      for (const file of localCadFiles) {
+        if (file.url.startsWith("blob:")) {
+          URL.revokeObjectURL(file.url);
+        }
+      }
+    },
+    [localCadFiles],
   );
 
   useEffect(() => {
@@ -902,12 +1043,22 @@ export default function CadPanel({ mode = "inline" }: CadPanelProps) {
     })();
   }, [frameActive, frameReadySequence, modelFileIdentityKey, postFrameRequest]);
 
-  if (!onshapeContext || !cwd) {
+  if (!isOnshapeProject) {
+    if (localCadFiles.length === 0) {
+      return (
+        <DiffPanelShell mode={mode} {...cadShellProps}>
+          <LocalCadOpenState error={localCadFileError} onSelectFiles={handleSelectLocalCadFiles} />
+        </DiffPanelShell>
+      );
+    }
+  }
+
+  if (isOnshapeProject && !cwd) {
     return (
       <DiffPanelShell mode={mode} {...cadShellProps}>
         <CadPanelEmptyState
           title="CAD view unavailable"
-          detail="This thread is not attached to an Onshape project."
+          detail="This project does not have a workspace path."
         />
       </DiffPanelShell>
     );

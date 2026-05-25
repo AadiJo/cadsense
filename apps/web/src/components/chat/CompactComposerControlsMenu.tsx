@@ -1,29 +1,24 @@
-import { ProviderInteractionMode, RuntimeMode } from "@cadsense/contracts";
 import { memo, type ReactNode } from "react";
 import { EllipsisIcon, ListTodoIcon } from "lucide-react";
 import { Button } from "../ui/button";
-import {
-  Menu,
-  MenuItem,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSeparator as MenuDivider,
-  MenuTrigger,
-} from "../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator as MenuDivider, MenuTrigger } from "../ui/menu";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
-  interactionMode: ProviderInteractionMode;
+  interactionMode?: unknown;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
-  runtimeMode: RuntimeMode;
-  showInteractionModeToggle: boolean;
+  runtimeMode?: unknown;
+  showInteractionModeToggle?: unknown;
   traitsMenuContent?: ReactNode;
-  onToggleInteractionMode: () => void;
+  onToggleInteractionMode?: () => void;
   onTogglePlanSidebar: () => void;
-  onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onRuntimeModeChange?: (mode: unknown) => void;
 }) {
+  if (!props.traitsMenuContent && !props.activePlan) {
+    return null;
+  }
+
   return (
     <Menu>
       <MenuTrigger
@@ -45,34 +40,6 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
             <MenuDivider />
           </>
         ) : null}
-        {props.showInteractionModeToggle ? (
-          <>
-            <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Mode</div>
-            <MenuRadioGroup
-              value={props.interactionMode}
-              onValueChange={(value) => {
-                if (!value || value === props.interactionMode) return;
-                props.onToggleInteractionMode();
-              }}
-            >
-              <MenuRadioItem value="default">Chat</MenuRadioItem>
-              <MenuRadioItem value="plan">Plan</MenuRadioItem>
-            </MenuRadioGroup>
-            <MenuDivider />
-          </>
-        ) : null}
-        <div className="px-2 py-1.5 font-medium text-muted-foreground text-xs">Access</div>
-        <MenuRadioGroup
-          value={props.runtimeMode}
-          onValueChange={(value) => {
-            if (!value || value === props.runtimeMode) return;
-            props.onRuntimeModeChange(value as RuntimeMode);
-          }}
-        >
-          <MenuRadioItem value="approval-required">Supervised</MenuRadioItem>
-          <MenuRadioItem value="auto-accept-edits">Auto-accept edits</MenuRadioItem>
-          <MenuRadioItem value="full-access">Full access</MenuRadioItem>
-        </MenuRadioGroup>
         {props.activePlan ? (
           <>
             <MenuDivider />

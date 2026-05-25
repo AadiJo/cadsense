@@ -81,19 +81,9 @@ import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import {
-  BotIcon,
-  CircleAlertIcon,
-  ListTodoIcon,
-  type LucideIcon,
-  LockIcon,
-  LockOpenIcon,
-  PenLineIcon,
-  XIcon,
-} from "lucide-react";
+import { CircleAlertIcon, ListTodoIcon, XIcon } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
@@ -114,28 +104,6 @@ import { useMediaQuery } from "../../hooks/useMediaQuery";
 
 const IMAGE_SIZE_LIMIT_LABEL = `${Math.round(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / (1024 * 1024))}MB`;
 
-const runtimeModeConfig: Record<
-  RuntimeMode,
-  { label: string; description: string; icon: LucideIcon }
-> = {
-  "approval-required": {
-    label: "Supervised",
-    description: "Ask before commands and file changes.",
-    icon: LockIcon,
-  },
-  "auto-accept-edits": {
-    label: "Auto-accept edits",
-    description: "Auto-approve edits, ask before other actions.",
-    icon: PenLineIcon,
-  },
-  "full-access": {
-    label: "Full access",
-    description: "Allow commands and edits without prompts.",
-    icon: LockOpenIcon,
-  },
-};
-
-const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[];
 const COMPOSER_PATH_QUERY_DEBOUNCE_MS = 120;
 const EMPTY_PROJECT_ENTRIES: ProjectEntry[] = [];
 const COMPOSER_FLOATING_LAYER_SELECTOR = [
@@ -189,97 +157,33 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   onRuntimeModeChange: (mode: RuntimeMode) => void;
   onTogglePlanSidebar: () => void;
 }) {
-  const runtimeModeOption = runtimeModeConfig[props.runtimeMode];
-  const RuntimeModeIcon = runtimeModeOption.icon;
+  if (!props.showPlanToggle) {
+    return null;
+  }
 
   return (
     <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-
-      {props.showInteractionModeToggle ? (
-        <>
-          <Button
-            variant="ghost"
-            className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
-            size="sm"
-            type="button"
-            onClick={props.onToggleInteractionMode}
-            title={
-              props.interactionMode === "plan"
-                ? "Plan mode — click to return to normal build mode"
-                : "Default mode — click to enter plan mode"
-            }
-          >
-            <BotIcon />
-            <span className="sr-only sm:not-sr-only">
-              {props.interactionMode === "plan" ? "Plan" : "Build"}
-            </span>
-          </Button>
-
-          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-        </>
-      ) : null}
-
-      <Select
-        value={props.runtimeMode}
-        onValueChange={(value) => props.onRuntimeModeChange(value!)}
+      <Button
+        variant="ghost"
+        className={cn(
+          "shrink-0 whitespace-nowrap px-2 sm:px-3",
+          props.planSidebarOpen
+            ? "text-blue-400 hover:text-blue-300"
+            : "text-muted-foreground/70 hover:text-foreground/80",
+        )}
+        size="sm"
+        type="button"
+        onClick={props.onTogglePlanSidebar}
+        title={
+          props.planSidebarOpen
+            ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
+            : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
+        }
       >
-        <SelectTrigger
-          variant="ghost"
-          size="sm"
-          className="font-medium"
-          aria-label="Runtime mode"
-          title={runtimeModeOption.description}
-        >
-          <RuntimeModeIcon className="size-4" />
-          <SelectValue>{runtimeModeOption.label}</SelectValue>
-        </SelectTrigger>
-        <SelectPopup alignItemWithTrigger={false}>
-          {runtimeModeOptions.map((mode) => {
-            const option = runtimeModeConfig[mode];
-            const OptionIcon = option.icon;
-            return (
-              <SelectItem key={mode} value={mode} className="min-w-64 py-2">
-                <div className="grid min-w-0 gap-0.5">
-                  <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
-                    <OptionIcon className="size-3.5 shrink-0 text-muted-foreground" />
-                    {option.label}
-                  </span>
-                  <span className="text-muted-foreground text-xs leading-4">
-                    {option.description}
-                  </span>
-                </div>
-              </SelectItem>
-            );
-          })}
-        </SelectPopup>
-      </Select>
-
-      {props.showPlanToggle ? (
-        <>
-          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-          <Button
-            variant="ghost"
-            className={cn(
-              "shrink-0 whitespace-nowrap px-2 sm:px-3",
-              props.planSidebarOpen
-                ? "text-blue-400 hover:text-blue-300"
-                : "text-muted-foreground/70 hover:text-foreground/80",
-            )}
-            size="sm"
-            type="button"
-            onClick={props.onTogglePlanSidebar}
-            title={
-              props.planSidebarOpen
-                ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
-                : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
-            }
-          >
-            <ListTodoIcon />
-            <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
-          </Button>
-        </>
-      ) : null}
+        <ListTodoIcon />
+        <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
+      </Button>
     </>
   );
 });
@@ -1947,7 +1851,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     >
       <div
         className={cn(
-          "group rounded-[22px] p-px transition-colors duration-200",
+          "chat-composer-shell group p-px",
           composerProviderState.composerFrameClassName,
         )}
         onDragEnter={onComposerDragEnter}
@@ -1959,8 +1863,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ref={composerSurfaceRef}
           data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
           className={cn(
-            "rounded-[20px] border bg-card transition-colors duration-200 has-focus-visible:border-ring/45",
-            isDragOverComposer ? "border-primary/70 bg-accent/30" : "border-border",
+            "chat-composer-surface border transition-[border-color,box-shadow,background-color] duration-220 ease-[var(--motion-ease-out)] has-focus-visible:border-ring/45",
+            isDragOverComposer
+              ? "border-primary/70 shadow-[0_0_0_1px_rgb(99_102_241/0.22),0_18px_54px_rgb(99_102_241/0.18)]"
+              : "border-border/70",
             environmentUnavailable ? "opacity-75" : null,
             composerProviderState.composerSurfaceClassName,
           )}
@@ -2108,7 +2014,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               </button>
               <button
                 type="button"
-                className="flex size-8 shrink-0 items-center justify-center rounded-full bg-primary/90 text-primary-foreground disabled:opacity-30"
+                className="flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/90 text-primary-foreground shadow-sm transition-[background-color,box-shadow,opacity] duration-180 ease-[var(--motion-ease-out)] hover:bg-primary disabled:opacity-30"
                 disabled={collapsedComposerPrimaryActionDisabled}
                 aria-label={collapsedComposerPrimaryActionLabel}
                 onPointerDown={(event) => event.preventDefault()}
@@ -2340,15 +2246,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {isComposerFooterCompact ? (
                   <CompactComposerControlsMenu
                     activePlan={showPlanSidebarToggle}
-                    interactionMode={interactionMode}
                     planSidebarLabel={planSidebarLabel}
                     planSidebarOpen={planSidebarOpen}
-                    runtimeMode={runtimeMode}
-                    showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                     traitsMenuContent={providerTraitsMenuContent}
-                    onToggleInteractionMode={toggleInteractionMode}
                     onTogglePlanSidebar={togglePlanSidebar}
-                    onRuntimeModeChange={handleRuntimeModeChange}
                   />
                 ) : (
                   <>

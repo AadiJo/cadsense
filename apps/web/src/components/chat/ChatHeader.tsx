@@ -10,7 +10,7 @@ import { scopeThreadRef } from "@cadsense/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { BoxIcon, DiffIcon, TerminalSquareIcon } from "lucide-react";
+import { TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -80,9 +80,7 @@ export const ChatHeader = memo(function ChatHeader({
   terminalAvailable,
   terminalOpen,
   terminalToggleShortcutLabel,
-  diffToggleShortcutLabel,
   gitCwd,
-  diffOpen,
   onshapeSyncing,
   cadExploded,
   onRunProjectScript,
@@ -90,14 +88,11 @@ export const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onDeleteProjectScript,
   onToggleTerminal,
-  onToggleDiff,
   onSyncOnshape,
   onToggleCadExploded,
   onZoomCadToFit,
 }: ChatHeaderProps) {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const panelLabel = activeProjectOnshapeContext ? "CAD view" : "diff panel";
-  const panelUnavailable = !activeProjectOnshapeContext && !isGitRepo && !diffOpen;
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName,
     activeThreadEnvironmentId,
@@ -183,34 +178,6 @@ export const ChatHeader = memo(function ChatHeader({
               : terminalToggleShortcutLabel
                 ? `Toggle terminal drawer (${terminalToggleShortcutLabel})`
                 : "Toggle terminal drawer"}
-          </TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0"
-                pressed={diffOpen}
-                onPressedChange={onToggleDiff}
-                aria-label={`Toggle ${panelLabel}`}
-                variant="outline"
-                size="xs"
-                disabled={panelUnavailable}
-              >
-                {activeProjectOnshapeContext ? (
-                  <BoxIcon className="size-3" />
-                ) : (
-                  <DiffIcon className="size-3" />
-                )}
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {panelUnavailable
-              ? "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle ${panelLabel} (${diffToggleShortcutLabel})`
-                : `Toggle ${panelLabel}`}
           </TooltipPopup>
         </Tooltip>
       </div>

@@ -8,7 +8,13 @@ import {
   cadViewerViewCommandSettleMs,
 } from "./lib/cadViewerCameraTransition";
 import { cadEmbeddedViewerEdgeSettings } from "./lib/cadEmbeddedViewerTuning";
-import { getThreeMfRootModelByteLength, parseThreeMfFast } from "./lib/cadThreeMfFastParser";
+import {
+  buildThreeMfFastGroup,
+  getThreeMfRootModelByteLength,
+  parseThreeMfFast,
+  type CadThreeMfParsedModel,
+} from "./lib/cadThreeMfFastParser";
+import ThreeMfFastParserWorker from "./lib/cadThreeMfFastParser.worker?worker";
 import {
   CAD_VIEWER_FRAME_PARENT_SOURCE,
   CAD_VIEWER_FRAME_SOURCE,
@@ -552,12 +558,40 @@ function throttleNavigationUpdates(embeddedViewer: EmbeddedViewerInstance): void
   };
 }
 
+function normalizeFallbackViewerToCadAxes(
+  module: Online3DViewerModule,
+  embeddedViewer: EmbeddedViewerInstance,
+): void {
+  const viewer = embeddedViewer.GetViewer() as {
+    mainModel?: { mainModel?: { GetRootObject?: () => ThreeObject3D | null } };
+    SetUpVector?: (direction: unknown, animate: boolean) => void;
+    GetBoundingSphere?: (predicate: (meshUserData: unknown) => boolean) => unknown;
+    AdjustClippingPlanesToSphere?: (sphere: unknown) => void;
+    Render?: () => void;
+  };
+  const rootObject = viewer.mainModel?.mainModel?.GetRootObject?.();
+  if (!rootObject) {
+    return;
+  }
+
+  rootObject.rotateX(Math.PI / 2);
+  rootObject.updateWorldMatrix(true, true);
+  viewer.SetUpVector?.(module.Direction.Z, false);
+  const boundingSphere = viewer.GetBoundingSphere?.(() => true);
+  if (boundingSphere) {
+    viewer.AdjustClippingPlanesToSphere?.(boundingSphere);
+  }
+  viewer.Render?.();
+}
+
 /**
  * Size threshold (in bytes) above which we use the direct three.js fast path for 3MF files.
  * Below this threshold, the standard online-3d-viewer pipeline is fast enough.
  */
 const DIRECT_3MF_THRESHOLD_BYTES = 5 * 1024 * 1024;
 const FAST_3MF_XML_THRESHOLD_BYTES = 32 * 1024 * 1024;
+const FAST_3MF_WORKER_ARCHIVE_THRESHOLD_BYTES = 8 * 1024 * 1024;
+const FAST_3MF_WORKER_TIMEOUT_MS = 45_000;
 
 function looksLike3mf(value: string | undefined): boolean {
   if (!value) {
@@ -999,6 +1033,66 @@ function zoomThreeViewerToFit(state: ThreeViewerState): void {
  * expensive intermediate model conversion, which creates millions of individual JS
  * objects for large meshes (ConvertThreeGeometryToMesh + ConvertModelToThreeObject).
  */
+let threeMfWorkerRequestSequence = 0;
+
+type ThreeMfFastWorkerResponse =
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly model: CadThreeMfParsedModel;
+    }
+  | {
+      readonly id: number;
+      readonly ok: false;
+      readonly error: string;
+    };
+
+function parseThreeMfFastWithWorker(input: {
+  readonly buffer: ArrayBuffer;
+  readonly three: ThreeModule;
+}): Promise<ThreeGroup> {
+  const worker = new ThreeMfFastParserWorker();
+  const requestId = ++threeMfWorkerRequestSequence;
+  const workerBuffer = input.buffer.slice(0);
+
+  return new Promise((resolve, reject) => {
+    let timeoutId: number | undefined;
+    function cleanup() {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+      worker.removeEventListener("message", handleMessage);
+      worker.removeEventListener("error", handleError);
+      worker.terminate();
+    }
+
+    function handleMessage(event: MessageEvent<ThreeMfFastWorkerResponse>) {
+      if (event.data.id !== requestId) {
+        return;
+      }
+      cleanup();
+      if (!event.data.ok) {
+        reject(new Error(event.data.error));
+        return;
+      }
+      resolve(buildThreeMfFastGroup({ three: input.three, model: event.data.model }));
+    }
+
+    function handleError(event: ErrorEvent) {
+      cleanup();
+      reject(event.error instanceof Error ? event.error : new Error(event.message));
+    }
+
+    worker.addEventListener("message", handleMessage);
+    worker.addEventListener("error", handleError);
+    timeoutId = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out parsing 3MF model off the UI thread."));
+    }, FAST_3MF_WORKER_TIMEOUT_MS);
+    worker.postMessage({ id: requestId, buffer: workerBuffer }, [workerBuffer]);
+  });
+}
+
 async function loadFilesDirect3mfUrl(
   file: CadViewerFrameFileDescriptor,
   onStage?: (stage: CadViewerFrameLoadStage) => void,
@@ -1029,19 +1123,31 @@ async function loadFilesDirect3mfUrl(
       throw new Error(`Failed to fetch CAD model asset '${file.name}': HTTP ${response.status}`);
     }
     const buffer = await response.arrayBuffer();
-    const unzipped = fflateModule.unzipSync(new Uint8Array(buffer));
-    onStage?.("direct-3mf-archive-expanded");
-    const rootModelByteLength = getThreeMfRootModelByteLength(unzipped);
+    let group: ThreeGroup | null = null;
+    if (buffer.byteLength >= FAST_3MF_WORKER_ARCHIVE_THRESHOLD_BYTES) {
+      try {
+        group = await parseThreeMfFastWithWorker({ buffer, three: threeModule });
+        onStage?.("direct-3mf-fast-parsed");
+      } catch (error) {
+        console.warn("CAD viewer worker 3MF fast path failed; falling back to main parser.", error);
+      }
+    }
 
-    let group: ThreeGroup;
-    if (rootModelByteLength !== null && rootModelByteLength > FAST_3MF_XML_THRESHOLD_BYTES) {
-      group = parseThreeMfFast({ three: threeModule, unzipped });
-      onStage?.("direct-3mf-fast-parsed");
-    } else {
+    if (!group) {
+      const unzipped = fflateModule.unzipSync(new Uint8Array(buffer));
+      onStage?.("direct-3mf-archive-expanded");
+      const rootModelByteLength = getThreeMfRootModelByteLength(unzipped);
+      if (rootModelByteLength !== null && rootModelByteLength > FAST_3MF_XML_THRESHOLD_BYTES) {
+        group = parseThreeMfFast({ three: threeModule, unzipped });
+        onStage?.("direct-3mf-fast-parsed");
+      }
+    }
+
+    if (!group) {
       const loader = new threeMfModule.ThreeMFLoader();
       group = loader.parse(buffer);
-      onStage?.("direct-3mf-model-parsed");
     }
+    onStage?.("direct-3mf-model-parsed");
 
     tuneThreeModelMaterials(group, threeModule);
     const box = new threeModule.Box3().setFromObject(group);
@@ -1057,16 +1163,17 @@ async function loadFilesDirect3mfUrl(
     ownsModelAssets = false;
   }
 
+  const largeModelRenderBudget = model.bytes >= 24 * 1024 * 1024;
   const renderer = new threeModule.WebGLRenderer({
     alpha: true,
-    antialias: true,
+    antialias: !largeModelRenderBudget,
     powerPreference: "high-performance",
     preserveDrawingBuffer: true,
   });
   renderer.setClearColor(0x000000, 0);
   renderer.outputColorSpace = threeModule.SRGBColorSpace;
   renderer.toneMapping = threeModule.NoToneMapping;
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, largeModelRenderBudget ? 1.35 : 2));
   renderer.domElement.style.display = "block";
   renderer.domElement.style.width = "100%";
   renderer.domElement.style.height = "100%";
@@ -1219,6 +1326,7 @@ async function loadFiles(files: ReadonlyArray<CadViewerFrameFilePayload>): Promi
     embeddedViewer.LoadModelFromFileList(files.map(makeFile));
   });
 
+  normalizeFallbackViewerToCadAxes(module, embeddedViewer);
   applyCadView(module, embeddedViewer, "isometric", true);
   revealViewerSurfaces();
 }
@@ -1240,6 +1348,31 @@ function getLoadedThreeViewer(): ThreeViewerState {
   return threeViewerRef;
 }
 
+function canvasToPngBase64(canvas: HTMLCanvasElement): Promise<string> {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) {
+        reject(new Error("CAD canvas did not produce a PNG blob."));
+        return;
+      }
+      const reader = new FileReader();
+      reader.addEventListener("error", () => reject(new Error("Failed to read CAD PNG blob.")), {
+        once: true,
+      });
+      reader.addEventListener(
+        "load",
+        () => {
+          const dataUrl = typeof reader.result === "string" ? reader.result : "";
+          const comma = dataUrl.indexOf(",");
+          resolve(comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl);
+        },
+        { once: true },
+      );
+      reader.readAsDataURL(blob);
+    }, "image/png");
+  });
+}
+
 async function capturePngBase64(input: {
   readonly view?: CadView;
   readonly fit: boolean;
@@ -1251,9 +1384,7 @@ async function capturePngBase64(input: {
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
     }
     renderThreeViewer(state);
-    const dataUrl = state.renderer.domElement.toDataURL("image/png");
-    const comma = dataUrl.indexOf(",");
-    return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+    return canvasToPngBase64(state.renderer.domElement);
   }
 
   const { module, embeddedViewer } = getLoadedViewer();
