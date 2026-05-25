@@ -235,6 +235,14 @@ function formatProjectMemberActionLabel(
   return member.environmentLabel ? `${member.environmentLabel} — ${member.cwd}` : member.cwd;
 }
 
+function getOnshapeProjectUrl(member: SidebarProjectGroupMember): string | null {
+  if (member.externalContext?.provider !== "onshape") {
+    return null;
+  }
+
+  return member.externalContext.onshape.reference.url ?? null;
+}
+
 function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): string {
   switch (mode) {
     case "repository":
@@ -339,6 +347,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread,
   } = props;
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+  const displayGitUi = useSettings((settings) => settings.displayGitUi);
   const threadKey = scopedThreadKey(threadRef);
   const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
@@ -372,7 +381,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const gitCwd = thread.worktreePath ?? threadProjectCwd ?? props.projectCwd;
   const gitStatus = useGitStatus({
     environmentId: thread.environmentId,
-    cwd: thread.branch != null ? gitCwd : null,
+    cwd: displayGitUi && thread.branch != null ? gitCwd : null,
   });
   const isHighlighted = isActive || isSelected;
   const isThreadRunning =
@@ -383,7 +392,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       lastVisitedAt,
     },
   });
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  const pr = displayGitUi ? resolveThreadPr(thread.branch, gitStatus.data) : null;
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const terminalStatus = terminalStatusFromRunningIds(runningTerminalIds);
   const isConfirmingArchive = confirmingArchiveThreadKey === threadKey && !isThreadRunning;
@@ -1432,8 +1441,35 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         if (!api) return;
 
         const actionHandlers = new Map<string, () => Promise<void> | void>();
+        const openOnshapeProject = async (member: SidebarProjectGroupMember) => {
+          const url = getOnshapeProjectUrl(member);
+          if (!url) {
+            toastManager.add({
+              type: "error",
+              title: "Onshape link is unavailable.",
+            });
+            return;
+          }
+
+          try {
+            await api.shell.openExternal(url);
+          } catch (error) {
+            console.error("Failed to open Onshape project", {
+              projectId: member.id,
+              environmentId: member.environmentId,
+              error,
+            });
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Unable to open Onshape",
+                description: error instanceof Error ? error.message : "An error occurred.",
+              }),
+            );
+          }
+        };
         const makeLeaf = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "open-onshape" | "rename" | "grouping" | "copy-path" | "delete",
           member: SidebarProjectGroupMember,
           options?: {
             destructive?: boolean;
@@ -1443,6 +1479,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           const id = `${action}:${member.physicalProjectKey}`;
           actionHandlers.set(id, () => {
             switch (action) {
+              case "open-onshape":
+                return openOnshapeProject(member);
               case "rename":
                 openProjectRenameDialog(member);
                 return;
@@ -1466,7 +1504,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "rename" | "grouping" | "copy-path" | "delete",
+          action: "open-onshape" | "rename" | "grouping" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1496,8 +1534,34 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           };
         };
 
+        const onshapeProjectMembers = project.memberProjects.filter(
+          (member) => member.externalContext?.provider === "onshape",
+        );
+        const openOnshapeItems =
+          onshapeProjectMembers.length === 0
+            ? []
+            : [
+                project.memberProjects.length === 1
+                  ? {
+                      ...makeLeaf("open-onshape", project.memberProjects[0]!, {
+                        disabled: getOnshapeProjectUrl(project.memberProjects[0]!) === null,
+                      }),
+                      label: "Open in Onshape",
+                    }
+                  : {
+                      id: "open-onshape:submenu",
+                      label: "Open in Onshape",
+                      children: onshapeProjectMembers.map((member) =>
+                        makeLeaf("open-onshape", member, {
+                          disabled: getOnshapeProjectUrl(member) === null,
+                        }),
+                      ),
+                    },
+              ];
+
         const clicked = await api.contextMenu.show(
           [
+            ...openOnshapeItems,
             buildTargetedItem("rename", "Rename project"),
             buildTargetedItem("grouping", "Project grouping…"),
             buildTargetedItem("copy-path", "Copy Project Path"),

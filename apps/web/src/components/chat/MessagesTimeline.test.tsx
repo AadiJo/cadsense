@@ -1,4 +1,4 @@
-import { EnvironmentId, MessageId } from "@cadsense/contracts";
+import { EnvironmentId, MessageId, ThreadId, type CadReviewReport } from "@cadsense/contracts";
 import { createRef, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -117,6 +117,116 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildCadReviewTimelineEntry() {
+  const review: CadReviewReport = {
+    id: "review-1",
+    threadId: ThreadId.make("thread-1"),
+    title: "Intake CAD Review",
+    status: "completed",
+    whatIsBeingReviewed: "Intake subsystem",
+    commonThemes: ["Roller path needs measurable checks."],
+    reviewerTraits: {
+      systems_integration: "Integration",
+      program_readiness: "Readiness",
+      mechanical_robustness: "Robustness",
+      synthesis: "Synthesis",
+    },
+    reviewPlan: {
+      summary: "Inspect intake rollers and frame interface.",
+      mechanisms: [
+        {
+          name: "Intake roller path",
+          role: "Acquire game pieces from the floor.",
+          visibleEvidence: ["Top view shows two rollers."],
+          suspiciousRegions: ["Roller-to-floor transition"],
+          specificChecks: ["Measure roller compression progression."],
+          precedentQueries: ["FRC intake roller compression technical binder"],
+        },
+      ],
+      reviewPriorities: ["Compression path"],
+      missingContext: ["Game piece diameter"],
+      calculatorNeeds: ["Shaft deflection from unsupported span"],
+    },
+    personaReports: [
+      {
+        persona: "mechanical_robustness",
+        status: "completed",
+        summary: "Roller span needs a deflection check.",
+        topConcerns: [
+          {
+            id: "finding-1",
+            title: "Unsupported roller span",
+            description: "The roller appears end-supported across the intake width.",
+            evidenceArtifactIds: ["artifact-1"],
+            confidence: "medium",
+            severity: "high",
+            observedGeometry: "Long roller supported at side plates.",
+            specificCheck: "Measure shaft span and calculate deflection.",
+            recommendedFix: "Add support or increase shaft/tube stiffness.",
+          },
+        ],
+        repeatedPatterns: [],
+        likelyFailureModes: [],
+        recommendedChanges: [],
+        confidence: "medium",
+        evidenceArtifactIds: ["artifact-1"],
+        toolCallIds: [],
+        createdAt: MESSAGE_CREATED_AT,
+        updatedAt: MESSAGE_CREATED_AT,
+      },
+    ],
+    deepDiveReports: [
+      {
+        id: "deep-1",
+        sourceFindingIds: ["finding-1"],
+        focus: "Unsupported roller span",
+        summary: "Close the concern with a shaft deflection calculation.",
+        inspectedEvidenceArtifactIds: ["artifact-1"],
+        observations: ["No mid-span support is visible."],
+        specificChecks: ["Measure span, shaft OD, material, and compression load."],
+        recommendedChanges: ["Add mid-span support if deflection is too high."],
+        confidence: "medium",
+        createdAt: MESSAGE_CREATED_AT,
+      },
+    ],
+    mergedActionItems: [
+      {
+        id: "action-1",
+        title: "Run roller span deflection check",
+        description: "Measure the roller span and calculate deflection before release.",
+        priority: "high",
+        sourceFindingIds: ["finding-1"],
+        targetGeometry: "Upper intake roller",
+        verificationSteps: ["Measure span", "Calculate deflection"],
+      },
+    ],
+    evidenceArtifacts: [
+      {
+        id: "artifact-1",
+        scope: "baseline",
+        viewName: "isometric",
+        artifactUri: "C:/tmp/intake.png",
+        status: "captured",
+        createdAt: MESSAGE_CREATED_AT,
+      },
+    ],
+    toolCallsByReviewer: {
+      systems_integration: [],
+      program_readiness: [],
+      mechanical_robustness: [],
+      synthesis: [],
+    },
+    createdAt: MESSAGE_CREATED_AT,
+    updatedAt: MESSAGE_CREATED_AT,
+  };
+  return {
+    id: "review-entry-1",
+    kind: "cad-review" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    review,
+  };
+}
+
 describe("MessagesTimeline", () => {
   it("renders collapse controls for long user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -210,6 +320,22 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Context compacted");
     expect(markup).toContain("Work log");
+  });
+
+  it("renders mechanism plans, deep dives, and rich CAD finding fields", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildCadReviewTimelineEntry()]} />,
+    );
+
+    expect(markup).toContain("Mechanism plan");
+    expect(markup).toContain("Intake roller path");
+    expect(markup).toContain("Calculator needs");
+    expect(markup).toContain("Geometry:");
+    expect(markup).toContain("Check:");
+    expect(markup).toContain("Focused deep dives");
+    expect(markup).toContain("Target:");
+    expect(markup).toContain("Calculate deflection");
   });
 
   it("formats changed file paths from the workspace root", async () => {

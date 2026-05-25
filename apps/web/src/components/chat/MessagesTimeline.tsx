@@ -103,7 +103,7 @@ interface TimelineRowActivityState {
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
 const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
-const TIMELINE_LIST_FOOTER = <div className="h-3 sm:h-4" />;
+const TIMELINE_LIST_FOOTER = <div className="h-44 sm:h-48" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
 // ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           maintainScrollAtEndThreshold={0.1}
           maintainVisibleContentPosition
           onScroll={handleScroll}
-          className="h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
+          className="timeline-scrollport h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
           ListHeaderComponent={TIMELINE_LIST_HEADER}
           ListFooterComponent={TIMELINE_LIST_FOOTER}
         />
@@ -521,9 +521,13 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
       ? null
       : review.status === "capturing-baseline"
         ? "Baseline capture"
-        : review.activePersona
-          ? `${formatCadReviewPersona(review.activePersona)} reviewer`
-          : null;
+        : review.status === "planning"
+          ? "Mechanism planning"
+          : review.status === "deep-diving"
+            ? "Focused deep dive"
+            : review.activePersona
+              ? `${formatCadReviewPersona(review.activePersona)} reviewer`
+              : null;
   const allToolCalls = Object.values(review.toolCallsByReviewer).flat();
   const baselineArtifacts = review.evidenceArtifacts.filter(
     (artifact) => artifact.scope === "baseline",
@@ -577,6 +581,35 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
           </section>
         ) : null}
 
+        {review.reviewPlan ? (
+          <section className="mt-4">
+            <h4 className="text-xs font-medium text-muted-foreground">Mechanism plan</h4>
+            <p className="mt-1 text-sm text-muted-foreground">{review.reviewPlan.summary}</p>
+            {review.reviewPlan.mechanisms.length > 0 ? (
+              <div className="mt-2 grid gap-2 sm:grid-cols-2">
+                {review.reviewPlan.mechanisms.map((mechanism) => (
+                  <div key={mechanism.name} className="rounded-md border border-border/70 p-2.5">
+                    <p className="text-sm font-medium">{mechanism.name}</p>
+                    <p className="mt-1 text-xs text-muted-foreground">{mechanism.role}</p>
+                    {mechanism.specificChecks.length > 0 ? (
+                      <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                        {mechanism.specificChecks.slice(0, 3).map((check) => (
+                          <li key={check}>- {check}</li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {review.reviewPlan.calculatorNeeds.length > 0 ? (
+              <p className="mt-2 text-xs text-muted-foreground">
+                Calculator needs: {review.reviewPlan.calculatorNeeds.join("; ")}
+              </p>
+            ) : null}
+          </section>
+        ) : null}
+
         {review.personaReports.length > 0 ? (
           <section className="mt-4">
             <h4 className="text-xs font-medium text-muted-foreground">Reviewer personas</h4>
@@ -591,9 +624,31 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
                   {report.topConcerns.length > 0 ? (
                     <ul className="mt-2 space-y-1 text-sm">
                       {report.topConcerns.map((finding) => (
-                        <li key={finding.id}>
-                          <span className="font-medium">{finding.title}:</span>{" "}
-                          {finding.description}
+                        <li key={finding.id} className="rounded-md bg-muted/30 p-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">{finding.title}</span>
+                            {finding.severity ? (
+                              <span className="rounded-sm border border-border px-1.5 py-0.5 text-[10px] uppercase text-muted-foreground">
+                                {finding.severity}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1">{finding.description}</p>
+                          {finding.observedGeometry ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Geometry: {finding.observedGeometry}
+                            </p>
+                          ) : null}
+                          {finding.specificCheck ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Check: {finding.specificCheck}
+                            </p>
+                          ) : null}
+                          {finding.recommendedFix ? (
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              Fix: {finding.recommendedFix}
+                            </p>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -613,6 +668,44 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
                   <span className="font-medium">{item.priority}: </span>
                   {item.title}
                   <p className="mt-1 text-muted-foreground">{item.description}</p>
+                  {item.targetGeometry ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Target: {item.targetGeometry}
+                    </p>
+                  ) : null}
+                  {item.verificationSteps && item.verificationSteps.length > 0 ? (
+                    <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
+                      {item.verificationSteps.map((step) => (
+                        <li key={step}>- {step}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {review.deepDiveReports && review.deepDiveReports.length > 0 ? (
+          <section className="mt-4">
+            <h4 className="text-xs font-medium text-muted-foreground">Focused deep dives</h4>
+            <div className="mt-2 space-y-2">
+              {review.deepDiveReports.map((deepDive) => (
+                <div key={deepDive.id} className="rounded-lg border border-border/70 p-3 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">{deepDive.focus}</span>
+                    <span className="text-xs text-muted-foreground">
+                      {deepDive.confidence} confidence
+                    </span>
+                  </div>
+                  <p className="mt-1 text-muted-foreground">{deepDive.summary}</p>
+                  {deepDive.specificChecks.length > 0 ? (
+                    <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                      {deepDive.specificChecks.map((check) => (
+                        <li key={check}>- {check}</li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
               ))}
             </div>

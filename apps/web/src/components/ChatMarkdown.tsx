@@ -208,8 +208,16 @@ function SuspenseShikiCodeBlock({
   isStreaming,
 }: SuspenseShikiCodeBlockProps) {
   const language = extractFenceLanguage(className);
+  if (isStreaming) {
+    return (
+      <pre className={cn("chat-markdown-streaming-code", className)}>
+        <code>{code}</code>
+      </pre>
+    );
+  }
+
   const cacheKey = createHighlightCacheKey(code, language, themeName);
-  const cachedHighlightedHtml = !isStreaming ? highlightedCodeCache.get(cacheKey) : null;
+  const cachedHighlightedHtml = highlightedCodeCache.get(cacheKey);
 
   if (cachedHighlightedHtml != null) {
     return (

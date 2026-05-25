@@ -4,12 +4,17 @@ import { useMemo } from "react";
 
 const LAST_EDITOR_KEY = "cadsense:last-editor";
 
+function resolveDefaultEditor(availableEditors: ReadonlyArray<EditorId>): EditorId | null {
+  if (availableEditors.includes("file-manager")) return "file-manager";
+  return EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null;
+}
+
 export function usePreferredEditor(availableEditors: ReadonlyArray<EditorId>) {
   const [lastEditor, setLastEditor] = useLocalStorage(LAST_EDITOR_KEY, null, EditorId);
 
   const effectiveEditor = useMemo(() => {
     if (lastEditor && availableEditors.includes(lastEditor)) return lastEditor;
-    return EDITORS.find((editor) => availableEditors.includes(editor.id))?.id ?? null;
+    return resolveDefaultEditor(availableEditors);
   }, [lastEditor, availableEditors]);
 
   return [effectiveEditor, setLastEditor] as const;
@@ -21,7 +26,7 @@ export function resolveAndPersistPreferredEditor(
   const availableEditorIds = new Set(availableEditors);
   const stored = getLocalStorageItem(LAST_EDITOR_KEY, EditorId);
   if (stored && availableEditorIds.has(stored)) return stored;
-  const editor = EDITORS.find((editor) => availableEditorIds.has(editor.id))?.id ?? null;
+  const editor = resolveDefaultEditor(availableEditors);
   if (editor) setLocalStorageItem(LAST_EDITOR_KEY, editor, EditorId);
   return editor ?? null;
 }

@@ -49,7 +49,12 @@ import {
   type Icon,
 } from "../Icons";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { SettingResetButton, SettingsPageContainer, SettingsSection } from "./settingsLayout";
+import {
+  SettingResetButton,
+  SettingsPageContainer,
+  SettingsRow,
+  SettingsSection,
+} from "./settingsLayout";
 
 const EMPTY_DISCOVERY_RESULT: SourceControlDiscoveryResult = {
   versionControlSystems: [],
@@ -438,6 +443,8 @@ function EmptySourceControlDiscovery({
 }
 
 export function SourceControlSettingsPanel() {
+  const displayGitUi = useSettings((settings) => settings.displayGitUi);
+  const { updateSettings } = useUpdateSettings();
   const discovery = useSourceControlDiscovery();
   const result = discovery.data ?? EMPTY_DISCOVERY_RESULT;
   const hasDiscoveryItems =
@@ -468,6 +475,29 @@ export function SourceControlSettingsPanel() {
 
   return (
     <SettingsPageContainer>
+      <SettingsSection title="Source Control">
+        <SettingsRow
+          title="Display Git UI"
+          description="Show Git actions, repository initialization, and change request indicators in the app."
+          resetAction={
+            displayGitUi !== DEFAULT_UNIFIED_SETTINGS.displayGitUi ? (
+              <SettingResetButton
+                label="display Git UI"
+                onClick={() =>
+                  updateSettings({ displayGitUi: DEFAULT_UNIFIED_SETTINGS.displayGitUi })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={displayGitUi}
+              onCheckedChange={(checked) => updateSettings({ displayGitUi: checked })}
+              aria-label="Display Git UI"
+            />
+          }
+        />
+      </SettingsSection>
       {isInitialScanPending ? (
         <>
           <SourceControlSectionSkeleton title="Version Control" headerAction={scanButton} />

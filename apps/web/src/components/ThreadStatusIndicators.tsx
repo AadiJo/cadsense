@@ -15,6 +15,7 @@ import { resolveChangeRequestPresentation } from "../sourceControlPresentation";
 import { resolveThreadStatusPill, type ThreadStatusPill } from "./Sidebar.logic";
 import type { SidebarThreadSummary } from "../types";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { useSettings } from "../hooks/useSettings";
 
 export interface PrStatusIndicator {
   label: string;
@@ -137,6 +138,7 @@ export function ThreadStatusLabel({
  * thread status dot, matching the sidebar's leading indicators.
  */
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
+  const displayGitUi = useSettings((settings) => settings.displayGitUi);
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
   const lastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
@@ -152,9 +154,9 @@ export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummar
   const gitCwd = thread.worktreePath ?? threadProjectCwd;
   const gitStatus = useGitStatus({
     environmentId: thread.environmentId,
-    cwd: thread.branch != null ? gitCwd : null,
+    cwd: displayGitUi && thread.branch != null ? gitCwd : null,
   });
-  const pr = resolveThreadPr(thread.branch, gitStatus.data);
+  const pr = displayGitUi ? resolveThreadPr(thread.branch, gitStatus.data) : null;
   const prStatus = prStatusIndicator(pr, gitStatus.data?.sourceControlProvider);
   const threadStatus = resolveThreadStatusPill({
     thread: {

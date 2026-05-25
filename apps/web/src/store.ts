@@ -1587,6 +1587,7 @@ function applyEnvironmentOrchestrationEvent(
             synthesis: "Deduplicates reviewer overlap into prioritized action items.",
           },
           personaReports: [],
+          deepDiveReports: [],
           mergedActionItems: [],
           evidenceArtifacts: [],
           toolCallsByReviewer: {

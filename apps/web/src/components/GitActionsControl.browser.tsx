@@ -254,6 +254,13 @@ vi.mock("~/terminal-links", () => ({
   resolvePathLinkTarget: vi.fn(),
 }));
 
+vi.mock("~/hooks/useSettings", () => ({
+  useSettings: (selector?: (settings: { displayGitUi: boolean }) => unknown) => {
+    const settings = { displayGitUi: true };
+    return selector ? selector(settings) : settings;
+  },
+}));
+
 import GitActionsControl from "./GitActionsControl";
 
 function findButtonByText(text: string): HTMLButtonElement | null {

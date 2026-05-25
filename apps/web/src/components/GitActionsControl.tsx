@@ -81,6 +81,7 @@ import { readLocalApi } from "~/localApi";
 import { getSourceControlPresentation } from "~/sourceControlPresentation";
 import { useStore } from "~/store";
 import { createThreadSelectorByRef } from "~/storeSelectors";
+import { useSettings } from "~/hooks/useSettings";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
@@ -950,6 +951,7 @@ export default function GitActionsControl({
   activeThreadRef,
   draftId,
 }: GitActionsControlProps) {
+  const displayGitUi = useSettings((settings) => settings.displayGitUi);
   const activeEnvironmentId = activeThreadRef?.environmentId ?? null;
   const threadToastData = useMemo(
     () => (activeThreadRef ? { threadRef: activeThreadRef } : undefined),
@@ -1056,7 +1058,7 @@ export default function GitActionsControl({
 
   const { data: gitStatus = null, error: gitStatusError } = useGitStatus({
     environmentId: activeEnvironmentId,
-    cwd: gitCwd,
+    cwd: displayGitUi ? gitCwd : null,
   });
   const sourceControlPresentation = useMemo(
     () => getSourceControlPresentation(gitStatus?.sourceControlProvider),
@@ -1614,7 +1616,7 @@ export default function GitActionsControl({
 
   const canPublishRepository = isRepo && gitStatusForActions !== null && !hasPrimaryRemote;
 
-  if (!gitCwd) return null;
+  if (!gitCwd || !displayGitUi) return null;
 
   return (
     <>
