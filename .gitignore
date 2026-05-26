@@ -29,3 +29,6 @@ squashfs-root/
 .gstack/
 dist-electron/
 .electron-runtime/
+AGENTS.md
+CLAUDE.md
+onshape-shaded-preview/
