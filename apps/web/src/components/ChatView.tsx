@@ -190,6 +190,7 @@ import {
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForStartedServerThread,
+  waitForProjectedServerThread,
   threadHasStarted,
 } from "./ChatView.logic";
 import { useChatRoutePanelsMarkOpened } from "./ChatRoutePanels";
@@ -3966,33 +3967,99 @@ export default function ChatView(props: ChatViewProps) {
     return <NoActiveThreadState />;
   }
 
-  const canGenerateCadReview =
-    isServerThread &&
+  const canGenerateCadReview = Boolean(
+    activeThread &&
     (activeThread.externalContext?.provider === "onshape" ||
-      activeProject?.externalContext?.provider === "onshape");
+      activeProject?.externalContext?.provider === "onshape"),
+  );
   const cadReviewOverlaySteps = useMemo(
     () => deriveCadReviewOverlaySteps(activeThread.reviews ?? [], cadReviewWorkLogEntries),
     [activeThread.reviews, cadReviewWorkLogEntries],
   );
   const onGenerateCadReview = async () => {
     const api = readEnvironmentApi(activeThread.environmentId);
-    if (!api || !canGenerateCadReview || cadReviewInProgress) {
+    if (
+      !api ||
+      !activeProject ||
+      !canGenerateCadReview ||
+      cadReviewInProgress ||
+      sendInFlightRef.current
+    ) {
       return;
     }
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!sendCtx) {
+      return;
+    }
+    const reviewThreadId = activeThread.id;
+    const reviewThreadRef = scopeThreadRef(activeThread.environmentId, reviewThreadId);
+    const createdAt = new Date().toISOString();
+    const reviewRunId = CadReviewId.make(`cad-review-${crypto.randomUUID()}`);
+    sendInFlightRef.current = true;
+    setThreadError(reviewThreadId, null);
     if (!diffOpen) {
       // CAD review screenshots are browser-mediated; mount the CAD panel before the server
       // publishes baseline capture requests so the first request is not lost.
       onToggleDiff();
       await sleep(CAD_REVIEW_PANEL_PREWARM_MS);
     }
-    const createdAt = new Date().toISOString();
-    await api.orchestration.dispatchCommand({
-      type: "thread.review.generate",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      reviewRunId: CadReviewId.make(`cad-review-${crypto.randomUUID()}`),
-      createdAt,
-    });
+    try {
+      if (!isServerThread) {
+        await api.orchestration.dispatchCommand({
+          type: "thread.create",
+          commandId: newCommandId(),
+          threadId: reviewThreadId,
+          projectId: activeProject.id,
+          title: "Review my CAD from all angles",
+          ...(activeProject.externalContext?.provider === "onshape"
+            ? {
+                externalContext: {
+                  provider: "onshape" as const,
+                  onshape: activeProject.externalContext.onshape,
+                },
+              }
+            : {}),
+          modelSelection: sendCtx.selectedModelSelection,
+          runtimeMode,
+          interactionMode,
+          branch: activeThreadBranch,
+          worktreePath: activeThread.worktreePath,
+          createdAt,
+        });
+      }
+      await api.orchestration.dispatchCommand({
+        type: "thread.review.generate",
+        commandId: newCommandId(),
+        threadId: reviewThreadId,
+        reviewRunId,
+        createdAt,
+      });
+      if (!isServerThread) {
+        const projected = await waitForProjectedServerThread(reviewThreadRef);
+        if (!projected) {
+          throw new Error("CAD review thread was created but did not appear in the thread list.");
+        }
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId: activeThread.environmentId,
+            threadId: reviewThreadId,
+          },
+          replace: true,
+          search: (previous) => {
+            const rest = stripDiffSearchParams(previous);
+            return { ...rest, diff: "1" };
+          },
+        });
+      }
+    } catch (err) {
+      setThreadError(
+        reviewThreadId,
+        err instanceof Error ? err.message : "Failed to start CAD review.",
+      );
+    } finally {
+      sendInFlightRef.current = false;
+    }
   };
   const onStopCadReview = async () => {
     const api = readEnvironmentApi(activeThread.environmentId);

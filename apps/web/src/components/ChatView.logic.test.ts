@@ -20,6 +20,7 @@ import {
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
+  waitForProjectedServerThread,
   waitForStartedServerThread,
 } from "./ChatView.logic";
 
@@ -440,6 +441,37 @@ describe("waitForStartedServerThread", () => {
     const threadId = ThreadId.make("thread-timeout");
     setStoreThreads([makeThread({ id: threadId })]);
     const promise = waitForStartedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
+
+    await vi.advanceTimersByTimeAsync(500);
+
+    await expect(promise).resolves.toBe(false);
+  });
+});
+
+describe("waitForProjectedServerThread", () => {
+  it("resolves immediately when the thread is already projected", async () => {
+    const threadId = ThreadId.make("thread-projected");
+    setStoreThreads([makeThread({ id: threadId })]);
+
+    await expect(
+      waitForProjectedServerThread(scopeThreadRef(localEnvironmentId, threadId)),
+    ).resolves.toBe(true);
+  });
+
+  it("waits for the thread projection via subscription updates", async () => {
+    const threadId = ThreadId.make("thread-projection-wait");
+    const promise = waitForProjectedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
+
+    setStoreThreads([makeThread({ id: threadId })]);
+
+    await expect(promise).resolves.toBe(true);
+  });
+
+  it("returns false after the timeout when the thread is never projected", async () => {
+    vi.useFakeTimers();
+
+    const threadId = ThreadId.make("thread-projection-timeout");
+    const promise = waitForProjectedServerThread(scopeThreadRef(localEnvironmentId, threadId), 500);
 
     await vi.advanceTimersByTimeAsync(500);
 
