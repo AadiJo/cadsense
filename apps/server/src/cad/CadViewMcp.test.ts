@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  CAD_SCREENSHOT_HTTP_TIMEOUT_MS,
   CAD_VIEW_EXPORT_ROOT_ENV,
   CAD_VIEW_MCP_SERVER_NAME,
   CAD_VIEW_MCP_TOOL_NAME,
@@ -8,7 +9,16 @@ import {
   makeCadViewCodexMcpConfig,
   makeCadViewMcpOrigin,
   makeCadViewMcpStdioServer,
+  postCadScreenshotCapture,
 } from "./CadViewMcp.ts";
+
+function abortError(): Error {
+  return Object.assign(new Error("The operation was aborted."), { name: "AbortError" });
+}
+
+function timeoutError(): Error {
+  return Object.assign(new Error("The operation timed out."), { name: "TimeoutError" });
+}
 
 describe("CadViewMcp", () => {
   it("builds loopback origin for wildcard hosts", () => {
@@ -198,5 +208,56 @@ describe("CadViewMcp", () => {
       calculationType: "compression",
       result: { compressionIn: 0.5 },
     });
+  });
+
+  it("aborts screenshot capture requests that never return", async () => {
+    const previousOrigin = process.env.CADSENSE_CAD_VIEW_ORIGIN;
+    const previousToken = process.env.CADSENSE_CAD_VIEW_TOKEN;
+    const timeoutSpy = vi.spyOn(AbortSignal, "timeout").mockImplementation((timeoutMs) => {
+      const controller = new AbortController();
+      controller.abort(timeoutError());
+      expect(timeoutMs).toBe(CAD_SCREENSHOT_HTTP_TIMEOUT_MS);
+      return controller.signal;
+    });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+        return new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          if (signal?.aborted) {
+            reject(signal.reason ?? abortError());
+            return;
+          }
+          signal?.addEventListener("abort", () => reject(signal.reason ?? abortError()), {
+            once: true,
+          });
+        });
+      }),
+    );
+    process.env.CADSENSE_CAD_VIEW_ORIGIN = "http://127.0.0.1:3900";
+    process.env.CADSENSE_CAD_VIEW_TOKEN = "token";
+    try {
+      const capture = postCadScreenshotCapture({
+        threadId: "thread-1",
+        exportRoot: process.cwd(),
+        fit: true,
+      } as Parameters<typeof postCadScreenshotCapture>[0]);
+      await expect(capture).rejects.toThrow("timed out after 60 seconds");
+      expect(timeoutSpy).toHaveBeenCalledWith(CAD_SCREENSHOT_HTTP_TIMEOUT_MS);
+    } finally {
+      vi.restoreAllMocks();
+      vi.unstubAllGlobals();
+      if (previousOrigin === undefined) {
+        delete process.env.CADSENSE_CAD_VIEW_ORIGIN;
+      } else {
+        process.env.CADSENSE_CAD_VIEW_ORIGIN = previousOrigin;
+      }
+      if (previousToken === undefined) {
+        delete process.env.CADSENSE_CAD_VIEW_TOKEN;
+      } else {
+        process.env.CADSENSE_CAD_VIEW_TOKEN = previousToken;
+      }
+    }
   });
 });

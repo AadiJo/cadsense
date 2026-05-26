@@ -124,6 +124,7 @@ function buildCadReviewTimelineEntry() {
     title: "Intake CAD Review",
     status: "completed",
     whatIsBeingReviewed: "Intake subsystem",
+    reviewPrompt: "Review the roller compression path.",
     commonThemes: ["Roller path needs measurable checks."],
     reviewerTraits: {
       systems_integration: "Integration",
@@ -133,6 +134,9 @@ function buildCadReviewTimelineEntry() {
     },
     reviewPlan: {
       summary: "Inspect intake rollers and frame interface.",
+      reviewScope: "Roller compression path.",
+      baselineRequired: true,
+      baselineReason: "The roller path needs visual evidence.",
       mechanisms: [
         {
           name: "Intake roller path",
@@ -146,6 +150,23 @@ function buildCadReviewTimelineEntry() {
       reviewPriorities: ["Compression path"],
       missingContext: ["Game piece diameter"],
       calculatorNeeds: ["Shaft deflection from unsupported span"],
+      reviewerSelection: [
+        {
+          persona: "mechanical_robustness",
+          enabled: true,
+          reason: "Compression and shaft support are mechanical robustness concerns.",
+        },
+        {
+          persona: "systems_integration",
+          enabled: false,
+          reason: "The prompt is scoped to the roller path.",
+        },
+        {
+          persona: "program_readiness",
+          enabled: false,
+          reason: "No schedule or scope decision was requested.",
+        },
+      ],
     },
     personaReports: [
       {

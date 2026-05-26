@@ -1,9 +1,13 @@
 import type { OrchestrationEvent } from "@cadsense/contracts";
 import * as Cause from "effect/Cause";
+import * as DateTime from "effect/DateTime";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { CadReviewService } from "../Services/CadReviewService.ts";
 import { CadReviewReactor, type CadReviewReactorShape } from "../Services/CadReviewService.ts";
@@ -16,10 +20,49 @@ const reviewKey = (
   >,
 ) => `${event.payload.threadId}\0${event.payload.reviewRunId}`;
 
+const RECOVERY_SWEEP_INTERVAL = Duration.minutes(1);
+
+export const tryClaimCadReviewRun = (input: {
+  readonly sql: SqlClient.SqlClient;
+  readonly event: Extract<OrchestrationEvent, { type: "thread.review-requested" }>;
+  readonly workerId: string;
+}) =>
+  Effect.gen(function* () {
+    const claimedAt = DateTime.formatIso(yield* DateTime.now);
+    const rows = yield* input.sql<{ readonly acquired: number }>`
+      INSERT INTO cad_review_run_claims (
+        review_id,
+        thread_id,
+        worker_id,
+        command_id,
+        claimed_at
+      )
+      VALUES (
+        ${input.event.payload.reviewRunId},
+        ${input.event.payload.threadId},
+        ${input.workerId},
+        ${input.event.commandId},
+        ${claimedAt}
+      )
+      ON CONFLICT (review_id) DO NOTHING
+      RETURNING 1 AS "acquired"
+    `;
+    return rows.length > 0;
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("cad review reactor failed to claim review run", {
+        reviewRunId: input.event.payload.reviewRunId,
+        cause: Cause.pretty(cause),
+      }).pipe(Effect.as(false)),
+    ),
+  );
+
 const make = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
   const orchestrationEngine = yield* OrchestrationEngineService;
   const cadReviewService = yield* CadReviewService;
   const runningReviews = new Map<string, Fiber.Fiber<void, never>>();
+  const workerId = `${process.pid}:${crypto.randomUUID()}`;
 
   const runReviewSafely = (
     event: Extract<OrchestrationEvent, { type: "thread.review-requested" }>,
@@ -39,6 +82,10 @@ const make = Effect.gen(function* () {
 
   const startReview = (event: Extract<OrchestrationEvent, { type: "thread.review-requested" }>) =>
     Effect.gen(function* () {
+      const claimed = yield* tryClaimCadReviewRun({ sql, event, workerId });
+      if (!claimed) {
+        return;
+      }
       const key = reviewKey(event);
       const existing = runningReviews.get(key);
       if (existing) {
@@ -60,7 +107,18 @@ const make = Effect.gen(function* () {
     });
 
   const start: CadReviewReactorShape["start"] = Effect.fn("start")(function* () {
-    yield* cadReviewService.recoverInterruptedReviews();
+    const recoverInterruptedReviews = cadReviewService.recoverInterruptedReviews().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("cad review reactor failed to recover interrupted reviews", {
+          cause: Cause.pretty(cause),
+        }),
+      ),
+    );
+
+    yield* recoverInterruptedReviews;
+    yield* Effect.forkScoped(
+      recoverInterruptedReviews.pipe(Effect.repeat(Schedule.spaced(RECOVERY_SWEEP_INTERVAL))),
+    );
     yield* Effect.forkScoped(
       Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
         event.type === "thread.review-requested"

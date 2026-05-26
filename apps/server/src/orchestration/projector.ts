@@ -533,6 +533,7 @@ export function projectEvent(
           title: "CAD Review",
           status: "requested",
           whatIsBeingReviewed: "",
+          ...(payload.reviewPrompt ? { reviewPrompt: payload.reviewPrompt } : {}),
           commonThemes: [],
           reviewerTraits: {
             systems_integration:

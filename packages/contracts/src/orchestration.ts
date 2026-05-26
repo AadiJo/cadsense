@@ -253,6 +253,12 @@ export const CadReviewPersona = Schema.Literals([
   "synthesis",
 ]);
 export type CadReviewPersona = typeof CadReviewPersona.Type;
+export const CadReviewSpecialistPersona = Schema.Literals([
+  "systems_integration",
+  "program_readiness",
+  "mechanical_robustness",
+]);
+export type CadReviewSpecialistPersona = typeof CadReviewSpecialistPersona.Type;
 
 export const CadReviewStatus = Schema.Literals([
   "requested",
@@ -332,6 +338,9 @@ export type CadReviewActionItem = typeof CadReviewActionItem.Type;
 
 export const CadReviewMechanismPlan = Schema.Struct({
   summary: Schema.String,
+  reviewScope: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  baselineRequired: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  baselineReason: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   mechanisms: Schema.Array(
     Schema.Struct({
       name: TrimmedNonEmptyString,
@@ -345,6 +354,13 @@ export const CadReviewMechanismPlan = Schema.Struct({
   reviewPriorities: Schema.Array(Schema.String),
   missingContext: Schema.Array(Schema.String),
   calculatorNeeds: Schema.Array(Schema.String),
+  reviewerSelection: Schema.Array(
+    Schema.Struct({
+      persona: CadReviewSpecialistPersona,
+      enabled: Schema.Boolean,
+      reason: Schema.String,
+    }),
+  ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
 });
 export type CadReviewMechanismPlan = typeof CadReviewMechanismPlan.Type;
 
@@ -388,6 +404,7 @@ export const CadReviewReport = Schema.Struct({
   status: CadReviewStatus,
   activePersona: Schema.optional(CadReviewPersona),
   whatIsBeingReviewed: Schema.String,
+  reviewPrompt: Schema.optional(Schema.String),
   commonThemes: Schema.Array(Schema.String),
   reviewerTraits: Schema.Record(CadReviewPersona, Schema.String),
   reviewPlan: Schema.optional(CadReviewMechanismPlan),
@@ -821,6 +838,7 @@ export const ThreadReviewGenerateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   reviewRunId: CadReviewId,
+  reviewPrompt: Schema.optionalKey(Schema.String),
   createdAt: IsoDateTime,
 });
 export type ThreadReviewGenerateCommand = typeof ThreadReviewGenerateCommand.Type;
@@ -1161,6 +1179,7 @@ export const ThreadProposedPlanUpsertedPayload = Schema.Struct({
 export const ThreadReviewRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   reviewRunId: CadReviewId,
+  reviewPrompt: Schema.optionalKey(Schema.String),
   createdAt: IsoDateTime,
 });
 export type ThreadReviewRequestedPayload = typeof ThreadReviewRequestedPayload.Type;

@@ -593,6 +593,13 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
           </section>
         ) : null}
 
+        {review.reviewPrompt ? (
+          <section className="mt-4">
+            <h4 className="text-xs font-medium text-muted-foreground">Review prompt</h4>
+            <p className="mt-1 text-sm">{review.reviewPrompt}</p>
+          </section>
+        ) : null}
+
         {review.commonThemes.length > 0 ? (
           <section className="mt-4">
             <h4 className="text-xs font-medium text-muted-foreground">Common themes</h4>
@@ -629,6 +636,36 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
               <p className="mt-2 text-xs text-muted-foreground">
                 Calculator needs: {review.reviewPlan.calculatorNeeds.join("; ")}
               </p>
+            ) : null}
+            {review.reviewPlan.baselineReason ? (
+              <p className="mt-3 text-xs text-muted-foreground">
+                Baseline capture: {review.reviewPlan.baselineRequired ? "requested" : "skipped"} -{" "}
+                {review.reviewPlan.baselineReason}
+              </p>
+            ) : null}
+            {review.reviewPlan.reviewerSelection.length > 0 ? (
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {review.reviewPlan.reviewerSelection.map((selection) => (
+                  <div key={selection.persona} className="rounded-md border border-border/70 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs font-medium">
+                        {formatCadReviewPersona(selection.persona)}
+                      </span>
+                      <span
+                        className={cn(
+                          "rounded-sm border px-1.5 py-0.5 text-[10px] uppercase",
+                          selection.enabled
+                            ? "border-success/30 text-success-foreground"
+                            : "border-border text-muted-foreground",
+                        )}
+                      >
+                        {selection.enabled ? "enabled" : "skipped"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">{selection.reason}</p>
+                  </div>
+                ))}
+              </div>
             ) : null}
           </section>
         ) : null}

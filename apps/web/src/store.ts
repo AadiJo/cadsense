@@ -1614,6 +1614,7 @@ function applyEnvironmentOrchestrationEvent(
             title: "CAD Review",
             status: "requested",
             whatIsBeingReviewed: "",
+            ...(event.payload.reviewPrompt ? { reviewPrompt: event.payload.reviewPrompt } : {}),
             commonThemes: [],
             reviewerTraits: {
               systems_integration:

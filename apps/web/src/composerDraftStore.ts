@@ -44,9 +44,11 @@ import { getDefaultServerModel } from "./providerModels";
 import { UnifiedSettings } from "@cadsense/contracts/settings";
 const isRuntimeMode = Schema.is(RuntimeMode);
 const isProviderDriverKind = Schema.is(ProviderDriverKind);
+const ComposerSubmitMode = Schema.Literals(["ask", "review"]);
+export type ComposerSubmitMode = typeof ComposerSubmitMode.Type;
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "cadsense:composer-drafts:v1";
-const COMPOSER_DRAFT_STORAGE_VERSION = 6;
+const COMPOSER_DRAFT_STORAGE_VERSION = 7;
 const DraftThreadEnvModeSchema = Schema.Literals(["local", "worktree"]);
 export type DraftThreadEnvMode = typeof DraftThreadEnvModeSchema.Type;
 
@@ -111,6 +113,7 @@ const PersistedComposerThreadDraftState = Schema.Struct({
   activeProvider: Schema.optionalKey(Schema.NullOr(ProviderInstanceId)),
   runtimeMode: Schema.optionalKey(RuntimeMode),
   interactionMode: Schema.optionalKey(ProviderInteractionMode),
+  submitMode: Schema.optionalKey(ComposerSubmitMode),
 });
 type PersistedComposerThreadDraftState = typeof PersistedComposerThreadDraftState.Type;
 
@@ -229,6 +232,7 @@ export interface ComposerThreadDraftState {
   activeProvider: ProviderInstanceId | null;
   runtimeMode: RuntimeMode | null;
   interactionMode: ProviderInteractionMode | null;
+  submitMode: ComposerSubmitMode | null;
 }
 
 /**
@@ -383,6 +387,10 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     interactionMode: ProviderInteractionMode | null | undefined,
   ) => void;
+  setSubmitMode: (
+    threadRef: ComposerThreadTarget,
+    submitMode: ComposerSubmitMode | null | undefined,
+  ) => void;
   addImage: (threadRef: ComposerThreadTarget, image: ComposerImageAttachment) => void;
   addImages: (threadRef: ComposerThreadTarget, images: ComposerImageAttachment[]) => void;
   removeImage: (threadRef: ComposerThreadTarget, imageId: string) => void;
@@ -489,6 +497,7 @@ const EMPTY_THREAD_DRAFT = Object.freeze<ComposerThreadDraftState>({
   activeProvider: null,
   runtimeMode: null,
   interactionMode: null,
+  submitMode: null,
 });
 
 function createEmptyThreadDraft(): ComposerThreadDraftState {
@@ -502,6 +511,7 @@ function createEmptyThreadDraft(): ComposerThreadDraftState {
     activeProvider: null,
     runtimeMode: null,
     interactionMode: null,
+    submitMode: null,
   };
 }
 
@@ -571,7 +581,8 @@ function shouldRemoveDraft(draft: ComposerThreadDraftState): boolean {
     Object.keys(draft.modelSelectionByProvider).length === 0 &&
     draft.activeProvider === null &&
     draft.runtimeMode === null &&
-    draft.interactionMode === null
+    draft.interactionMode === null &&
+    draft.submitMode === null
   );
 }
 
@@ -1482,6 +1493,10 @@ function normalizePersistedDraftsByThreadId(
       draftCandidate.interactionMode === "plan" || draftCandidate.interactionMode === "default"
         ? draftCandidate.interactionMode
         : null;
+    const submitMode =
+      draftCandidate.submitMode === "ask" || draftCandidate.submitMode === "review"
+        ? draftCandidate.submitMode
+        : null;
     const prompt = ensureInlineTerminalContextPlaceholders(
       promptCandidate,
       terminalContexts.length,
@@ -1540,7 +1555,8 @@ function normalizePersistedDraftsByThreadId(
       terminalContexts.length === 0 &&
       !hasModelData &&
       !runtimeMode &&
-      !interactionMode
+      !interactionMode &&
+      !submitMode
     ) {
       continue;
     }
@@ -1568,6 +1584,7 @@ function normalizePersistedDraftsByThreadId(
         : {}),
       ...(runtimeMode ? { runtimeMode } : {}),
       ...(interactionMode ? { interactionMode } : {}),
+      ...(submitMode ? { submitMode } : {}),
     };
   }
 
@@ -1644,7 +1661,8 @@ function partializeComposerDraftStoreState(
       draft.terminalContexts.length === 0 &&
       !hasModelData &&
       draft.runtimeMode === null &&
-      draft.interactionMode === null
+      draft.interactionMode === null &&
+      draft.submitMode === null
     ) {
       continue;
     }
@@ -1674,6 +1692,7 @@ function partializeComposerDraftStoreState(
         : {}),
       ...(draft.runtimeMode ? { runtimeMode: draft.runtimeMode } : {}),
       ...(draft.interactionMode ? { interactionMode: draft.interactionMode } : {}),
+      ...(draft.submitMode ? { submitMode: draft.submitMode } : {}),
     };
     persistedDraftsByThreadKey[threadKey] = persistedDraft;
   }
@@ -1901,6 +1920,7 @@ function toHydratedThreadDraft(
     activeProvider,
     runtimeMode: persistedDraft.runtimeMode ?? null,
     interactionMode: persistedDraft.interactionMode ?? null,
+    submitMode: persistedDraft.submitMode ?? null,
   };
 }
 
@@ -2581,6 +2601,35 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraft: ComposerThreadDraftState = {
               ...base,
               interactionMode: nextInteractionMode,
+            };
+            const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
+            if (shouldRemoveDraft(nextDraft)) {
+              delete nextDraftsByThreadKey[threadKey];
+            } else {
+              nextDraftsByThreadKey[threadKey] = nextDraft;
+            }
+            return { draftsByThreadKey: nextDraftsByThreadKey };
+          });
+        },
+        setSubmitMode: (threadRef, submitMode) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
+          if (threadKey.length === 0) {
+            return;
+          }
+          const nextSubmitMode =
+            submitMode === "ask" || submitMode === "review" ? submitMode : null;
+          set((state) => {
+            const existing = state.draftsByThreadKey[threadKey];
+            if (!existing && nextSubmitMode === null) {
+              return state;
+            }
+            const base = existing ?? createEmptyThreadDraft();
+            if (base.submitMode === nextSubmitMode) {
+              return state;
+            }
+            const nextDraft: ComposerThreadDraftState = {
+              ...base,
+              submitMode: nextSubmitMode,
             };
             const nextDraftsByThreadKey = { ...state.draftsByThreadKey };
             if (shouldRemoveDraft(nextDraft)) {

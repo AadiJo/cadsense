@@ -72,6 +72,7 @@ async function mountMenu(props?: { modelSelection?: ModelSelection; prompt?: str
         activeProvider: instanceId,
         runtimeMode: null,
         interactionMode: null,
+        submitMode: null,
       },
     },
     draftThreadsByThreadKey: {},

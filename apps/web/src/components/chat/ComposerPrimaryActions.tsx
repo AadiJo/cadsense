@@ -1,5 +1,6 @@
 import { memo, type PointerEventHandler } from "react";
 import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import type { ComposerSubmitMode } from "../../composerDraftStore";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -23,6 +24,7 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  submitMode: ComposerSubmitMode;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -62,6 +64,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  submitMode,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -207,8 +210,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
               ? "Preparing worktree"
               : isSendBusy
                 ? "Sending"
-                : "Send message"
+                : submitMode === "review"
+                  ? "Start CAD review"
+                  : "Send message"
       }
+      title={submitMode === "review" ? "Start CAD review" : "Send message"}
     >
       {isConnecting || isSendBusy ? (
         <svg

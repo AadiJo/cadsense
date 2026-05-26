@@ -1005,6 +1005,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               title: "CAD Review",
               status: "requested",
               whatIsBeingReviewed: "",
+              ...(event.payload.reviewPrompt ? { reviewPrompt: event.payload.reviewPrompt } : {}),
               commonThemes: [],
               reviewerTraits: {
                 systems_integration:

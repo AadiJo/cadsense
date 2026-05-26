@@ -2988,6 +2988,189 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("starts a CAD review from composer review mode with the prompt", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-cad-review-composer" as MessageId,
+      targetText: "cad review composer target",
+    });
+    const onshapeContext = {
+      provider: "onshape" as const,
+      onshape: {
+        connectionId: "onshape_conn",
+        entityId: "onshape_entity",
+        entityKind: "assembly" as const,
+        name: "Shooter",
+        breadcrumb: ["Robot", "Shooter"],
+        reference: {
+          baseUrl: "https://cad.onshape.com",
+          documentId: "doc",
+          wvmKind: "w" as const,
+          wvmId: "workspace",
+          elementId: "element",
+          url: "https://cad.onshape.com/documents/doc/w/workspace/e/element",
+        },
+        lastSyncedRelativePath: "onshape-sync/current.3mf",
+      },
+    };
+    const cadSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      projects: snapshot.projects.map((project) =>
+        project.id === PROJECT_ID
+          ? Object.assign({}, project, { externalContext: onshapeContext })
+          : project,
+      ),
+      threads: snapshot.threads.map((thread) =>
+        thread.id === THREAD_ID
+          ? Object.assign({}, thread, { externalContext: onshapeContext })
+          : thread,
+      ),
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: cadSnapshot,
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      expect(document.body.textContent).not.toContain("CAD model attached");
+      const submitModeButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
+            (button) => button.textContent?.trim() === "Ask",
+          ) ?? null,
+        "Unable to find composer submit mode button.",
+      );
+      submitModeButton.click();
+      const reviewModeItem = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll<HTMLElement>('[data-slot="menu-radio-item"]')).find(
+            (item) => item.textContent?.trim() === "Review",
+          ) ?? null,
+        "Unable to find composer review mode item.",
+      );
+      reviewModeItem.click();
+      useComposerDraftStore
+        .getState()
+        .setPrompt(THREAD_REF, "review my mounting for the flywheel inside the shooter");
+      await waitForLayout();
+
+      const startReviewButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Start CAD review"]'),
+        "Unable to find start CAD review composer button.",
+      );
+      expect(startReviewButton.disabled).toBe(false);
+      startReviewButton.click();
+
+      await vi.waitFor(
+        () => {
+          const reviewRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.review.generate",
+          ) as { type?: string; threadId?: string; reviewPrompt?: string } | undefined;
+          expect(reviewRequest).toMatchObject({
+            type: "thread.review.generate",
+            threadId: THREAD_ID,
+            reviewPrompt: "review my mounting for the flywheel inside the shooter",
+          });
+          expect(
+            wsRequests.some(
+              (request) =>
+                request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+                request.type === "thread.turn.start",
+            ),
+          ).toBe(false);
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("treats /ask as a mode switch without starting a review while in review mode", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-cad-review-slash-ask" as MessageId,
+      targetText: "cad review slash ask target",
+    });
+    const onshapeContext = {
+      provider: "onshape" as const,
+      onshape: {
+        connectionId: "onshape_conn",
+        entityId: "onshape_entity",
+        entityKind: "partStudio" as const,
+        name: "Winch",
+        breadcrumb: ["Robot", "Winch"],
+        reference: {
+          baseUrl: "https://cad.onshape.com",
+          documentId: "doc",
+          wvmKind: "w" as const,
+          wvmId: "workspace",
+          elementId: "element",
+          url: "https://cad.onshape.com/documents/doc/w/workspace/e/element",
+        },
+      },
+    };
+    const cadSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      projects: snapshot.projects.map((project) =>
+        project.id === PROJECT_ID
+          ? Object.assign({}, project, { externalContext: onshapeContext })
+          : project,
+      ),
+      threads: snapshot.threads.map((thread) =>
+        thread.id === THREAD_ID
+          ? Object.assign({}, thread, { externalContext: onshapeContext })
+          : thread,
+      ),
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: cadSnapshot,
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      useComposerDraftStore.getState().setSubmitMode(THREAD_REF, "review");
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "/ask");
+      await waitForLayout();
+
+      const startReviewButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Start CAD review"]'),
+        "Unable to find start CAD review composer button.",
+      );
+      startReviewButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(useComposerDraftStore.getState().getComposerDraft(THREAD_REF)?.submitMode).toBe(
+            "ask",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+      expect(
+        wsRequests.some(
+          (request) =>
+            request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+            request.type === "thread.review.generate",
+        ),
+      ).toBe(false);
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("hides the archive action when the pointer leaves a thread row", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

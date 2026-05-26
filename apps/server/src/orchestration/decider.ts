@@ -697,6 +697,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           reviewRunId: command.reviewRunId,
+          ...(command.reviewPrompt ? { reviewPrompt: command.reviewPrompt } : {}),
           createdAt: command.createdAt,
         },
       };

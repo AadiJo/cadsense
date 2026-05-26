@@ -1379,13 +1379,23 @@ describe("composerDraftStore runtime and interaction settings", () => {
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.interactionMode).toBe("plan");
   });
 
+  it("stores submit mode overrides in the composer draft", () => {
+    const store = useComposerDraftStore.getState();
+
+    store.setSubmitMode(threadRef, "review");
+
+    expect(draftFor(threadId, TEST_ENVIRONMENT_ID)?.submitMode).toBe("review");
+  });
+
   it("removes empty settings-only drafts when overrides are cleared", () => {
     const store = useComposerDraftStore.getState();
 
     store.setRuntimeMode(threadRef, "approval-required");
     store.setInteractionMode(threadRef, "plan");
+    store.setSubmitMode(threadRef, "review");
     store.setRuntimeMode(threadRef, null);
     store.setInteractionMode(threadRef, null);
+    store.setSubmitMode(threadRef, null);
 
     expect(draftFor(threadId, TEST_ENVIRONMENT_ID)).toBeUndefined();
   });

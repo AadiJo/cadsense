@@ -145,6 +145,13 @@ const CAD_MODEL_LOADING_TEXT_DELAY_MS = 350;
 const CAD_FULLSCREEN_TRANSITION_MS = 260;
 const CAD_FULLSCREEN_BEACON_RELEASE_MS = CAD_FULLSCREEN_TRANSITION_MS * 3;
 
+interface CadAgentControlOverlayRect {
+  readonly left: number;
+  readonly top: number;
+  readonly width: number;
+  readonly height: number;
+}
+
 type CadViewerFrameResponsePayload = {
   readonly components?: ReadonlyArray<CadViewerFrameComponentNode>;
   readonly pngBase64?: string;
@@ -421,6 +428,8 @@ export default function CadPanel({
   const [localCadFiles, setLocalCadFiles] = useState<ReadonlyArray<OnshapeSyncedCadFile>>([]);
   const [localCadFileError, setLocalCadFileError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const [agentControlOverlayRect, setAgentControlOverlayRect] =
+    useState<CadAgentControlOverlayRect | null>(null);
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const fullscreenCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullscreenEnterTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -861,6 +870,64 @@ export default function CadPanel({
   }, [agentControlHost, fullscreen, fullscreenMounted]);
 
   useEffect(() => {
+    if (!cadReviewInProgress || agentControlHost) {
+      setAgentControlOverlayRect(null);
+      return;
+    }
+    const panel = panelRef.current;
+    if (!panel) {
+      setAgentControlOverlayRect(null);
+      return;
+    }
+
+    let animationFrame = 0;
+    const updateRect = () => {
+      animationFrame = 0;
+      const rect = panel.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        setAgentControlOverlayRect(null);
+        return;
+      }
+      setAgentControlOverlayRect({
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+      });
+    };
+    const scheduleUpdate = () => {
+      if (animationFrame === 0) {
+        animationFrame = requestAnimationFrame(updateRect);
+      }
+    };
+
+    updateRect();
+    const resizeObserver = new ResizeObserver(scheduleUpdate);
+    resizeObserver.observe(panel);
+    window.addEventListener("resize", scheduleUpdate);
+    window.addEventListener("scroll", scheduleUpdate, true);
+    window.visualViewport?.addEventListener("resize", scheduleUpdate);
+    window.visualViewport?.addEventListener("scroll", scheduleUpdate);
+
+    return () => {
+      if (animationFrame !== 0) {
+        cancelAnimationFrame(animationFrame);
+      }
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("scroll", scheduleUpdate, true);
+      window.visualViewport?.removeEventListener("resize", scheduleUpdate);
+      window.visualViewport?.removeEventListener("scroll", scheduleUpdate);
+    };
+  }, [
+    agentControlHost,
+    cadReviewInProgress,
+    fullscreenClosing,
+    fullscreenEntering,
+    fullscreenMounted,
+  ]);
+
+  useEffect(() => {
     if (!cadUiStateKey) {
       return;
     }
@@ -1227,6 +1294,29 @@ export default function CadPanel({
     fullscreenBeaconAnchored && typeof document !== "undefined"
       ? createPortal(fullscreenControl, document.body)
       : null;
+  const agentControlOverlay =
+    cadReviewInProgress &&
+    !agentControlHost &&
+    agentControlOverlayRect &&
+    typeof document !== "undefined"
+      ? createPortal(
+          <div
+            aria-hidden="true"
+            className="cad-agent-control-overlay pointer-events-none fixed"
+            data-cad-agent-control-overlay="true"
+            style={{
+              left: agentControlOverlayRect.left,
+              top: agentControlOverlayRect.top,
+              width: agentControlOverlayRect.width,
+              height: agentControlOverlayRect.height,
+            }}
+          >
+            <div className="cad-agent-control-glow" />
+            <div className="cad-agent-control-frame" />
+          </div>,
+          document.body,
+        )
+      : null;
 
   return (
     <DiffPanelShell mode={mode} {...cadShellProps}>
@@ -1238,7 +1328,6 @@ export default function CadPanel({
             "transition-[background-color,box-shadow,outline-color] duration-260 ease-[var(--motion-ease-out)]",
           fullscreenMounted &&
             "fixed inset-0 z-50 grid grid-cols-[280px_minmax(0,1fr)] overflow-hidden bg-transparent shadow-2xl supports-[height:100dvh]:h-dvh",
-          cadReviewInProgress && "cad-agent-control-frame",
         )}
       >
         {fullscreenMounted ? (
@@ -1276,7 +1365,7 @@ export default function CadPanel({
         ) : null}
         <div
           className={cn(
-            "relative min-h-0",
+            "relative isolate min-h-0",
             fullscreenMounted ? "h-full" : "size-full",
             fullscreenChromeFadeClass,
           )}
@@ -1293,13 +1382,13 @@ export default function CadPanel({
           ) : null}
           {cadReviewInProgress ? (
             <div
-              className="absolute inset-0 z-[15] cursor-not-allowed"
+              className="absolute inset-0 z-[70] cursor-not-allowed"
               aria-hidden="true"
               data-cad-agent-control-interaction-blocker="true"
             />
           ) : null}
           {cadReviewInProgress ? (
-            <div className="pointer-events-none absolute inset-x-0 top-4 z-20 flex justify-center">
+            <div className="pointer-events-none absolute inset-x-0 top-4 z-[80] flex justify-center">
               <div className="cad-agent-control-pill rounded-full border border-emerald-300/80 bg-emerald-950/45 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.45)] backdrop-blur">
                 Agent control
               </div>
@@ -1347,6 +1436,7 @@ export default function CadPanel({
         {fullscreenBeaconAnchored ? null : fullscreenControl}
         {fullscreenControlPortal}
         {fullscreenMist}
+        {agentControlOverlay}
       </div>
     </DiffPanelShell>
   );

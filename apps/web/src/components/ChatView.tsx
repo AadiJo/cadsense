@@ -111,6 +111,7 @@ import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   CheckIcon,
   ChevronDownIcon,
+  BanIcon,
   LoaderCircleIcon,
   TriangleAlertIcon,
   WifiOffIcon,
@@ -147,6 +148,7 @@ import {
 import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
+  type ComposerSubmitMode,
   type DraftThreadEnvMode,
   useComposerDraftStore,
   type DraftId,
@@ -347,7 +349,7 @@ function useThreadPlanCatalog(threadIds: readonly ThreadId[]): ThreadPlanCatalog
   );
 }
 
-type CadReviewOverlayStepState = "pending" | "active" | "complete" | "failed";
+type CadReviewOverlayStepState = "pending" | "active" | "complete" | "failed" | "skipped";
 
 interface CadReviewOverlayStep {
   id: string;
@@ -433,20 +435,43 @@ function deriveCadReviewOverlaySteps(
       ["Mapping mechanisms", "Choosing review priorities"],
     ),
   });
+  const baselineSkipped =
+    activeReview.reviewPlan?.baselineRequired === false &&
+    CAD_REVIEW_PROGRESS_ORDER.indexOf(status) > CAD_REVIEW_PROGRESS_ORDER.indexOf("planning");
   const baselineStep = buildCadReviewStep({
     id: "capturing-baseline",
     label: "Capture baseline",
-    state: statusStateForCadReviewStatus(status, "capturing-baseline", failed),
-    substeps: latestCadReviewSubsteps(
-      entries,
-      ["baseline", "screenshot", "capture"],
-      [
-        "Collecting screenshots",
-        `${activeReview.evidenceArtifacts.filter((artifact) => artifact.scope === "baseline").length} views captured`,
-      ],
-    ),
+    state: baselineSkipped
+      ? "skipped"
+      : statusStateForCadReviewStatus(status, "capturing-baseline", failed),
+    substeps: baselineSkipped
+      ? [
+          activeReview.reviewPlan?.baselineReason ||
+            "Planner skipped the standard baseline screenshot pass",
+        ]
+      : latestCadReviewSubsteps(
+          entries,
+          ["baseline", "screenshot", "capture"],
+          [
+            "Collecting screenshots",
+            `${activeReview.evidenceArtifacts.filter((artifact) => artifact.scope === "baseline").length} views captured`,
+          ],
+        ),
   });
-  const personaSteps = CAD_REVIEW_PERSONA_STEPS.map(({ persona, label }) => {
+  const reviewerSelection = activeReview.reviewPlan?.reviewerSelection ?? [];
+  const enabledReviewerPersonas =
+    reviewerSelection.length > 0
+      ? new Set(
+          reviewerSelection
+            .filter((selection) => selection.enabled)
+            .map((selection) => selection.persona),
+        )
+      : CAD_REVIEW_PROGRESS_ORDER.indexOf(status) < CAD_REVIEW_PROGRESS_ORDER.indexOf("reviewing")
+        ? new Set<CadReviewPersona>()
+        : null;
+  const personaSteps = CAD_REVIEW_PERSONA_STEPS.filter(
+    ({ persona }) => !enabledReviewerPersonas || enabledReviewerPersonas.has(persona),
+  ).map(({ persona, label }) => {
     const report = activeReview.personaReports.find((entry) => entry.persona === persona);
     const isActive =
       status === "reviewing" &&
@@ -584,6 +609,8 @@ function CadReviewProgressStep({ step, isLast }: { step: CadReviewOverlayStep; i
             step.state === "complete" && "border-primary bg-primary text-primary-foreground",
             step.state === "active" && "border-primary bg-primary/10 text-primary",
             step.state === "failed" && "border-destructive bg-destructive/10 text-destructive",
+            step.state === "skipped" &&
+              "border-yellow-500/60 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400",
             step.state === "pending" && "border-border bg-muted/30 text-muted-foreground/50",
           )}
         >
@@ -591,6 +618,8 @@ function CadReviewProgressStep({ step, isLast }: { step: CadReviewOverlayStep; i
             <LoaderCircleIcon className="size-3 animate-spin" />
           ) : step.state === "complete" ? (
             <CheckIcon className="size-3" />
+          ) : step.state === "skipped" ? (
+            <BanIcon className="size-3" />
           ) : (
             <span className="size-1.5 rounded-full bg-current" />
           )}
@@ -600,6 +629,7 @@ function CadReviewProgressStep({ step, isLast }: { step: CadReviewOverlayStep; i
             className={cn(
               "absolute top-6 bottom-[-0.375rem] w-px rounded-full bg-border",
               (step.state === "complete" || step.state === "active") && "bg-primary/55",
+              step.state === "skipped" && "bg-yellow-500/45",
             )}
           />
         ) : null}
@@ -609,6 +639,7 @@ function CadReviewProgressStep({ step, isLast }: { step: CadReviewOverlayStep; i
           className={cn(
             "truncate text-xs font-medium leading-5",
             step.state === "pending" ? "text-muted-foreground/55" : "text-foreground",
+            step.state === "skipped" && "text-yellow-700 dark:text-yellow-300",
           )}
         >
           {step.label}
@@ -959,6 +990,9 @@ export default function ChatView(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerSubmitMode = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.submitMode ?? "ask",
+  );
   const setComposerDraftPrompt = useComposerDraftStore((store) => store.setPrompt);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
   const setComposerDraftTerminalContexts = useComposerDraftStore(
@@ -969,6 +1003,7 @@ export default function ChatView(props: ChatViewProps) {
   const setComposerDraftInteractionMode = useComposerDraftStore(
     (store) => store.setInteractionMode,
   );
+  const setComposerDraftSubmitMode = useComposerDraftStore((store) => store.setSubmitMode);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
@@ -2588,6 +2623,13 @@ export default function ChatView(props: ChatViewProps) {
   const toggleInteractionMode = useCallback(() => {
     handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
   }, [handleInteractionModeChange, interactionMode]);
+  const handleSubmitModeChange = useCallback(
+    (mode: ComposerSubmitMode) => {
+      if (mode === composerSubmitMode) return;
+      setComposerDraftSubmitMode(composerDraftTarget, mode);
+    },
+    [composerDraftTarget, composerSubmitMode, setComposerDraftSubmitMode],
+  );
   const togglePlanSidebar = useCallback(() => {
     setPlanSidebarOpen((open) => {
       if (open) {
@@ -3123,10 +3165,31 @@ export default function ChatView(props: ChatViewProps) {
         ? parseStandaloneComposerSlashCommand(trimmed)
         : null;
     if (standaloneSlashCommand) {
-      handleInteractionModeChange(standaloneSlashCommand);
+      if (standaloneSlashCommand === "ask" || standaloneSlashCommand === "review") {
+        handleSubmitModeChange(standaloneSlashCommand);
+      } else {
+        handleInteractionModeChange(standaloneSlashCommand);
+      }
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      return;
+    }
+    if (composerSubmitMode === "review") {
+      const reviewPrompt = appendTerminalContextsToPrompt(
+        promptForSend,
+        sendableComposerTerminalContexts,
+      ).trim();
+      const started = await onGenerateCadReview({
+        reviewPrompt: reviewPrompt || "Do a holistic CAD review.",
+        threadTitle: reviewPrompt ? truncate(reviewPrompt) : "Review my CAD from all angles",
+        selectedModelSelection: ctxSelectedModelSelection,
+      });
+      if (started) {
+        promptRef.current = "";
+        clearComposerDraftContent(composerDraftTarget);
+        composerRef.current?.resetCursorState();
+      }
       return;
     }
     if (!hasSendableContent) {
@@ -3976,20 +4039,21 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveCadReviewOverlaySteps(activeThread.reviews ?? [], cadReviewWorkLogEntries),
     [activeThread.reviews, cadReviewWorkLogEntries],
   );
-  const onGenerateCadReview = async () => {
+  const onGenerateCadReview = async (input: {
+    reviewPrompt: string;
+    threadTitle: string;
+    selectedModelSelection: ModelSelection;
+  }): Promise<boolean> => {
     const api = readEnvironmentApi(activeThread.environmentId);
-    if (
-      !api ||
-      !activeProject ||
-      !canGenerateCadReview ||
-      cadReviewInProgress ||
-      sendInFlightRef.current
-    ) {
-      return;
+    if (!api || !activeProject || cadReviewInProgress || sendInFlightRef.current) {
+      return false;
     }
-    const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx) {
-      return;
+    if (!canGenerateCadReview) {
+      setThreadError(
+        activeThread.id,
+        "CAD review requires an Onshape CAD context for this project or thread.",
+      );
+      return false;
     }
     const reviewThreadId = activeThread.id;
     const reviewThreadRef = scopeThreadRef(activeThread.environmentId, reviewThreadId);
@@ -4010,7 +4074,7 @@ export default function ChatView(props: ChatViewProps) {
           commandId: newCommandId(),
           threadId: reviewThreadId,
           projectId: activeProject.id,
-          title: "Review my CAD from all angles",
+          title: input.threadTitle,
           ...(activeProject.externalContext?.provider === "onshape"
             ? {
                 externalContext: {
@@ -4019,7 +4083,7 @@ export default function ChatView(props: ChatViewProps) {
                 },
               }
             : {}),
-          modelSelection: sendCtx.selectedModelSelection,
+          modelSelection: input.selectedModelSelection,
           runtimeMode,
           interactionMode,
           branch: activeThreadBranch,
@@ -4032,6 +4096,7 @@ export default function ChatView(props: ChatViewProps) {
         commandId: newCommandId(),
         threadId: reviewThreadId,
         reviewRunId,
+        reviewPrompt: input.reviewPrompt,
         createdAt,
       });
       if (!isServerThread) {
@@ -4052,11 +4117,13 @@ export default function ChatView(props: ChatViewProps) {
           },
         });
       }
+      return true;
     } catch (err) {
       setThreadError(
         reviewThreadId,
         err instanceof Error ? err.message : "Failed to start CAD review.",
       );
+      return false;
     } finally {
       sendInFlightRef.current = false;
     }
@@ -4138,31 +4205,20 @@ export default function ChatView(props: ChatViewProps) {
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
-      {canGenerateCadReview ? (
+      {cadReviewInProgress ? (
         <div className="border-b border-border/70 bg-muted/20 px-3 py-2 sm:px-5">
           <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
             <p className="text-xs text-muted-foreground">
-              CAD model attached. Start a visual review; the agent will capture standard and
-              close-up views, then summarize issues in plain language.
+              CAD review running. The agent is capturing views, checking selected review scopes, and
+              synthesizing findings.
             </p>
-            {cadReviewInProgress ? (
-              <button
-                type="button"
-                className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-md border border-rose-500/90 bg-rose-500/90 px-[calc(--spacing(2.5)-1px)] text-sm font-medium text-white shadow-xs shadow-rose-500/24 transition-all duration-150 hover:bg-rose-500 hover:text-white active:bg-rose-500 sm:h-7"
-                onClick={() => void onStopCadReview()}
-              >
-                Stop review
-              </button>
-            ) : (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => void onGenerateCadReview()}
-              >
-                Start CAD review
-              </Button>
-            )}
+            <button
+              type="button"
+              className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-md border border-rose-500/90 bg-rose-500/90 px-[calc(--spacing(2.5)-1px)] text-sm font-medium text-white shadow-xs shadow-rose-500/24 transition-all duration-150 hover:bg-rose-500 hover:text-white active:bg-rose-500 sm:h-7"
+              onClick={() => void onStopCadReview()}
+            >
+              Stop review
+            </button>
           </div>
         </div>
       ) : null}
@@ -4263,6 +4319,8 @@ export default function ChatView(props: ChatViewProps) {
                   planSidebarOpen={planSidebarOpen}
                   runtimeMode={runtimeMode}
                   interactionMode={interactionMode}
+                  submitMode={composerSubmitMode}
+                  canGenerateCadReview={canGenerateCadReview}
                   lockedProvider={lockedProvider}
                   providerStatuses={providerStatuses as ServerProvider[]}
                   activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}
@@ -4294,6 +4352,7 @@ export default function ChatView(props: ChatViewProps) {
                   toggleInteractionMode={toggleInteractionMode}
                   handleRuntimeModeChange={handleRuntimeModeChange}
                   handleInteractionModeChange={handleInteractionModeChange}
+                  handleSubmitModeChange={handleSubmitModeChange}
                   togglePlanSidebar={togglePlanSidebar}
                   focusComposer={focusComposer}
                   scheduleComposerFocus={scheduleComposerFocus}

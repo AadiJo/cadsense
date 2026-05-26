@@ -43,6 +43,7 @@ import {
 import { deriveComposerSendState, readFileAsDataUrl } from "../ChatView.logic";
 import {
   type ComposerImageAttachment,
+  type ComposerSubmitMode,
   type DraftId,
   type PersistedComposerImageAttachment,
   useComposerDraftStore,
@@ -81,9 +82,10 @@ import { basenameOfPath } from "../../vscode-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
+import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { CircleAlertIcon, ListTodoIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, CircleAlertIcon, ListTodoIcon, XIcon } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
@@ -150,40 +152,104 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  submitMode: ComposerSubmitMode;
+  showSubmitModeToggle: boolean;
   showPlanToggle: boolean;
   planSidebarLabel: string;
   planSidebarOpen: boolean;
   onToggleInteractionMode: () => void;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
+  onSubmitModeChange: (mode: ComposerSubmitMode) => void;
   onTogglePlanSidebar: () => void;
 }) {
-  if (!props.showPlanToggle) {
+  if (!props.showPlanToggle && !props.showSubmitModeToggle) {
     return null;
   }
 
   return (
     <>
+      {props.showSubmitModeToggle ? (
+        <ComposerSubmitModeToggle
+          submitMode={props.submitMode}
+          onSubmitModeChange={props.onSubmitModeChange}
+        />
+      ) : null}
+      {props.showPlanToggle ? (
+        <>
+          <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+          <Button
+            variant="ghost"
+            className={cn(
+              "shrink-0 whitespace-nowrap px-2 sm:px-3",
+              props.planSidebarOpen
+                ? "text-blue-400 hover:text-blue-300"
+                : "text-muted-foreground/70 hover:text-foreground/80",
+            )}
+            size="sm"
+            type="button"
+            onClick={props.onTogglePlanSidebar}
+            title={
+              props.planSidebarOpen
+                ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
+                : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
+            }
+          >
+            <ListTodoIcon />
+            <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
+          </Button>
+        </>
+      ) : null}
+    </>
+  );
+});
+
+const ComposerSubmitModeToggle = memo(function ComposerSubmitModeToggle(props: {
+  submitMode: ComposerSubmitMode;
+  onSubmitModeChange: (mode: ComposerSubmitMode) => void;
+}) {
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const triggerLabel = props.submitMode === "review" ? "Review" : "Ask";
+
+  return (
+    <>
       <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
-      <Button
-        variant="ghost"
-        className={cn(
-          "shrink-0 whitespace-nowrap px-2 sm:px-3",
-          props.planSidebarOpen
-            ? "text-blue-400 hover:text-blue-300"
-            : "text-muted-foreground/70 hover:text-foreground/80",
-        )}
-        size="sm"
-        type="button"
-        onClick={props.onTogglePlanSidebar}
-        title={
-          props.planSidebarOpen
-            ? `Hide ${props.planSidebarLabel.toLowerCase()} sidebar`
-            : `Show ${props.planSidebarLabel.toLowerCase()} sidebar`
-        }
+      <Menu
+        open={isMenuOpen}
+        onOpenChange={(open) => {
+          setIsMenuOpen(open);
+        }}
       >
-        <ListTodoIcon />
-        <span className="sr-only sm:not-sr-only">{props.planSidebarLabel}</span>
-      </Button>
+        <MenuTrigger
+          render={
+            <Button
+              size="sm"
+              variant="ghost"
+              className={cn(
+                "w-[5.75rem] shrink-0 justify-center whitespace-nowrap px-2 sm:px-2",
+                props.submitMode === "review"
+                  ? "text-blue-400 hover:text-blue-300"
+                  : "text-muted-foreground/70 hover:text-foreground/80",
+              )}
+            />
+          }
+        >
+          <span>{triggerLabel}</span>
+          <ChevronDownIcon aria-hidden="true" className="size-3 opacity-60" />
+        </MenuTrigger>
+        <MenuPopup align="start">
+          <MenuRadioGroup
+            value={props.submitMode}
+            onValueChange={(value) => {
+              if (value === "ask" || value === "review") {
+                props.onSubmitModeChange(value);
+              }
+            }}
+          >
+            <MenuRadioItem value="ask">Ask</MenuRadioItem>
+            <MenuRadioItem value="review">Review</MenuRadioItem>
+          </MenuRadioGroup>
+        </MenuPopup>
+      </Menu>
     </>
   );
 });
@@ -206,6 +272,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
+  submitMode: ComposerSubmitMode;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -228,6 +295,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        submitMode={props.submitMode}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
@@ -331,6 +399,8 @@ export interface ChatComposerProps {
   // Mode
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
+  submitMode: ComposerSubmitMode;
+  canGenerateCadReview: boolean;
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
@@ -381,6 +451,7 @@ export interface ChatComposerProps {
   toggleInteractionMode: () => void;
   handleRuntimeModeChange: (mode: RuntimeMode) => void;
   handleInteractionModeChange: (mode: ProviderInteractionMode) => void;
+  handleSubmitModeChange: (mode: ComposerSubmitMode) => void;
   togglePlanSidebar: () => void;
 
   focusComposer: () => void;
@@ -427,6 +498,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planSidebarOpen,
     runtimeMode,
     interactionMode,
+    submitMode,
+    canGenerateCadReview,
     lockedProvider,
     providerStatuses,
     activeProjectDefaultModelSelection,
@@ -455,6 +528,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     toggleInteractionMode,
     handleRuntimeModeChange,
     handleInteractionModeChange,
+    handleSubmitModeChange,
     togglePlanSidebar,
     focusComposer,
     scheduleComposerFocus,
@@ -789,6 +863,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           label: "/default",
           description: "Switch this thread back to normal build mode",
         },
+        {
+          id: "slash:ask",
+          type: "slash-command",
+          command: "ask",
+          label: "/ask",
+          description: "Send normal chat messages from the composer",
+        },
+        {
+          id: "slash:review",
+          type: "slash-command",
+          command: "review",
+          label: "/review",
+          description: "Use the next send to start a CAD review",
+        },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
         (command) => ({
@@ -874,7 +962,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (showPlanFollowUpPrompt) {
       return prompt.trim().length > 0 ? "plan:refine" : "plan:implement";
     }
-    return `idle:${composerSendState.hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
+    return `idle:${submitMode}:${canGenerateCadReview}:${composerSendState.hasSendableContent}:${isSendBusy}:${isConnecting}:${isPreparingWorktree}`;
   }, [
     activePendingIsResponding,
     activePendingProgress,
@@ -885,6 +973,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     phase,
     prompt,
     showPlanFollowUpPrompt,
+    submitMode,
+    canGenerateCadReview,
   ]);
 
   const isComposerMenuLoading =
@@ -954,7 +1044,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activePendingIsResponding, activePendingProgress, activePendingResolvedAnswers],
   );
   const collapsedComposerPrimaryActionDisabled =
-    phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
+    phase === "running" ||
+    isSendBusy ||
+    isConnecting ||
+    (!composerSendState.hasSendableContent && !(submitMode === "review" && canGenerateCadReview));
   const collapsedComposerPrimaryActionLabel = "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
@@ -1411,7 +1504,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
-        void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        if (item.command === "ask" || item.command === "review") {
+          handleSubmitModeChange(item.command);
+        } else {
+          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
+        }
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
@@ -1457,7 +1554,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
     },
-    [applyPromptReplacement, handleInteractionModeChange, resolveActiveComposerTrigger],
+    [
+      applyPromptReplacement,
+      handleInteractionModeChange,
+      handleSubmitModeChange,
+      resolveActiveComposerTrigger,
+    ],
   );
 
   const onComposerMenuItemHighlighted = useCallback(
@@ -1504,7 +1606,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (activePendingProgress) {
       return activePendingProgress.isLastQuestion && Boolean(activePendingResolvedAnswers);
     }
-    return showPlanFollowUpPrompt || composerSendState.hasSendableContent;
+    return (
+      showPlanFollowUpPrompt ||
+      composerSendState.hasSendableContent ||
+      (submitMode === "review" && canGenerateCadReview)
+    );
   }, [
     activePendingProgress,
     activePendingResolvedAnswers,
@@ -1514,6 +1620,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendBusy,
     phase,
     showPlanFollowUpPrompt,
+    submitMode,
+    canGenerateCadReview,
   ]);
 
   const submitComposer = useCallback(
@@ -1982,6 +2090,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       isEnvironmentUnavailable={environmentUnavailable !== null}
                       isPreparingWorktree={false}
                       hasSendableContent={false}
+                      submitMode={submitMode}
                       preserveComposerFocusOnPointerDown
                       onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                       onInterrupt={handleInterruptPrimaryAction}
@@ -2165,9 +2274,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                 ? "connecting"
                                 : "disconnected"
                             }`
-                          : phase === "disconnected"
-                            ? "Ask for follow-up changes or attach images"
-                            : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                          : submitMode === "review"
+                            ? "Describe what to review in the CAD, or send blank for a holistic review"
+                            : phase === "disconnected"
+                              ? "Ask for follow-up changes or attach images"
+                              : "Ask anything, @tag files/folders, $use skills, or / for commands"
                 }
                 disabled={
                   isConnecting ||
@@ -2191,6 +2302,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     isEnvironmentUnavailable={environmentUnavailable !== null}
                     isPreparingWorktree={false}
                     hasSendableContent={false}
+                    submitMode={submitMode}
                     preserveComposerFocusOnPointerDown
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
@@ -2244,13 +2356,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 />
 
                 {isComposerFooterCompact ? (
-                  <CompactComposerControlsMenu
-                    activePlan={showPlanSidebarToggle}
-                    planSidebarLabel={planSidebarLabel}
-                    planSidebarOpen={planSidebarOpen}
-                    traitsMenuContent={providerTraitsMenuContent}
-                    onTogglePlanSidebar={togglePlanSidebar}
-                  />
+                  <>
+                    <CompactComposerControlsMenu
+                      activePlan={showPlanSidebarToggle}
+                      planSidebarLabel={planSidebarLabel}
+                      planSidebarOpen={planSidebarOpen}
+                      traitsMenuContent={providerTraitsMenuContent}
+                      onTogglePlanSidebar={togglePlanSidebar}
+                    />
+                    <ComposerSubmitModeToggle
+                      submitMode={submitMode}
+                      onSubmitModeChange={handleSubmitModeChange}
+                    />
+                  </>
                 ) : (
                   <>
                     {providerTraitsPicker ? (
@@ -2263,11 +2381,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
+                      submitMode={submitMode}
+                      showSubmitModeToggle
                       showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
+                      onSubmitModeChange={handleSubmitModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}
                     />
                   </>
@@ -2293,7 +2414,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isConnecting={isConnecting}
                   isEnvironmentUnavailable={environmentUnavailable !== null}
                   isPreparingWorktree={isPreparingWorktree}
-                  hasSendableContent={composerSendState.hasSendableContent}
+                  hasSendableContent={
+                    (submitMode === "review" && canGenerateCadReview) ||
+                    composerSendState.hasSendableContent
+                  }
+                  submitMode={submitMode}
                   preserveComposerFocusOnPointerDown={isMobileViewport}
                   onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                   onInterrupt={handleInterruptPrimaryAction}

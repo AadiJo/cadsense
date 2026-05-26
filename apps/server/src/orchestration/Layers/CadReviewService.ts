@@ -13,6 +13,7 @@ import {
   type CadReviewMechanismPlan,
   type CadReviewPersona,
   type CadReviewPersonaReport,
+  type CadReviewSpecialistPersona,
   type CadReviewStatus,
   type CadReviewToolCall,
   type OrchestrationMessage,
@@ -48,7 +49,8 @@ import {
 } from "./CadReviewPrompts.ts";
 
 const CAD_REVIEW_CHILD_LINK_KIND = "cad-review.child-thread.linked";
-const REVIEWER_TURN_TIMEOUT = Duration.minutes(10);
+const REVIEWER_TURN_TIMEOUT = Duration.minutes(20);
+const ACTIVE_CHILD_RECOVERY_GRACE_MS = Duration.toMillis(REVIEWER_TURN_TIMEOUT);
 const CAD_REVIEW_REVIEWER_CONCURRENCY = 3;
 // Keep baseline capture fast: reviewers can request extra angles, but the automatic pass should
 // avoid monopolizing the CAD viewer before agent reasoning even starts.
@@ -129,12 +131,7 @@ function assistantText(messages: ReadonlyArray<OrchestrationMessage>): string {
     .trim();
 }
 
-function extractJsonObject(text: string): Record<string, unknown> | undefined {
-  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)?.[1];
-  const candidate = fenced ?? text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1);
-  if (!candidate || candidate.trim().length === 0) {
-    return undefined;
-  }
+function parseJsonObjectCandidate(candidate: string): Record<string, unknown> | undefined {
   try {
     const parsed = JSON.parse(candidate) as unknown;
     return parsed && typeof parsed === "object" && !Array.isArray(parsed)
@@ -143,6 +140,71 @@ function extractJsonObject(text: string): Record<string, unknown> | undefined {
   } catch {
     return undefined;
   }
+}
+
+function findBalancedJsonObjectEnd(text: string, startIndex: number): number | undefined {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let index = startIndex; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char !== "}") {
+      continue;
+    }
+    depth -= 1;
+    if (depth === 0) {
+      return index + 1;
+    }
+  }
+  return undefined;
+}
+
+export function extractJsonObject(text: string): Record<string, unknown> | undefined {
+  const parsedCandidates: Array<Record<string, unknown>> = [];
+  for (const match of text.matchAll(/```(?:json)?[^\S\r\n]*\r?\n([\s\S]*?)```/gi)) {
+    const candidate = match[1]?.trim();
+    if (!candidate?.startsWith("{")) {
+      continue;
+    }
+    const parsed = parseJsonObjectCandidate(candidate);
+    if (parsed) {
+      parsedCandidates.push(parsed);
+    }
+  }
+  let index = text.indexOf("{");
+  while (index !== -1) {
+    const endIndex = findBalancedJsonObjectEnd(text, index);
+    if (endIndex === undefined) {
+      index = text.indexOf("{", index + 1);
+      continue;
+    }
+    const parsed = parseJsonObjectCandidate(text.slice(index, endIndex));
+    if (parsed) {
+      parsedCandidates.push(parsed);
+      index = text.indexOf("{", endIndex);
+      continue;
+    }
+    index = text.indexOf("{", index + 1);
+  }
+  return parsedCandidates.at(-1);
 }
 
 function stringArray(value: unknown): string[] {
@@ -184,6 +246,52 @@ function objectArray(value: unknown): Array<Record<string, unknown>> {
           entry !== null && typeof entry === "object" && !Array.isArray(entry),
       )
     : [];
+}
+
+function isSpecialistPersona(value: unknown): value is CadReviewSpecialistPersona {
+  return (
+    value === "systems_integration" ||
+    value === "program_readiness" ||
+    value === "mechanical_robustness"
+  );
+}
+
+function allReviewerSelection(reason: string): CadReviewMechanismPlan["reviewerSelection"] {
+  return PERSONAS.map((persona) => ({ persona, enabled: true, reason }));
+}
+
+function isUncertainReviewerSelectionReason(reason: string): boolean {
+  return /\b(uncertain|unsure|unknown|unclear|ambiguous|not sure|cannot determine|can't determine)\b/i.test(
+    reason,
+  );
+}
+
+function normalizeReviewerSelection(value: unknown): CadReviewMechanismPlan["reviewerSelection"] {
+  const entries = objectArray(value).flatMap((entry) => {
+    if (!isSpecialistPersona(entry.persona)) {
+      return [];
+    }
+    return [
+      {
+        persona: entry.persona,
+        enabled: entry.enabled === true,
+        reason: trimText(entry.reason) ?? "Planner did not provide a reason.",
+      },
+    ];
+  });
+  const byPersona = new Map(entries.map((entry) => [entry.persona, entry]));
+  const complete = PERSONAS.every((persona) => byPersona.has(persona));
+  const uncertain = entries.some((entry) => isUncertainReviewerSelectionReason(entry.reason));
+  if (!complete || !entries.some((entry) => entry.enabled) || uncertain) {
+    return allReviewerSelection(
+      "Planner selection was missing, incomplete, disabled every reviewer, or expressed uncertainty, so CadSense ran all reviewers.",
+    );
+  }
+  return PERSONAS.map((persona) => byPersona.get(persona)!);
+}
+
+function planRequiresBaseline(plan: CadReviewMechanismPlan | undefined): boolean {
+  return plan?.baselineRequired ?? true;
 }
 
 function evidenceIdsForPersona(
@@ -279,6 +387,60 @@ function reviewChildThreadIdsFromActivities(
     childThreadIds.add(payload.childThreadId);
   }
   return [...childThreadIds].map((childThreadId) => ThreadId.make(childThreadId));
+}
+
+function hasInterruptedRecoveryActivity(thread: OrchestrationThread, reviewRunId: string): boolean {
+  return thread.activities.some((activity) => {
+    if (activity.kind !== "cad-review.interrupted-recovered") {
+      return false;
+    }
+    const payload = payloadRecord(activity.payload);
+    return payload?.reviewRunId === reviewRunId;
+  });
+}
+
+function isFreshLiveChildSession(input: {
+  readonly childThread: OrchestrationThread | undefined;
+  readonly nowMs: number;
+}): boolean {
+  const session = input.childThread?.session;
+  if (!session || session.status === "stopped" || session.status === "error") {
+    return false;
+  }
+  const updatedAtMs = Math.max(
+    Date.parse(session.updatedAt),
+    Date.parse(input.childThread.updatedAt),
+  );
+  return (
+    Number.isFinite(updatedAtMs) && input.nowMs - updatedAtMs <= ACTIVE_CHILD_RECOVERY_GRACE_MS
+  );
+}
+
+function isFreshActiveReview(review: CadReviewReport, nowMs: number): boolean {
+  const updatedAtMs = Math.max(Date.parse(review.updatedAt), Date.parse(review.createdAt));
+  return Number.isFinite(updatedAtMs) && nowMs - updatedAtMs <= ACTIVE_CHILD_RECOVERY_GRACE_MS;
+}
+
+function hasFreshLiveChildSessionForReview(input: {
+  readonly thread: OrchestrationThread;
+  readonly reviewRunId: string;
+  readonly threadById: ReadonlyMap<ThreadId, OrchestrationThread>;
+  readonly now: string;
+}): boolean {
+  const nowMs = Date.parse(input.now);
+  if (!Number.isFinite(nowMs)) {
+    return false;
+  }
+  return reviewChildThreadIdsFromActivities(input.thread, input.reviewRunId).some((childThreadId) =>
+    isFreshLiveChildSession({
+      childThread: input.threadById.get(childThreadId),
+      nowMs,
+    }),
+  );
+}
+
+export function cadReviewChildPromptMessageId(childThreadId: ThreadId): MessageId {
+  return MessageId.make(`user:${childThreadId}:prompt`);
 }
 
 function viewNameFromPath(path: string): string {
@@ -483,7 +645,7 @@ function baselineToolActivity(input: {
   };
 }
 
-function buildMechanismPlan(text: string): CadReviewMechanismPlan | undefined {
+export function buildMechanismPlan(text: string): CadReviewMechanismPlan | undefined {
   const parsed = extractJsonObject(text);
   if (!parsed) {
     return undefined;
@@ -498,10 +660,16 @@ function buildMechanismPlan(text: string): CadReviewMechanismPlan | undefined {
   }));
   return {
     summary: trimText(parsed.summary) ?? truncate(text || "Mechanism plan completed."),
+    reviewScope: trimText(parsed.reviewScope) ?? "CAD review",
+    baselineRequired: typeof parsed.baselineRequired === "boolean" ? parsed.baselineRequired : true,
+    baselineReason:
+      trimText(parsed.baselineReason) ??
+      "Planner did not specify whether baseline capture is required.",
     mechanisms,
     reviewPriorities: stringArrayFromUnknown(parsed.reviewPriorities),
     missingContext: stringArrayFromUnknown(parsed.missingContext),
     calculatorNeeds: stringArrayFromUnknown(parsed.calculatorNeeds),
+    reviewerSelection: normalizeReviewerSelection(parsed.reviewerSelection),
   };
 }
 
@@ -1019,6 +1187,7 @@ const make = Effect.gen(function* () {
     readonly reviewRunId: string;
     readonly persona: CadReviewPersona;
     readonly title: string;
+    readonly interactionMode?: OrchestrationThread["interactionMode"];
     readonly createdAt: string;
   }) =>
     Effect.gen(function* () {
@@ -1036,7 +1205,7 @@ const make = Effect.gen(function* () {
           : {}),
         modelSelection: input.parentThread.modelSelection,
         runtimeMode: input.parentThread.runtimeMode,
-        interactionMode: input.parentThread.interactionMode,
+        interactionMode: input.interactionMode ?? input.parentThread.interactionMode,
         branch: input.parentThread.branch,
         worktreePath: input.parentThread.worktreePath,
         createdAt: input.createdAt,
@@ -1183,6 +1352,7 @@ const make = Effect.gen(function* () {
     readonly persona: CadReviewPersona;
     readonly title: string;
     readonly prompt: string;
+    readonly interactionMode?: OrchestrationThread["interactionMode"];
     readonly createdAt: string;
   }) =>
     Effect.gen(function* () {
@@ -1197,14 +1367,14 @@ const make = Effect.gen(function* () {
           commandId: serverCommandId("cad-review-child-turn"),
           threadId: childThreadId,
           message: {
-            messageId: MessageId.make(`user:${input.reviewRunId}:${input.persona}`),
+            messageId: cadReviewChildPromptMessageId(childThreadId),
             role: "user",
             text: input.prompt,
             attachments: [],
           },
           modelSelection: input.parentThread.modelSelection,
           runtimeMode: input.parentThread.runtimeMode,
-          interactionMode: input.parentThread.interactionMode,
+          interactionMode: input.interactionMode ?? input.parentThread.interactionMode,
           createdAt: input.createdAt,
         });
         const completed = yield* waitForChildTurn(childThreadId).pipe(
@@ -1310,6 +1480,7 @@ const make = Effect.gen(function* () {
         (project) => project.id === thread.projectId,
       )?.title;
       const subject = reviewSubject(thread, projectTitle);
+      const reviewPrompt = trimText(event.payload.reviewPrompt);
       const createdAt = event.payload.createdAt;
       let updatedAt = yield* nowIso;
 
@@ -1317,9 +1488,10 @@ const make = Effect.gen(function* () {
         id: event.payload.reviewRunId,
         threadId: thread.id,
         title: reviewTitle(thread, projectTitle),
-        status: "capturing-baseline",
+        status: "planning",
         activePersona: "synthesis",
         whatIsBeingReviewed: subject,
+        ...(reviewPrompt ? { reviewPrompt } : {}),
         commonThemes: [],
         reviewerTraits: REVIEWER_TRAIT_SUMMARIES,
         personaReports: [],
@@ -1342,70 +1514,18 @@ const make = Effect.gen(function* () {
         tone: "info",
         kind: "cad-review.requested",
         summary: `CAD review requested for ${subject}`,
-        payload: { reviewRunId: review.id, phase: "requested" },
+        payload: {
+          reviewRunId: review.id,
+          phase: "requested",
+          ...(reviewPrompt ? { reviewPrompt } : {}),
+        },
         createdAt,
       });
       yield* upsertReview(thread.id, review);
       yield* failIfReviewStopped(thread.id, review.id);
 
-      const baselineCapture = yield* captureBaselineEvidence({
-        thread,
-        reviewRunId: review.id,
-      });
-      yield* failIfReviewStopped(thread.id, review.id);
       updatedAt = yield* nowIso;
-      if (baselineCapture.ok) {
-        Object.assign(review, {
-          evidenceArtifacts: [...review.evidenceArtifacts, ...baselineCapture.artifacts],
-          toolCallsByReviewer: {
-            ...review.toolCallsByReviewer,
-            synthesis: [...review.toolCallsByReviewer.synthesis, ...baselineCapture.toolCalls],
-          },
-          updatedAt,
-        });
-        yield* appendActivity({
-          threadId: thread.id,
-          tone: "info",
-          kind: "cad-review.baseline.completed",
-          summary:
-            baselineCapture.artifacts.length > 0
-              ? "Baseline CAD views captured"
-              : "Baseline capture completed without screenshot artifacts",
-          payload: {
-            reviewRunId: review.id,
-            phase: "baseline",
-            agent: "Server baseline capture",
-            artifactCount: baselineCapture.artifacts.length,
-          },
-          createdAt: updatedAt,
-        });
-      } else {
-        Object.assign(review, {
-          status: "failed",
-          activePersona: undefined,
-          error: `Baseline capture failed: ${baselineCapture.error}`,
-          updatedAt,
-        });
-        yield* appendActivity({
-          threadId: thread.id,
-          tone: "error",
-          kind: "cad-review.baseline.failed",
-          summary: "Baseline CAD capture failed",
-          payload: {
-            reviewRunId: review.id,
-            phase: "baseline",
-            detail: baselineCapture.error,
-          },
-          createdAt: updatedAt,
-        });
-        yield* upsertReview(thread.id, review);
-        return;
-      }
-      yield* upsertReview(thread.id, review);
-      yield* failIfReviewStopped(thread.id, review.id);
-
-      updatedAt = yield* nowIso;
-      Object.assign(review, { status: "planning", activePersona: "synthesis", updatedAt });
+      Object.assign(review, { updatedAt });
       yield* upsertReview(thread.id, review);
       yield* appendActivity({
         threadId: thread.id,
@@ -1428,8 +1548,10 @@ const make = Effect.gen(function* () {
         reviewRunId: review.id,
         persona: "synthesis",
         title: `${review.title} - mechanism planning`,
+        interactionMode: "plan",
         prompt: buildMechanismPlanningPrompt({
           subject,
+          reviewPrompt,
           baselineArtifacts,
         }),
         createdAt: updatedAt,
@@ -1480,11 +1602,116 @@ const make = Effect.gen(function* () {
       yield* upsertReview(thread.id, review);
       yield* failIfReviewStopped(thread.id, review.id);
 
+      if (planRequiresBaseline(review.reviewPlan)) {
+        updatedAt = yield* nowIso;
+        Object.assign(review, {
+          status: "capturing-baseline",
+          activePersona: "synthesis",
+          updatedAt,
+        });
+        yield* upsertReview(thread.id, review);
+        const baselineCapture = yield* captureBaselineEvidence({
+          thread,
+          reviewRunId: review.id,
+        });
+        yield* failIfReviewStopped(thread.id, review.id);
+        updatedAt = yield* nowIso;
+        if (baselineCapture.ok) {
+          Object.assign(review, {
+            evidenceArtifacts: [...review.evidenceArtifacts, ...baselineCapture.artifacts],
+            toolCallsByReviewer: {
+              ...review.toolCallsByReviewer,
+              synthesis: [...review.toolCallsByReviewer.synthesis, ...baselineCapture.toolCalls],
+            },
+            updatedAt,
+          });
+          yield* appendActivity({
+            threadId: thread.id,
+            tone: "info",
+            kind: "cad-review.baseline.completed",
+            summary:
+              baselineCapture.artifacts.length > 0
+                ? "Baseline CAD views captured"
+                : "Baseline capture completed without screenshot artifacts",
+            payload: {
+              reviewRunId: review.id,
+              phase: "baseline",
+              agent: "Server baseline capture",
+              artifactCount: baselineCapture.artifacts.length,
+            },
+            createdAt: updatedAt,
+          });
+        } else {
+          Object.assign(review, {
+            status: "failed",
+            activePersona: undefined,
+            error: `Baseline capture failed: ${baselineCapture.error}`,
+            updatedAt,
+          });
+          yield* appendActivity({
+            threadId: thread.id,
+            tone: "error",
+            kind: "cad-review.baseline.failed",
+            summary: "Baseline CAD capture failed",
+            payload: {
+              reviewRunId: review.id,
+              phase: "baseline",
+              detail: baselineCapture.error,
+            },
+            createdAt: updatedAt,
+          });
+          yield* upsertReview(thread.id, review);
+          return;
+        }
+        yield* upsertReview(thread.id, review);
+        yield* failIfReviewStopped(thread.id, review.id);
+      } else {
+        updatedAt = yield* nowIso;
+        yield* appendActivity({
+          threadId: thread.id,
+          tone: "info",
+          kind: "cad-review.baseline.skipped",
+          summary: "Baseline CAD capture skipped by planning",
+          payload: {
+            reviewRunId: review.id,
+            phase: "baseline",
+            agent: "mechanism planning",
+            reason:
+              review.reviewPlan?.baselineReason ||
+              "Planner determined the standard baseline screenshot pass was not required.",
+          },
+          createdAt: updatedAt,
+        });
+      }
+
       updatedAt = yield* nowIso;
       Object.assign(review, { status: "reviewing", activePersona: undefined, updatedAt });
       yield* upsertReview(thread.id, review);
       const reviewerStarts = [];
       for (const persona of PERSONAS) {
+        const selection = (
+          review.reviewPlan?.reviewerSelection ??
+          allReviewerSelection(
+            "Planner did not produce a reviewer selection, so CadSense ran all reviewers.",
+          )
+        ).find((entry) => entry.persona === persona);
+        if (selection && !selection.enabled) {
+          yield* appendActivity({
+            threadId: thread.id,
+            tone: "info",
+            kind: "cad-review.persona.skipped",
+            summary: `${persona} reviewer skipped by planning`,
+            payload: {
+              reviewRunId: review.id,
+              phase: "reviewing",
+              agent: `${persona} reviewer`,
+              persona,
+              reason: selection.reason,
+            },
+            createdAt: updatedAt,
+          });
+          continue;
+        }
         updatedAt = yield* nowIso;
         yield* appendActivity({
           threadId: thread.id,
@@ -1516,6 +1743,7 @@ const make = Effect.gen(function* () {
             prompt: buildReviewerPrompt({
               persona,
               subject,
+              reviewPrompt,
               baselineArtifacts: reviewerBaselineArtifacts,
               reviewPlan: review.reviewPlan,
             }),
@@ -1623,6 +1851,7 @@ const make = Effect.gen(function* () {
           title: `${review.title} - focused deep dive`,
           prompt: buildDeepDivePrompt({
             subject,
+            reviewPrompt,
             reviewPlan: review.reviewPlan,
             findings: deepDiveFindings,
             baselineArtifacts: review.evidenceArtifacts.filter(
@@ -1702,6 +1931,7 @@ const make = Effect.gen(function* () {
               title: `${review.title} - synthesis`,
               prompt: buildSynthesisPrompt({
                 subject,
+                reviewPrompt,
                 reports: review.personaReports,
                 reviewPlan: review.reviewPlan,
                 deepDiveReports: (review.deepDiveReports ?? []).map((report) => ({
@@ -1829,7 +2059,19 @@ const make = Effect.gen(function* () {
       const threadOption = yield* projectionSnapshotQuery
         .getThreadDetailById(threadId)
         .pipe(Effect.catch(() => Effect.succeed(Option.none())));
-      let interruptedChildThreadCount = 0;
+      if (Option.isSome(threadOption)) {
+        const review = (threadOption.value.reviews ?? []).find((entry) => entry.id === reviewRunId);
+        if (review && isCadReviewActive(review.status)) {
+          yield* upsertReview(threadId, {
+            ...review,
+            status: "failed",
+            activePersona: undefined,
+            error: "CAD review stopped by user.",
+            updatedAt: createdAt,
+          });
+        }
+      }
+      let interruptedChildThreadCount = activeReview.childThreadIds.size;
       if (Option.isSome(threadOption)) {
         interruptedChildThreadCount = yield* stopChildSessionsForReview({
           thread: threadOption.value,
@@ -1838,41 +2080,15 @@ const make = Effect.gen(function* () {
           activeChildThreadIds: activeReview.childThreadIds,
         });
       } else {
-        interruptedChildThreadCount = activeReview.childThreadIds.size;
-        for (const childThreadId of activeReview.childThreadIds) {
-          yield* orchestrationEngine
-            .dispatch({
-              type: "thread.session.stop",
-              commandId: serverCommandId("cad-review-stop-child-session"),
-              threadId: childThreadId,
-              createdAt,
-            })
-            .pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("failed to stop CAD review child thread", {
-                  threadId: childThreadId,
-                  reviewRunId,
-                  cause: Cause.pretty(cause),
-                }),
-              ),
-            );
-        }
+        yield* stopChildSessions({
+          childThreadIds: activeReview.childThreadIds,
+          reviewRunId,
+          createdAt,
+        });
       }
-
       if (Option.isNone(threadOption)) {
         return;
       }
-      const review = (threadOption.value.reviews ?? []).find((entry) => entry.id === reviewRunId);
-      if (!review || !isCadReviewActive(review.status)) {
-        return;
-      }
-      yield* upsertReview(threadId, {
-        ...review,
-        status: "failed",
-        activePersona: undefined,
-        error: "CAD review stopped by user.",
-        updatedAt: createdAt,
-      });
       yield* appendActivity({
         threadId,
         tone: "error",
@@ -1894,6 +2110,7 @@ const make = Effect.gen(function* () {
   const recoverInterruptedReviews: CadReviewServiceShape["recoverInterruptedReviews"] = () =>
     Effect.gen(function* () {
       const snapshot = yield* projectionSnapshotQuery.getSnapshot();
+      const threadById = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
       const liveThreadIds = new Set(
         snapshot.threads
           .filter((thread) => thread.session && thread.session.status !== "stopped")
@@ -1928,17 +2145,37 @@ const make = Effect.gen(function* () {
             continue;
           }
           const failedAt = yield* nowIso;
+          const threadOption = yield* projectionSnapshotQuery
+            .getThreadDetailById(thread.id)
+            .pipe(Effect.catch(() => Effect.succeed(Option.none())));
+          const currentThread = Option.isSome(threadOption) ? threadOption.value : thread;
+          const currentReview =
+            (currentThread.reviews ?? []).find((entry) => entry.id === review.id) ?? review;
+          const failedAtMs = Date.parse(failedAt);
+          if (
+            !isCadReviewActive(currentReview.status) ||
+            hasInterruptedRecoveryActivity(currentThread, review.id) ||
+            (Number.isFinite(failedAtMs) && isFreshActiveReview(currentReview, failedAtMs)) ||
+            hasFreshLiveChildSessionForReview({
+              thread: currentThread,
+              reviewRunId: review.id,
+              threadById,
+              now: failedAt,
+            })
+          ) {
+            continue;
+          }
           const interruptedChildThreadCount = yield* stopChildSessionsForReview({
-            thread,
+            thread: currentThread,
             reviewRunId: review.id,
             createdAt: failedAt,
           });
           const failedReview: CadReviewReport = {
-            ...review,
+            ...currentReview,
             status: "failed",
             activePersona: undefined,
             error:
-              review.error ??
+              currentReview.error ??
               "CAD review was interrupted before it completed. Start a new CAD review to run it again.",
             updatedAt: failedAt,
           };

@@ -81,11 +81,19 @@ export function personaLabel(persona: CadReviewPersona): string {
 export function buildReviewerPrompt(input: {
   readonly persona: Exclude<CadReviewPersona, "synthesis">;
   readonly subject: string;
+  readonly reviewPrompt: string | undefined;
   readonly baselineArtifacts: ReadonlyArray<CadReviewEvidenceArtifact>;
   readonly reviewPlan: CadReviewMechanismPlan | undefined;
 }): string {
   return [
     `You are the ${personaLabel(input.persona)} CAD reviewer for ${input.subject}.`,
+    ...(input.reviewPrompt
+      ? [
+          `User-requested review focus: ${input.reviewPrompt}`,
+          "Stay within this requested scope unless visible CAD evidence shows a directly related risk that the user likely needs to know.",
+          "",
+        ]
+      : []),
     PERSONA_PROMPTS[input.persona],
     "",
     "The review must go one level deeper than generic risk categories. For each significant concern, identify the exact mechanism/part region, the visible geometry that triggered the concern, what measurement or calculation would close the question, and the lowest-effort CAD change that would reduce risk.",
@@ -101,14 +109,22 @@ export function buildReviewerPrompt(input: {
           "",
         ]
       : []),
-    "Use the baseline screenshots below as the primary evidence packet. Inspect those files before moving the live CAD camera.",
-    "Do not recapture standard isometric/front/back/left/right/top/bottom views that are already listed below.",
-    "Use cadsense-cad-view MCP when the baseline leaves uncertainty. Prefer targeted exploration: toggle assemblies, parts, sketches, fasteners, covers, or adjacent subsystems on and off in the hierarchy to isolate the geometry you are judging.",
+    ...(input.baselineArtifacts.length > 0
+      ? [
+          "Use the baseline screenshots below as the primary evidence packet. Inspect those files before moving the live CAD camera.",
+          "Do not recapture standard isometric/front/back/left/right/top/bottom views that are already listed below.",
+          "Use cadsense-cad-view MCP when the baseline leaves uncertainty. Prefer targeted exploration: toggle assemblies, parts, sketches, fasteners, covers, or adjacent subsystems on and off in the hierarchy to isolate the geometry you are judging.",
+        ]
+      : [
+          "The planning pass skipped the standard baseline screenshot packet. Use targeted cadsense-cad-view MCP inspection only when it is needed to answer your assigned scope.",
+        ]),
     "When you move the live camera, favor non-standard angles that expose hidden interfaces, undersides, internal clearances, oblique load paths, tool access, wire paths, pinch points, and collision envelopes instead of repeating orthographic or default isometric views.",
     "Capture additional evidence only when the hierarchy state or camera angle reveals something materially useful for a finding, and name the isolated item or camera purpose in your evidence notes.",
     "Ground every concern in visible CAD evidence. Do not invent issues that are not supported by the captures or current view.",
     "",
-    "Baseline artifacts already requested:",
+    input.baselineArtifacts.length > 0
+      ? "Baseline artifacts already requested:"
+      : "Baseline artifacts already requested: none.",
     ...input.baselineArtifacts.map((artifact) => `- ${artifact.viewName}: ${artifact.artifactUri}`),
     "",
     "Return a concise JSON object only, with keys: summary, topConcerns, repeatedPatterns, likelyFailureModes, recommendedChanges, confidence, missingEvidence.",
@@ -120,32 +136,63 @@ export function buildReviewerPrompt(input: {
 
 export function buildMechanismPlanningPrompt(input: {
   readonly subject: string;
+  readonly reviewPrompt: string | undefined;
   readonly baselineArtifacts: ReadonlyArray<CadReviewEvidenceArtifact>;
 }): string {
   return [
     `Plan a deep FRC CAD review for ${input.subject}.`,
+    ...(input.reviewPrompt
+      ? [
+          `User-requested review focus: ${input.reviewPrompt}`,
+          "Use this prompt to scope the review. If it is broad or generic, enable every specialist reviewer. If it is focused, enable only reviewers whose expertise is materially relevant.",
+          "",
+        ]
+      : [
+          "No specific user focus was provided. Treat this as a holistic review and enable every specialist reviewer.",
+          "",
+        ]),
     "Act as the lead reviewer before specialist passes run. Your job is not to produce the final review; it is to identify what the reviewers must inspect deeply.",
-    "Classify visible mechanisms and suspicious regions from the baseline evidence. Prefer mechanism-specific language over generic risk labels.",
+    "Do not call CAD viewer tools, move the camera, isolate parts, explode assemblies, or capture screenshots during planning. Describe the CAD actions that later reviewer/deep-dive passes should perform.",
+    "First decide whether an automatic baseline screenshot pass is required. The standard baseline pass is a broad full-robot/common-view packet; it is not the default for a focused mechanism prompt.",
+    "Set baselineRequired to true only when the prompt is broad/holistic, the target mechanism cannot be identified from the prompt or thread context, or specialists need shared full-assembly views before they can choose a focused inspection strategy.",
+    "Set baselineRequired to false for focused mechanism prompts such as reviewing the geometry of an intake, shooter, climber, arm, elevator, or handoff when targeted live CAD inspection can answer the prompt better than common-view screenshots.",
+    "For focused mechanism prompts, plan to use the CAD hierarchy first: find the named subsystem, isolate it and directly adjacent handoff parts, hide unrelated assemblies, and use exploded or section-like views before asking specialists to judge geometry.",
+    "If baseline artifacts are present, classify visible mechanisms and suspicious regions from that evidence. If no baseline artifacts are present, plan from the user prompt and known CAD context without inventing visible geometry.",
+    "Choose which specialist reviewers should run. Use systems_integration for interfaces, packaging, mounting, manufacturing, service, wiring, assembly order, and cross-subsystem dependencies. Use program_readiness for scope, schedule, testability, implementation ROI, and whether this is worth building now. Use mechanical_robustness for load paths, flex, impact, jams, wear, fatigue, compression, support, and physical failure modes.",
+    "If the user asks for a holistic, broad, general, full, or all-around review, enable systems_integration, program_readiness, and mechanical_robustness.",
+    "If the baseline suggests the visible part is a single scoped mechanism such as a winch, intake, shooter, climber, or flywheel mount, do not enable unrelated full integration review unless the prompt or evidence clearly raises integration risk.",
     "For each mechanism, list visible evidence, suspicious regions, concrete checks to perform, and RAG/search queries that would retrieve relevant old FRC binder or Chief Delphi precedent.",
     "Include calculatorNeeds for engineering checks that would benefit from a ReCalc-style tool or the frc_mechanical_calculator MCP tool, such as beam/shaft deflection, roller surface speed, gear ratio, belt center distance, compression, motor power, current draw, or clearance stack-up.",
     "Do not invent exact dimensions. If a dimension is required, write the dimension to measure.",
     "",
-    "Baseline artifacts already requested:",
+    input.baselineArtifacts.length > 0
+      ? "Baseline artifacts already requested:"
+      : "Baseline artifacts already requested: none yet. Decide whether the standard baseline pass is needed before specialists run.",
     ...input.baselineArtifacts.map((artifact) => `- ${artifact.viewName}: ${artifact.artifactUri}`),
     "",
-    "Return JSON only with keys: summary, mechanisms, reviewPriorities, missingContext, calculatorNeeds.",
+    "Return JSON only with keys: summary, reviewScope, baselineRequired, baselineReason, mechanisms, reviewPriorities, missingContext, calculatorNeeds, reviewerSelection.",
+    "baselineRequired must be a boolean. baselineReason must briefly explain why the standard baseline screenshot pass is or is not needed.",
     "mechanisms must be objects with name, role, visibleEvidence, suspiciousRegions, specificChecks, precedentQueries.",
+    "reviewerSelection must include one object for each specialist persona with keys persona, enabled, reason. persona must be one of systems_integration, program_readiness, mechanical_robustness.",
   ].join("\n");
 }
 
 export function buildDeepDivePrompt(input: {
   readonly subject: string;
+  readonly reviewPrompt: string | undefined;
   readonly reviewPlan: CadReviewMechanismPlan | undefined;
   readonly findings: ReadonlyArray<CadReviewFinding>;
   readonly baselineArtifacts: ReadonlyArray<CadReviewEvidenceArtifact>;
 }): string {
   return [
     `Deep-dive the highest-risk CAD review findings for ${input.subject}.`,
+    ...(input.reviewPrompt
+      ? [
+          `User-requested review focus: ${input.reviewPrompt}`,
+          "Prioritize findings that answer this requested scope.",
+          "",
+        ]
+      : []),
     "Your job is to turn broad reviewer concerns into specific engineering follow-up. Inspect the CAD with cadsense-cad-view MCP where useful. Isolate parts or move the camera before making recommendations.",
     "For each focus finding, answer: exactly what geometry looks wrong or underdefined, what check/measurement/calculation would prove it, what FRC precedent or known design pattern applies, and what minimal CAD change should be tried first.",
     "Prefer concrete, inspectable wording. Include likely target ranges only when they are standard FRC practice or directly supported by retrieved/contextual evidence; otherwise state the needed measurement instead of guessing.",
@@ -176,6 +223,7 @@ export function buildDeepDivePrompt(input: {
 
 export function buildSynthesisPrompt(input: {
   readonly subject: string;
+  readonly reviewPrompt: string | undefined;
   readonly reports: ReadonlyArray<CadReviewPersonaReport>;
   readonly reviewPlan: CadReviewMechanismPlan | undefined;
   readonly deepDiveReports: ReadonlyArray<{
@@ -190,6 +238,13 @@ export function buildSynthesisPrompt(input: {
 }): string {
   return [
     `Synthesize this CAD review for ${input.subject}.`,
+    ...(input.reviewPrompt
+      ? [
+          `User-requested review focus: ${input.reviewPrompt}`,
+          "Make the final synthesis directly answer this requested scope before adding related high-risk follow-up.",
+          "",
+        ]
+      : []),
     "Act as the lead reviewer who merges specialist findings into one practical engineering review.",
     "Merge overlap, preserve meaningful disagreement, identify cross-subsystem dependencies, and prioritize concrete follow-up work by build risk and competitive value.",
     "Use the mechanism plan and deep-dive reports to make the final action items specific. Avoid action items that only say improve robustness, improve packaging, or verify serviceability. Each action item should name a subsystem/region and a concrete check or CAD change.",

@@ -268,6 +268,9 @@ it.effect("decodes CAD reviews with planning, deep dives, and rich finding detai
       },
       reviewPlan: {
         summary: "Inspect intake rollers and frame interface.",
+        reviewScope: "Holistic intake review.",
+        baselineRequired: true,
+        baselineReason: "The review needs visual CAD evidence for the intake path.",
         mechanisms: [
           {
             name: "Intake roller path",
@@ -281,6 +284,23 @@ it.effect("decodes CAD reviews with planning, deep dives, and rich finding detai
         reviewPriorities: ["Compression path"],
         missingContext: ["Game piece diameter"],
         calculatorNeeds: ["Shaft deflection from unsupported span"],
+        reviewerSelection: [
+          {
+            persona: "mechanical_robustness",
+            enabled: true,
+            reason: "Roller span and compression concerns are mechanical robustness risks.",
+          },
+          {
+            persona: "systems_integration",
+            enabled: false,
+            reason: "No interface-specific risk was requested.",
+          },
+          {
+            persona: "program_readiness",
+            enabled: false,
+            reason: "No schedule or scope tradeoff was requested.",
+          },
+        ],
       },
       personaReports: [
         {
@@ -364,12 +384,49 @@ it.effect("decodes CAD reviews with planning, deep dives, and rich finding detai
       parsed.reviewPlan?.calculatorNeeds[0],
       "Shaft deflection from unsupported span",
     );
+    assert.strictEqual(parsed.reviewPlan?.reviewerSelection[0]?.enabled, true);
     assert.strictEqual(parsed.personaReports[0]?.topConcerns[0]?.severity, "high");
     assert.strictEqual(parsed.deepDiveReports?.[0]?.focus, "Unsupported roller span");
     assert.deepStrictEqual(parsed.mergedActionItems[0]?.verificationSteps, [
       "Measure span",
       "Calculate deflection",
     ]);
+  }),
+);
+
+it.effect("decodes CAD review commands and events with review prompts", () =>
+  Effect.gen(function* () {
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.review.generate",
+      commandId: "cmd-review",
+      threadId: "thread-1",
+      reviewRunId: "review-1",
+      reviewPrompt: "Review the flywheel mounting.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(command.type, "thread.review.generate");
+    assert.strictEqual(command.reviewPrompt, "Review the flywheel mounting.");
+
+    const event = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-review",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.review-requested",
+      occurredAt: "2026-01-01T00:00:00.000Z",
+      commandId: "cmd-review",
+      causationEventId: null,
+      correlationId: "cmd-review",
+      metadata: {},
+      payload: {
+        threadId: "thread-1",
+        reviewRunId: "review-1",
+        reviewPrompt: "Review the flywheel mounting.",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      },
+    });
+    assert.strictEqual(event.type, "thread.review-requested");
+    assert.strictEqual(event.payload.reviewPrompt, "Review the flywheel mounting.");
   }),
 );
 
