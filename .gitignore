@@ -17,6 +17,7 @@ release-mock/
 .tmp-*
 .docs/
 docs/
+.plans/
 .idea/
 apps/web/.playwright
 apps/web/playwright-report
