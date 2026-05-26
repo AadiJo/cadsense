@@ -302,7 +302,12 @@ export const ProviderRegistryLive = Layer.effect(
         yield* writeProviderStatusCache({ filePath, provider }).pipe(
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
-          Effect.tapError(Effect.logError),
+          Effect.tapError((cause) =>
+            Effect.logWarning("failed to persist provider status cache; continuing", {
+              path: filePath,
+              cause,
+            }),
+          ),
           Effect.ignore,
         );
       });
