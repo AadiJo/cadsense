@@ -51,9 +51,7 @@ import Layout from "../layouts/Layout.astro";
 
       <div class="hero-preview">
         <figure class="hero-screenshot-frame">
-          <div class="hero-screenshot-placeholder" aria-label="Placeholder for upcoming CadSense product screenshot">
-            <span>Product screenshot coming here</span>
-          </div>
+          <img src="/demo.png" alt="CadSense product demo" />
         </figure>
       </div>
     </div>
@@ -497,31 +495,17 @@ import Layout from "../layouts/Layout.astro";
   .hero-screenshot-frame {
     position: relative;
     overflow: hidden;
-    aspect-ratio: 2508 / 1682;
+    aspect-ratio: 16 / 9;
     border-radius: 14px;
     background: #0a0a0c;
     box-shadow: 0 28px 64px -28px rgba(0, 0, 0, 0.75);
   }
 
-  .hero-screenshot-placeholder {
+  .hero-screenshot-frame img {
     width: 100%;
     height: 100%;
-    display: grid;
-    place-items: center;
-    background:
-      linear-gradient(135deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.03)),
-      linear-gradient(180deg, #1a1a1f 0%, #101015 100%);
-    color: rgba(255, 255, 255, 0.48);
-    font-family: var(--font-mono);
-    font-size: 14px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-
-  .hero-screenshot-placeholder span {
-    padding: 10px 14px;
-    border: 1px dashed rgba(255, 255, 255, 0.16);
-    border-radius: 999px;
+    display: block;
+    object-fit: contain;
   }
 
   /* ── Harnesses ─────────────────────────────────────────── */

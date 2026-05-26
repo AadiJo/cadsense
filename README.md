@@ -1,5 +1,7 @@
 # CadSense
 
+![CadSense product demo](./apps/marketing/public/demo.png)
+
 CadSense is a fast, local-first GUI for running Codex against real projects.
 
 It gives Codex a desktop/web workspace with persistent threads, project-aware chat, terminals,
