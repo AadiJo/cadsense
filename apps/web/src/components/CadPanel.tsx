@@ -144,6 +144,7 @@ const cadShellProps = {
 const CAD_MODEL_LOADING_TEXT_DELAY_MS = 350;
 const CAD_FULLSCREEN_TRANSITION_MS = 260;
 const CAD_FULLSCREEN_BEACON_RELEASE_MS = CAD_FULLSCREEN_TRANSITION_MS * 3;
+const CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD = 2;
 
 interface CadAgentControlOverlayRect {
   readonly left: number;
@@ -407,6 +408,7 @@ export default function CadPanel({
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const pendingFrameRequestsRef = useRef(new Map<string, PendingFrameRequest>());
   const frameRequestSequenceRef = useRef(0);
+  const consecutiveFrameTimeoutsRef = useRef(0);
   const modelFilesRef = useRef<ReadonlyArray<OnshapeSyncedCadFile>>([]);
   const activeFrameLoadIdRef = useRef(0);
   const frameLoadStartedAtRef = useRef(0);
@@ -542,6 +544,22 @@ export default function CadPanel({
     pendingFrameRequestsRef.current.clear();
   }, []);
 
+  const recycleCadViewerFrameAfterTimeout = useCallback(() => {
+    if (modelFilesRef.current.length === 0) {
+      return;
+    }
+
+    activeFrameLoadIdRef.current += 1;
+    loadedFrameRequestKeyRef.current = null;
+    frameLoadStartedAtRef.current = performance.now();
+    consecutiveFrameTimeoutsRef.current = 0;
+    setLoadState("loading");
+    setLoadError(null);
+    setFrameReadySequence(0);
+    setFrameActive(true);
+    setFrameKey((key) => key + 1);
+  }, []);
+
   const postFrameRequest = useCallback(
     (
       request: CadViewerFrameRequestInput,
@@ -558,6 +576,18 @@ export default function CadPanel({
         const requestId = `cad-frame-${++frameRequestSequenceRef.current}`;
         const timeoutId = setTimeout(() => {
           pendingFrameRequestsRef.current.delete(requestId);
+          consecutiveFrameTimeoutsRef.current += 1;
+          if (
+            request.type !== "load-file-urls" &&
+            consecutiveFrameTimeoutsRef.current >= CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD
+          ) {
+            console.warn("CAD viewer protocol stalled; recycling iframe.", {
+              requestType: request.type,
+              consecutiveTimeouts: consecutiveFrameTimeoutsRef.current,
+            });
+            consecutiveFrameTimeoutsRef.current = 0;
+            recycleCadViewerFrameAfterTimeout();
+          }
           reject(
             new Error(
               `The CAD viewer did not answer within ${(timeoutMs / 1000).toFixed(1)} seconds while handling '${request.type}'.`,
@@ -575,7 +605,7 @@ export default function CadPanel({
           transfer ?? [],
         );
       }),
-    [],
+    [recycleCadViewerFrameAfterTimeout],
   );
 
   const setFixedView = useCallback(
@@ -766,6 +796,7 @@ export default function CadPanel({
       }
       pendingFrameRequestsRef.current.delete(event.data.requestId);
       clearTimeout(pending.timeoutId);
+      consecutiveFrameTimeoutsRef.current = 0;
 
       if (event.data.ok) {
         pending.resolve(event.data.payload);
@@ -1078,6 +1109,7 @@ export default function CadPanel({
       rejectAllPendingFrameRequests("CAD viewer model changed.");
       loadedFrameRequestKeyRef.current = null;
       frameLoadStartedAtRef.current = 0;
+      consecutiveFrameTimeoutsRef.current = 0;
       setFrameActive(false);
       setFrameReadySequence(0);
       setLoadState("idle");
@@ -1091,6 +1123,7 @@ export default function CadPanel({
       rejectAllPendingFrameRequests("CAD viewer model is too large.");
       loadedFrameRequestKeyRef.current = null;
       frameLoadStartedAtRef.current = 0;
+      consecutiveFrameTimeoutsRef.current = 0;
       setFrameActive(false);
       setFrameReadySequence(0);
       setLoadState("error");
@@ -1103,6 +1136,7 @@ export default function CadPanel({
     rejectAllPendingFrameRequests("CAD viewer model changed.");
     loadedFrameRequestKeyRef.current = null;
     frameLoadStartedAtRef.current = performance.now();
+    consecutiveFrameTimeoutsRef.current = 0;
     setLoadState("loading");
     setLoadError(null);
     setFrameReadySequence(0);

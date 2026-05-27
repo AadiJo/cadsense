@@ -5,11 +5,13 @@ import {
   ThreadId,
 } from "@cadsense/contracts";
 import { scopeThreadRef } from "@cadsense/client-runtime";
+import { useParams } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { getThreadFromEnvironmentState } from "../threadDerivation";
 import { type AppState, useStore } from "../store";
+import { resolveThreadRouteRef } from "../threadRoutes";
 import CadPanel from "./CadPanel";
 
 const ACTIVE_CAD_REVIEW_STATUSES = new Set<CadReviewStatus>([
@@ -52,13 +54,19 @@ function selectActiveCadReviewThreadKeys(state: AppState): string[] {
 }
 
 export function CadReviewAgentControlHost() {
+  const visibleThreadRef = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteRef(params),
+  });
   const activeReviewThreadKeys = useStore(useShallow(selectActiveCadReviewThreadKeys));
+  const visibleThreadKey = visibleThreadRef ? threadRefKey(visibleThreadRef) : null;
   const activeReviewThreadRefs = useMemo(
     () =>
       activeReviewThreadKeys
+        .filter((key) => key !== visibleThreadKey)
         .map(parseThreadRefKey)
         .filter((ref): ref is ScopedThreadRef => ref !== null),
-    [activeReviewThreadKeys],
+    [activeReviewThreadKeys, visibleThreadKey],
   );
 
   if (activeReviewThreadRefs.length === 0) {

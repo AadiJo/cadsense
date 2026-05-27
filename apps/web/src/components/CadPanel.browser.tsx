@@ -19,8 +19,10 @@ let threadReviews: Array<typeof activeReview> = [];
 let cadViewCommandHandler:
   | ((command: {
       readonly threadId: string;
-      readonly type: "set-exploded";
-      readonly exploded: boolean;
+      readonly type: "set-exploded" | "set-view";
+      readonly exploded?: boolean;
+      readonly view?: "front";
+      readonly fit?: boolean;
     }) => void)
   | null = null;
 
@@ -149,6 +151,43 @@ function delayedReadyFrameUrl(): string {
             });
             parent.postMessage({ source: "cadsense-cad-viewer-frame", type: "ready" }, "*");
           }, 75);
+        </script>
+      </body>
+    </html>
+  `;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
+function stalledAfterLoadFrameUrl(): string {
+  const html = String.raw`
+    <!doctype html>
+    <html>
+      <body>
+        <script>
+          window.addEventListener("message", (event) => {
+            if (event.data?.source !== "cadsense-cad-viewer-parent") return;
+            parent.postMessage({
+              source: "cad-test-frame-observation",
+              request: event.data
+            }, "*");
+            if (event.data?.type !== "load-file-urls") return;
+            parent.postMessage({
+              source: "cadsense-cad-viewer-frame",
+              type: "response",
+              requestId: event.data.requestId,
+              ok: true,
+              payload: {
+                loadStats: {
+                  strategy: "three-3mf-direct-url",
+                  bytes: 1024,
+                  fetchMs: 0,
+                  importMs: 1,
+                  totalMs: 1
+                }
+              }
+            }, "*");
+          });
+          parent.postMessage({ source: "cadsense-cad-viewer-frame", type: "ready" }, "*");
         </script>
       </body>
     </html>
@@ -340,6 +379,58 @@ describe("CadPanel browser behavior", () => {
     queryClient.clear();
   });
 
+  it("recycles the viewer iframe after repeated post-load protocol stalls", async () => {
+    cadFrameUrl = stalledAfterLoadFrameUrl();
+    const onObservedRequest = (event: MessageEvent<unknown>) => {
+      if (
+        typeof event.data === "object" &&
+        event.data !== null &&
+        "source" in event.data &&
+        event.data.source === "cad-test-frame-observation" &&
+        "request" in event.data
+      ) {
+        observedFrameRequests.push(event.data.request);
+      }
+    };
+    window.addEventListener("message", onObservedRequest);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await vi.waitFor(() => expect(cadViewCommandHandler).toBeTypeOf("function"));
+
+    cadViewCommandHandler?.({ threadId, type: "set-view", view: "front", fit: true });
+    cadViewCommandHandler?.({ threadId, type: "set-view", view: "front", fit: true });
+
+    await vi.waitFor(
+      () => {
+        const loadRequests = observedFrameRequests.filter(
+          (request) =>
+            typeof request === "object" &&
+            request !== null &&
+            "type" in request &&
+            request.type === "load-file-urls",
+        );
+        expect(loadRequests.length).toBeGreaterThanOrEqual(2);
+      },
+      { timeout: 8_000 },
+    );
+
+    window.removeEventListener("message", onObservedRequest);
+    await screen.unmount();
+    queryClient.clear();
+  });
   it("covers fullscreen layout changes and keeps the control anchored during entry", async () => {
     cadFrameUrl = delayedReadyFrameUrl();
     const queryClient = new QueryClient({
