@@ -74,6 +74,7 @@ import {
 } from "./userMessageTerminalContexts";
 import { SkillInlineText } from "./SkillInlineText";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import type { CadReviewChildActivitySummary } from "../../lib/cadAgentViewState";
 
 // ---------------------------------------------------------------------------
 // Context — shared state consumed by every row component via Context.
@@ -90,6 +91,7 @@ interface TimelineRowSharedState {
   workspaceRoot: string | undefined;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   displayCadReviewWorkLog: boolean;
+  cadReviewChildActivityByReviewId: Readonly<Record<string, CadReviewChildActivitySummary>>;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -134,6 +136,7 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   displayCadReviewWorkLog?: boolean;
+  cadReviewChildActivityByReviewId?: Readonly<Record<string, CadReviewChildActivitySummary>>;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -164,6 +167,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   workspaceRoot,
   skills = EMPTY_TIMELINE_SKILLS,
   displayCadReviewWorkLog = false,
+  cadReviewChildActivityByReviewId = {},
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
@@ -227,6 +231,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       displayCadReviewWorkLog,
+      cadReviewChildActivityByReviewId,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -240,6 +245,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       workspaceRoot,
       skills,
       displayCadReviewWorkLog,
+      cadReviewChildActivityByReviewId,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -539,6 +545,7 @@ function ProposedPlanTimelineRow({
 function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-review" }> }) {
   const review = row.review;
   const ctx = use(TimelineRowCtx);
+  const childActivity = ctx.cadReviewChildActivityByReviewId[review.id] ?? null;
   const activeAgent =
     review.status === "completed" || review.status === "partial" || review.status === "failed"
       ? null
@@ -578,6 +585,11 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
                 {review.status}
               </span>
               {activeAgent ? <span>Active: {activeAgent}</span> : null}
+              {childActivity ? (
+                <span>
+                  Child updated <LiveSince createdAt={childActivity.updatedAt} /> ago
+                </span>
+              ) : null}
               <span>{formatTimestamp(review.updatedAt, ctx.timestampFormat)}</span>
             </div>
           </div>
@@ -599,6 +611,8 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
             <p className="mt-1 text-sm">{review.reviewPrompt}</p>
           </section>
         ) : null}
+
+        {childActivity ? <CadReviewLiveChildActivity summary={childActivity} /> : null}
 
         {review.positiveSignals.length > 0 || review.mergedActionItems.length > 0 ? (
           <CadReviewActionSummary review={review} />
@@ -811,6 +825,41 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
   );
 }
 
+function CadReviewLiveChildActivity({ summary }: { summary: CadReviewChildActivitySummary }) {
+  const reviewer = summary.reviewer ? formatCadReviewReviewerName(summary.reviewer) : "Reviewer";
+  const toolLabel = summary.latestToolTitle || summary.latestToolName;
+  const activityLabel = toolLabel || summary.latestActivityLabel;
+
+  return (
+    <section className="mt-4 rounded-md border border-primary/20 bg-primary/5 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <h4 className="text-xs font-medium text-muted-foreground">Live child-thread activity</h4>
+          <p className="mt-1 truncate text-sm">
+            {reviewer}: {activityLabel}
+          </p>
+        </div>
+        <span className="rounded-sm border border-primary/25 px-2 py-1 text-[10px] uppercase tracking-wide text-primary">
+          <LiveSince createdAt={summary.updatedAt} /> ago
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {summary.latestToolName ? <span>Tool: {summary.latestToolName}</span> : null}
+        {summary.latestScreenshotAt ? (
+          <span>
+            Screenshot: <LiveSince createdAt={summary.latestScreenshotAt} /> ago
+          </span>
+        ) : null}
+        {summary.latestRenderAt ? (
+          <span>
+            Render/view: <LiveSince createdAt={summary.latestRenderAt} /> ago
+          </span>
+        ) : null}
+      </div>
+    </section>
+  );
+}
+
 const CAD_REVIEW_PERSONAS = [
   "systems_integration",
   "program_readiness",
@@ -820,6 +869,13 @@ const CAD_REVIEW_PERSONAS = [
 
 function formatCadReviewPersona(persona: CadReviewPersona): string {
   return persona
+    .split("_")
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function formatCadReviewReviewerName(reviewer: string): string {
+  return reviewer
     .split("_")
     .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
     .join(" ");
@@ -1400,6 +1456,24 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
 
 /** Live "Working for Xs" label. */
 function WorkingTimer({ createdAt }: { createdAt: string }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  const initialText = formatWorkingTimerNow(createdAt);
+
+  useEffect(() => {
+    const updateText = () => {
+      if (textRef.current) {
+        textRef.current.textContent = formatWorkingTimerNow(createdAt);
+      }
+    };
+    updateText();
+    const id = setInterval(updateText, 1000);
+    return () => clearInterval(id);
+  }, [createdAt]);
+
+  return <span ref={textRef}>{initialText}</span>;
+}
+
+function LiveSince({ createdAt }: { createdAt: string }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const initialText = formatWorkingTimerNow(createdAt);
 

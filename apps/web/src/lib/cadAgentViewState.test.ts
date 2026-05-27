@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import type { EnvironmentState } from "../store";
 import type { Thread, ThreadShell } from "../types";
 import {
+  deriveCadReviewChildActivitySummaries,
   deriveCadAgentViewStateForThread,
   isCadRelatedToolActivity,
   latestCadAgentViewState,
@@ -190,6 +191,32 @@ describe("cadAgentViewState", () => {
     };
 
     expect(latestCadAgentViewState(older, newer)).toBe(newer);
+  });
+
+  it("summarizes the latest child reviewer activity for an active review", () => {
+    const summaries = deriveCadReviewChildActivitySummaries(
+      makeEnvironmentState([
+        activity("view-front", "2026-01-01T00:00:01.000Z", "set_cad_view", {
+          view: "front",
+        }),
+        activity("screenshot", "2026-01-01T00:00:02.000Z", "export_cad_screenshot", {
+          view: "front",
+        }),
+        activity("read-file", "2026-01-01T00:00:03.000Z", "read_file", {
+          path: "notes.md",
+        }),
+      ]),
+      makeParentThread(),
+    );
+
+    expect(summaries[reviewRunId]).toMatchObject({
+      reviewer: "synthesis",
+      childThreadId,
+      latestActivityId: "read-file",
+      latestToolName: "read_file",
+      latestScreenshotAt: "2026-01-01T00:00:02.000Z",
+      updatedAt: "2026-01-01T00:00:03.000Z",
+    });
   });
 
   it("detects CAD-related tool lifecycle activity without matching non-tool text", () => {

@@ -21,6 +21,20 @@ const CAD_REVIEW_ACTIVE_STATUSES: ReadonlySet<CadReviewStatus> = new Set<CadRevi
   "synthesizing",
 ]);
 
+export interface CadReviewChildActivitySummary {
+  readonly reviewRunId: string;
+  readonly reviewer: string | null;
+  readonly childThreadId: ThreadId;
+  readonly latestActivityId: string;
+  readonly latestActivityKind: string;
+  readonly latestActivityLabel: string;
+  readonly latestToolName: string | null;
+  readonly latestToolTitle: string | null;
+  readonly latestScreenshotAt: string | null;
+  readonly latestRenderAt: string | null;
+  readonly updatedAt: string;
+}
+
 function payloadRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -55,7 +69,14 @@ function activeReviewId(thread: Thread): string | null {
 }
 
 function childThreadIdsForReview(thread: Thread, reviewRunId: string): Set<ThreadId> {
-  const childThreadIds = new Set<ThreadId>();
+  return new Set(childThreadMetadataForReview(thread, reviewRunId).keys());
+}
+
+function childThreadMetadataForReview(
+  thread: Thread,
+  reviewRunId: string,
+): Map<ThreadId, { reviewer: string | null }> {
+  const childThreadIds = new Map<ThreadId, { reviewer: string | null }>();
   for (const activity of thread.activities) {
     if (activity.kind !== CAD_REVIEW_CHILD_CREATED_KIND) {
       continue;
@@ -64,7 +85,9 @@ function childThreadIdsForReview(thread: Thread, reviewRunId: string): Set<Threa
     if (payload?.reviewRunId !== reviewRunId || typeof payload.childThreadId !== "string") {
       continue;
     }
-    childThreadIds.add(payload.childThreadId as ThreadId);
+    childThreadIds.set(payload.childThreadId as ThreadId, {
+      reviewer: typeof payload.persona === "string" ? payload.persona : null,
+    });
   }
   return childThreadIds;
 }
@@ -194,6 +217,63 @@ export function deriveCadAgentViewStateForThread(
   return derivedState;
 }
 
+export function deriveCadReviewChildActivitySummaries(
+  environmentState: EnvironmentState,
+  thread: Thread,
+): Record<string, CadReviewChildActivitySummary> {
+  const summaries: Record<string, CadReviewChildActivitySummary> = {};
+  const activeReviews =
+    thread.reviews?.filter((review) => CAD_REVIEW_ACTIVE_STATUSES.has(review.status)) ?? [];
+
+  for (const review of activeReviews) {
+    const childThreadMetadata = childThreadMetadataForReview(thread, review.id);
+    const childPrefix = `${thread.id}:cad-review:${review.id}:`;
+    let latest: CadReviewChildActivitySummary | null = null;
+
+    for (const threadId of environmentState.threadIds) {
+      if (!childThreadMetadata.has(threadId) && !threadId.startsWith(childPrefix)) {
+        continue;
+      }
+      const childThread = getThreadFromEnvironmentState(environmentState, threadId);
+      const reviewer =
+        childThreadMetadata.get(threadId)?.reviewer ?? reviewerFromChildThreadId(threadId);
+      for (const activity of childThread?.activities ?? []) {
+        if (activity.kind === CAD_REVIEW_CHILD_CREATED_KIND) {
+          continue;
+        }
+        const toolName = toolNameFromActivity(activity) ?? null;
+        const toolTitle = toolTitleFromActivity(activity) ?? null;
+        const next: CadReviewChildActivitySummary = {
+          reviewRunId: review.id,
+          reviewer,
+          childThreadId: threadId,
+          latestActivityId: activity.id,
+          latestActivityKind: activity.kind,
+          latestActivityLabel: activity.summary,
+          latestToolName: toolName,
+          latestToolTitle: toolTitle,
+          latestScreenshotAt: activityLooksLike(activity, ["screenshot", "capture"])
+            ? activity.createdAt
+            : (latest?.latestScreenshotAt ?? null),
+          latestRenderAt: activityLooksLike(activity, ["render", "view"])
+            ? activity.createdAt
+            : (latest?.latestRenderAt ?? null),
+          updatedAt: activity.createdAt,
+        };
+        if (!latest || next.updatedAt > latest.updatedAt) {
+          latest = next;
+        }
+      }
+    }
+
+    if (latest) {
+      summaries[review.id] = latest;
+    }
+  }
+
+  return summaries;
+}
+
 export function latestCadAgentViewState(
   left: CadAgentViewState | null,
   right: CadAgentViewState | null,
@@ -227,4 +307,24 @@ export function isCadRelatedToolActivity(activity: OrchestrationThreadActivity):
 
   const title = toolTitleFromActivity(activity)?.toLocaleLowerCase();
   return title?.includes("cad") === true;
+}
+
+function reviewerFromChildThreadId(threadId: ThreadId): string | null {
+  const parts = threadId.split(":cad-review:");
+  const reviewSuffix = parts[1];
+  if (!reviewSuffix) {
+    return null;
+  }
+  const [, reviewer] = reviewSuffix.split(":");
+  return reviewer || null;
+}
+
+function activityLooksLike(
+  activity: OrchestrationThreadActivity,
+  needles: ReadonlyArray<string>,
+): boolean {
+  const haystack = `${activity.kind} ${activity.summary} ${toolNameFromActivity(activity) ?? ""} ${
+    toolTitleFromActivity(activity) ?? ""
+  }`.toLowerCase();
+  return needles.some((needle) => haystack.includes(needle));
 }

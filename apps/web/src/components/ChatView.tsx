@@ -159,6 +159,7 @@ import {
   type TerminalContextDraft,
   type TerminalContextSelection,
 } from "../lib/terminalContext";
+import { deriveCadReviewChildActivitySummaries } from "../lib/cadAgentViewState";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
@@ -4035,6 +4036,18 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveCadReviewOverlaySteps(activeThread.reviews ?? [], cadReviewWorkLogEntries),
     [activeThread.reviews, cadReviewWorkLogEntries],
   );
+  const cadReviewChildActivityByReviewId = useStore(
+    useMemo(
+      () => (state) => {
+        const environmentState = state.environmentStateById[activeThread.environmentId];
+        if (!environmentState) {
+          return {};
+        }
+        return deriveCadReviewChildActivitySummaries(environmentState, activeThread);
+      },
+      [activeThread],
+    ),
+  );
   const onGenerateCadReview = async (input: {
     reviewPrompt: string;
     threadTitle: string;
@@ -4244,6 +4257,7 @@ export default function ChatView(props: ChatViewProps) {
               workspaceRoot={activeWorkspaceRoot}
               skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
               displayCadReviewWorkLog={displayCadReviewWorkLog}
+              cadReviewChildActivityByReviewId={cadReviewChildActivityByReviewId}
               onIsAtEndChange={onIsAtEndChange}
             />
 
