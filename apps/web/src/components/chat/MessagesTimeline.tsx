@@ -287,7 +287,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           initialScrollAtEnd
           maintainScrollAtEnd
           maintainScrollAtEndThreshold={0.1}
-          maintainVisibleContentPosition
+          maintainVisibleContentPosition={{ data: true, size: false }}
           onScroll={handleScroll}
           className="timeline-scrollport h-full overflow-x-hidden overscroll-y-contain px-3 sm:px-5"
           ListHeaderComponent={TIMELINE_LIST_HEADER}
@@ -600,20 +600,19 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
           </section>
         ) : null}
 
-        {review.commonThemes.length > 0 ? (
-          <section className="mt-4">
-            <h4 className="text-xs font-medium text-muted-foreground">Common themes</h4>
-            <ul className="mt-1 space-y-1 text-sm">
-              {review.commonThemes.map((theme) => (
-                <li key={theme}>- {theme}</li>
-              ))}
-            </ul>
-          </section>
+        {review.positiveSignals.length > 0 || review.mergedActionItems.length > 0 ? (
+          <CadReviewActionSummary review={review} />
         ) : null}
 
+        {review.commonThemes.length > 0 ? <CadReviewCommonThemes review={review} /> : null}
+
         {review.reviewPlan ? (
-          <section className="mt-4">
-            <h4 className="text-xs font-medium text-muted-foreground">Mechanism plan</h4>
+          <CadReviewCollapsibleSection
+            className="mt-4"
+            count={review.reviewPlan.mechanisms.length}
+            icon={HammerIcon}
+            title="Mechanism plan"
+          >
             <p className="mt-1 text-sm text-muted-foreground">{review.reviewPlan.summary}</p>
             {review.reviewPlan.mechanisms.length > 0 ? (
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -667,12 +666,16 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
                 ))}
               </div>
             ) : null}
-          </section>
+          </CadReviewCollapsibleSection>
         ) : null}
 
         {review.personaReports.length > 0 ? (
-          <section className="mt-4">
-            <h4 className="text-xs font-medium text-muted-foreground">Reviewer personas</h4>
+          <CadReviewCollapsibleSection
+            className="mt-4"
+            count={review.personaReports.length}
+            icon={EyeIcon}
+            title="Reviewer personas"
+          >
             <div className="mt-2 space-y-3">
               {review.personaReports.map((report) => (
                 <div key={report.persona} className="rounded-lg border border-border/70 p-3">
@@ -716,39 +719,16 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
                 </div>
               ))}
             </div>
-          </section>
-        ) : null}
-
-        {review.mergedActionItems.length > 0 ? (
-          <section className="mt-4">
-            <h4 className="text-xs font-medium text-muted-foreground">Merged action items</h4>
-            <div className="mt-2 space-y-2">
-              {review.mergedActionItems.map((item) => (
-                <div key={item.id} className="rounded-lg bg-muted/40 p-3 text-sm">
-                  <span className="font-medium">{item.priority}: </span>
-                  {item.title}
-                  <p className="mt-1 text-muted-foreground">{item.description}</p>
-                  {item.targetGeometry ? (
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Target: {item.targetGeometry}
-                    </p>
-                  ) : null}
-                  {item.verificationSteps && item.verificationSteps.length > 0 ? (
-                    <ul className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-                      {item.verificationSteps.map((step) => (
-                        <li key={step}>- {step}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </div>
-              ))}
-            </div>
-          </section>
+          </CadReviewCollapsibleSection>
         ) : null}
 
         {review.deepDiveReports && review.deepDiveReports.length > 0 ? (
-          <section className="mt-4">
-            <h4 className="text-xs font-medium text-muted-foreground">Focused deep dives</h4>
+          <CadReviewCollapsibleSection
+            className="mt-4"
+            count={review.deepDiveReports.length}
+            icon={ZapIcon}
+            title="Focused deep dives"
+          >
             <div className="mt-2 space-y-2">
               {review.deepDiveReports.map((deepDive) => (
                 <div key={deepDive.id} className="rounded-lg border border-border/70 p-3 text-sm">
@@ -769,7 +749,7 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
                 </div>
               ))}
             </div>
-          </section>
+          </CadReviewCollapsibleSection>
         ) : null}
 
         <section className="mt-4 grid gap-3 sm:grid-cols-2">
@@ -861,6 +841,382 @@ function cadReviewEvidenceLabel(review: CadReviewReport, artifactId: string): st
     : artifact.viewName;
 }
 
+function cadReviewFindingById(
+  review: CadReviewReport,
+): Map<string, CadReviewReport["personaReports"][number]["topConcerns"][number]> {
+  return new Map(
+    review.personaReports.flatMap((report) =>
+      report.topConcerns.map((finding) => [finding.id, finding] as const),
+    ),
+  );
+}
+
+function evidenceArtifactIdsForActionItem(
+  review: CadReviewReport,
+  item: CadReviewReport["mergedActionItems"][number],
+): ReadonlyArray<string> {
+  if (item.evidenceArtifactIds.length > 0) {
+    return item.evidenceArtifactIds;
+  }
+  const findingById = cadReviewFindingById(review);
+  return [
+    ...new Set(
+      item.sourceFindingIds.flatMap(
+        (findingId) => findingById.get(findingId)?.evidenceArtifactIds ?? [],
+      ),
+    ),
+  ];
+}
+
+function cadReviewArtifactPreviewUrl(artifact: CadReviewEvidenceArtifact): string {
+  return `/api/cad/review-artifact?artifactUri=${encodeURIComponent(artifact.artifactUri)}`;
+}
+
+function isPreviewableCadReviewArtifact(artifact: CadReviewEvidenceArtifact): boolean {
+  if (artifact.status !== "captured") {
+    return false;
+  }
+  if (artifact.mimeType?.toLowerCase().startsWith("image/")) {
+    return true;
+  }
+  return /\.(?:gif|jpe?g|png|webp)$/i.test(artifact.artifactUri);
+}
+
+function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return "";
+  const match = /^(.*?[.!?])(?:\s|$)/.exec(trimmed);
+  return match?.[1] ?? trimmed;
+}
+
+function cadReviewVerdict(review: CadReviewReport): string | null {
+  const deepDiveSummary = review.deepDiveReports?.find(
+    (report) => report.summary.trim().length > 0,
+  )?.summary;
+  if (deepDiveSummary) {
+    return firstSentence(deepDiveSummary);
+  }
+  const personaSummary = review.personaReports.find(
+    (report) => report.summary.trim().length > 0,
+  )?.summary;
+  if (personaSummary) {
+    return firstSentence(personaSummary);
+  }
+  return review.commonThemes[0] ?? null;
+}
+
+function tokenizeCadReviewText(text: string): Set<string> {
+  const stopWords = new Set([
+    "about",
+    "action",
+    "after",
+    "already",
+    "also",
+    "appear",
+    "because",
+    "before",
+    "being",
+    "both",
+    "critical",
+    "current",
+    "design",
+    "fixed",
+    "geometry",
+    "highest",
+    "likely",
+    "local",
+    "main",
+    "multiple",
+    "review",
+    "risk",
+    "shooter",
+    "stage",
+    "still",
+    "support",
+    "that",
+    "their",
+    "there",
+    "these",
+    "through",
+    "with",
+  ]);
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length > 3 && !stopWords.has(token)),
+  );
+}
+
+function actionText(item: CadReviewReport["mergedActionItems"][number]): string {
+  return [
+    item.title,
+    item.description,
+    item.subsystem,
+    item.issueType,
+    item.rationale,
+    item.targetGeometry,
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function bestActionForTheme(
+  review: CadReviewReport,
+  theme: string,
+): CadReviewReport["mergedActionItems"][number] | null {
+  const themeTokens = tokenizeCadReviewText(theme);
+  let best: CadReviewReport["mergedActionItems"][number] | null = null;
+  let bestScore = 0;
+  for (const item of review.mergedActionItems) {
+    const actionTokens = tokenizeCadReviewText(actionText(item));
+    const score = [...themeTokens].filter((token) => actionTokens.has(token)).length;
+    if (score > bestScore) {
+      best = item;
+      bestScore = score;
+    }
+  }
+  return bestScore > 0 ? best : null;
+}
+
+function cadReviewActionTags(item: CadReviewReport["mergedActionItems"][number]): string[] {
+  const text = actionText(item).toLowerCase();
+  const tags: string[] = [];
+  if (/\b(service|access|belt|retainer|remove|replacement|pit)\b/.test(text)) {
+    tags.push("serviceability");
+  }
+  if (/\b(handoff|transfer|throat|guide|jam|capture)\b/.test(text)) {
+    tags.push("handoff");
+  }
+  if (/\b(shaft|bearing|span|double shear|wheel)\b/.test(text)) {
+    tags.push("roller support");
+  }
+  if (/\b(stiffen|stiffness|plate|spread|racking|deflection|truss)\b/.test(text)) {
+    tags.push("stiffness");
+  }
+  return tags.slice(0, 2);
+}
+
+function cadReviewMeasurementTargets(review: CadReviewReport): string[] {
+  const candidates = review.mergedActionItems.flatMap((item) => [
+    ...(item.targetGeometry ? [`Target geometry: ${item.targetGeometry}`] : []),
+    ...(item.verificationSteps ?? []),
+  ]);
+  return [
+    ...new Set(
+      candidates.filter((step) =>
+        /\b(measure|count|calculate|estimate|record|simulate|verify)\b/i.test(step),
+      ),
+    ),
+  ].slice(0, 6);
+}
+
+function CadReviewActionSummary({ review }: { review: CadReviewReport }) {
+  const ctx = use(TimelineRowCtx);
+  const actionItems = review.mergedActionItems.slice(0, 6);
+  const verdict = cadReviewVerdict(review);
+  const measurementTargets = cadReviewMeasurementTargets(review);
+  return (
+    <section className="mt-4 border-t border-border/60 pt-3">
+      {verdict ? (
+        <div className="mb-3 rounded-md border border-primary/20 bg-primary/5 p-3">
+          <p className="text-xs font-medium text-primary">One-line verdict</p>
+          <p className="mt-1 text-sm text-foreground">{verdict}</p>
+        </div>
+      ) : null}
+
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h4 className="text-xs font-medium text-muted-foreground">Review summary</h4>
+        {review.mergedActionItems.length > actionItems.length ? (
+          <span className="text-[11px] text-muted-foreground">
+            Showing {actionItems.length} of {review.mergedActionItems.length} action items
+          </span>
+        ) : null}
+      </div>
+
+      {actionItems.length > 0 ? (
+        <div className="mt-2 space-y-2">
+          {actionItems.map((item) => {
+            const evidenceIds = evidenceArtifactIdsForActionItem(review, item);
+            const tags = cadReviewActionTags(item);
+            return (
+              <article key={item.id} className="rounded-md border border-border/70 bg-muted/25 p-3">
+                <div className="flex flex-wrap items-start gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={cn(
+                          "rounded-sm border px-1.5 py-0.5 text-[10px] uppercase",
+                          item.priority === "critical"
+                            ? "border-destructive/35 bg-destructive/8 text-destructive-foreground"
+                            : item.priority === "high"
+                              ? "border-warning/35 bg-warning/8 text-warning-foreground"
+                              : "border-border text-muted-foreground",
+                        )}
+                      >
+                        {item.priority}
+                      </span>
+                      {item.subsystem ? (
+                        <span className="text-[11px] text-muted-foreground">{item.subsystem}</span>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-sm font-medium">{item.title}</p>
+                    {tags.length > 0 ? (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {tags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="rounded-sm border border-border/70 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                <CadReviewActionEvidenceCarousel
+                  artifactIds={evidenceIds}
+                  onImageExpand={ctx.onImageExpand}
+                  review={review}
+                />
+                <p className="mt-1 text-sm text-muted-foreground">{item.description}</p>
+                {item.targetGeometry ? (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    <span className="font-medium text-foreground/80">Target:</span>{" "}
+                    {item.targetGeometry}
+                  </p>
+                ) : null}
+                {item.verificationSteps && item.verificationSteps.length > 0 ? (
+                  <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                    {item.verificationSteps.slice(0, 3).map((step) => (
+                      <li key={step} className="flex gap-1.5">
+                        <CheckIcon className="mt-0.5 size-3 shrink-0 text-primary" />
+                        <span>{step}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+
+      {measurementTargets.length > 0 ? (
+        <div className="mt-3 rounded-md border border-border/70 bg-background/40 p-3">
+          <p className="text-xs font-medium text-muted-foreground">Measurement targets</p>
+          <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+            {measurementTargets.map((target) => (
+              <div key={target} className="flex gap-2 text-xs text-muted-foreground">
+                <SquarePenIcon className="mt-0.5 size-3.5 shrink-0" />
+                <span>{target}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {review.positiveSignals.length > 0 ? (
+        <div className="mt-3 rounded-md border border-success/20 bg-success/5 p-3">
+          <p className="text-xs font-medium text-success-foreground">Strengths to preserve</p>
+          <ul className="mt-2 space-y-1.5 text-sm text-muted-foreground">
+            {review.positiveSignals.slice(0, 3).map((signal) => (
+              <li key={signal} className="flex gap-2">
+                <CheckIcon className="mt-0.5 size-3.5 shrink-0 text-success-foreground" />
+                <span>{signal}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function CadReviewActionEvidenceCarousel({
+  artifactIds,
+  onImageExpand,
+  review,
+}: {
+  artifactIds: ReadonlyArray<string>;
+  onImageExpand: (preview: ExpandedImagePreview) => void;
+  review: CadReviewReport;
+}) {
+  const artifacts = artifactIds
+    .map((artifactId) => review.evidenceArtifacts.find((artifact) => artifact.id === artifactId))
+    .filter(
+      (artifact): artifact is CadReviewEvidenceArtifact =>
+        artifact !== undefined && isPreviewableCadReviewArtifact(artifact),
+    )
+    .slice(0, 6);
+  if (artifacts.length === 0) {
+    return null;
+  }
+
+  const previewImages = artifacts.map((artifact) => ({
+    src: cadReviewArtifactPreviewUrl(artifact),
+    name: cadReviewEvidenceLabel(review, artifact.id),
+  }));
+
+  return (
+    <div className="mt-2 rounded-md border border-border/70 bg-background/40 p-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs font-medium text-muted-foreground">Evidence</p>
+        <span className="text-[11px] text-muted-foreground">{artifacts.length} images</span>
+      </div>
+      <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+        {artifacts.map((artifact, index) => (
+          <button
+            key={artifact.id}
+            type="button"
+            className="group min-w-32 overflow-hidden rounded-md border border-border/70 bg-muted/25 text-left transition-colors hover:border-primary/40 hover:bg-muted/45"
+            onClick={() => onImageExpand({ images: previewImages, index })}
+          >
+            <div className="aspect-video w-32 overflow-hidden bg-muted">
+              <img
+                src={cadReviewArtifactPreviewUrl(artifact)}
+                alt={cadReviewEvidenceLabel(review, artifact.id)}
+                className="h-full w-full object-cover transition-transform group-hover:scale-[1.02]"
+                loading="lazy"
+              />
+            </div>
+            <div className="p-2">
+              <p className="truncate text-xs font-medium">
+                {cadReviewEvidenceLabel(review, artifact.id)}
+              </p>
+            </div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function CadReviewCommonThemes({ review }: { review: CadReviewReport }) {
+  return (
+    <section className="mt-4">
+      <h4 className="text-xs font-medium text-muted-foreground">Common themes</h4>
+      <ul className="mt-2 space-y-2 text-sm">
+        {review.commonThemes.map((theme) => {
+          const action = bestActionForTheme(review, theme);
+          return (
+            <li key={theme} className="rounded-md border border-border/70 bg-muted/20 p-2.5">
+              <p>{theme}</p>
+              {action ? (
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground/80">Recommended fix:</span>{" "}
+                  {action.title}
+                </p>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
 function CadReviewCollapsibleSection({
   children,
   className,
@@ -874,12 +1230,19 @@ function CadReviewCollapsibleSection({
   icon: LucideIcon;
   title: string;
 }) {
+  const [open, setOpen] = useState(false);
+
   return (
-    <Collapsible className={cn("border-t border-border/60 pt-3", className)}>
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className={cn("border-t border-border/60 pt-3", className)}
+    >
       <CollapsibleTrigger
         render={
           <button
             type="button"
+            data-scroll-anchor-ignore
             className="flex w-full items-center justify-between gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-muted/35"
           >
             <span className="flex min-w-0 items-center gap-2">
@@ -892,7 +1255,7 @@ function CadReviewCollapsibleSection({
           </button>
         }
       />
-      <CollapsiblePanel>
+      <CollapsiblePanel data-scroll-anchor-ignore>
         <div className="pt-2">{children}</div>
       </CollapsiblePanel>
     </Collapsible>

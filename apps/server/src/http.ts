@@ -64,8 +64,11 @@ const CAD_VIEW_COMMAND_ROUTE_PATH = "/api/cad/view-command";
 const CAD_CONTROL_ROUTE_PATH = "/api/cad/control-command";
 const CAD_HIERARCHY_ROUTE_PATH = "/api/cad/hierarchy";
 const CAD_HIERARCHY_UPLOAD_ROUTE_PATH = "/api/cad/hierarchy-upload";
+const CAD_REVIEW_ARTIFACT_ROUTE_PATH = "/api/cad/review-artifact";
 const CAD_SCREENSHOT_CAPTURE_ROUTE_PATH = "/api/cad/screenshot-capture";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
+const CAD_REVIEW_ARTIFACT_DIRECTORY_SEGMENT = "cadsense-cad-screenshots";
+const CAD_REVIEW_ARTIFACT_IMAGE_EXTENSIONS = new Set([".gif", ".jpeg", ".jpg", ".png", ".webp"]);
 const decodeCadSetViewInput = Schema.decodeUnknownEffect(CadSetViewInput);
 const decodeCadControlInput = Schema.decodeUnknownEffect(CadControlInput);
 const decodeCadHierarchyRequestInput = Schema.decodeUnknownEffect(CadHierarchyRequestInput);
@@ -265,6 +268,62 @@ export const projectFaviconRouteLayer = HttpRouter.add(
       status: 200,
       headers: {
         "Cache-Control": PROJECT_FAVICON_CACHE_CONTROL,
+      },
+    }).pipe(
+      Effect.catch(() =>
+        Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
+      ),
+    );
+  }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+);
+
+function isCadReviewArtifactPath(pathService: Path.Path, candidate: string): boolean {
+  if (candidate.includes("\0") || !pathService.isAbsolute(candidate)) {
+    return false;
+  }
+  const normalizedParts = pathService
+    .normalize(candidate)
+    .split(/[\\/]+/)
+    .map((part) => part.toLowerCase());
+  if (!normalizedParts.includes(CAD_REVIEW_ARTIFACT_DIRECTORY_SEGMENT)) {
+    return false;
+  }
+  return CAD_REVIEW_ARTIFACT_IMAGE_EXTENSIONS.has(pathService.extname(candidate).toLowerCase());
+}
+
+export const cadReviewArtifactRouteLayer = HttpRouter.add(
+  "GET",
+  CAD_REVIEW_ARTIFACT_ROUTE_PATH,
+  Effect.gen(function* () {
+    yield* requireAuthenticatedRequest;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const artifactUri = url.value.searchParams.get("artifactUri");
+    if (!artifactUri) {
+      return HttpServerResponse.text("Missing artifactUri parameter", { status: 400 });
+    }
+
+    const pathService = yield* Path.Path;
+    if (!isCadReviewArtifactPath(pathService, artifactUri)) {
+      return HttpServerResponse.text("Unsupported CAD review artifact path", { status: 400 });
+    }
+
+    const fileSystem = yield* FileSystem.FileSystem;
+    const fileInfo = yield* fileSystem
+      .stat(artifactUri)
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!fileInfo || fileInfo.type !== "File") {
+      return HttpServerResponse.text("Not Found", { status: 404 });
+    }
+
+    return yield* HttpServerResponse.file(artifactUri, {
+      status: 200,
+      headers: {
+        "Cache-Control": "private, max-age=31536000, immutable",
       },
     }).pipe(
       Effect.catch(() =>

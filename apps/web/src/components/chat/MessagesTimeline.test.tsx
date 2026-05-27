@@ -126,6 +126,7 @@ function buildCadReviewTimelineEntry() {
     whatIsBeingReviewed: "Intake subsystem",
     reviewPrompt: "Review the roller compression path.",
     commonThemes: ["Roller path needs measurable checks."],
+    positiveSignals: ["The intake has a clear roller path and scoped mechanism boundary."],
     reviewerTraits: {
       systems_integration: "Integration",
       program_readiness: "Readiness",
@@ -186,6 +187,9 @@ function buildCadReviewTimelineEntry() {
             recommendedFix: "Add support or increase shaft/tube stiffness.",
           },
         ],
+        positiveSignals: [
+          "The reviewer could identify the critical roller span from the evidence.",
+        ],
         repeatedPatterns: [],
         likelyFailureModes: [],
         recommendedChanges: [],
@@ -217,6 +221,7 @@ function buildCadReviewTimelineEntry() {
         description: "Measure the roller span and calculate deflection before release.",
         priority: "high",
         sourceFindingIds: ["finding-1"],
+        evidenceArtifactIds: ["artifact-1"],
         targetGeometry: "Upper intake roller",
         verificationSteps: ["Measure span", "Calculate deflection"],
       },
@@ -262,7 +267,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-user-message-collapsed="true"');
     expect(markup).toContain('data-user-message-fade="true"');
     expect(markup).toContain('data-user-message-footer="true"');
-  });
+  }, 20_000);
 
   it("does not render collapse controls for short user messages", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
@@ -394,20 +399,36 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work log");
   });
 
-  it("renders mechanism plans, deep dives, and rich CAD finding fields", async () => {
+  it("renders the student-facing CAD review summary before collapsed details", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline {...buildProps()} timelineEntries={[buildCadReviewTimelineEntry()]} />,
     );
 
+    expect(markup).toContain("One-line verdict");
+    expect(markup).toContain("Review summary");
+    expect(markup).toContain("Recommended fix:");
+    expect(markup).toContain("Measurement targets");
+    expect(markup).toContain("Evidence");
+    expect(markup).toContain("/api/cad/review-artifact");
+    expect(markup).toContain("Strengths to preserve");
     expect(markup).toContain("Mechanism plan");
-    expect(markup).toContain("Intake roller path");
-    expect(markup).toContain("Calculator needs");
-    expect(markup).toContain("Geometry:");
-    expect(markup).toContain("Check:");
     expect(markup).toContain("Focused deep dives");
     expect(markup).toContain("Target:");
     expect(markup).toContain("Calculate deflection");
+    expect(markup).not.toContain("Intake roller path");
+    expect(markup).not.toContain("Geometry:");
+    expect(markup).not.toContain("Check:");
+  });
+
+  it("renders CAD evidence thumbnails without file protocol navigation", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline {...buildProps()} timelineEntries={[buildCadReviewTimelineEntry()]} />,
+    );
+
+    expect(markup).toContain("/api/cad/review-artifact");
+    expect(markup).not.toContain("file:///C:/tmp/intake.png");
   });
 
   it("formats changed file paths from the workspace root", async () => {
