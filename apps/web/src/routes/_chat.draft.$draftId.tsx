@@ -12,8 +12,6 @@ import { createThreadSelectorAcrossEnvironments } from "../storeSelectors";
 function DraftChatThreadRouteView() {
   const { draftId: rawDraftId } = Route.useParams();
   const draftId = DraftId.make(rawDraftId);
-  const search = Route.useSearch();
-  const diffOpen = search.diff === "1";
   const draftSession = useComposerDraftStore((store) => store.getDraftSession(draftId));
   const serverThread = useStore(
     useMemo(
@@ -59,7 +57,6 @@ function DraftChatThreadRouteView() {
         draftId={draftId}
         environmentId={draftSession.environmentId}
         threadId={draftSession.threadId}
-        reserveTitleBarControlInset={!diffOpen}
         routeKind="draft"
       />
     </SidebarInset>

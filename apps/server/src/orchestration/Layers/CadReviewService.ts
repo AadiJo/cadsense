@@ -343,10 +343,8 @@ function extractExportedScreenshotPaths(
 ): string[] {
   const paths = new Set<string>();
   for (const activity of activities) {
-    for (const text of screenshotTextValues(activity)) {
-      for (const path of extractSavedCadScreenshotPaths(text)) {
-        paths.add(path);
-      }
+    for (const path of extractReferencedScreenshotPaths(activity)) {
+      paths.add(path);
     }
   }
   return [...paths];
@@ -756,34 +754,27 @@ function buildPersonaReport(input: {
           }
           return finding;
         })
-      : (() => {
-          const finding: CadReviewFinding = {
-            id: `${input.reviewRunId}:${input.persona}:finding:1`,
-            title: "Reviewer finding",
-            description: truncate(input.text || "Reviewer completed without assistant text."),
-            evidenceArtifactIds,
-            confidence: "low",
-          };
-          return input.text
-            ? [finding]
-            : [{ ...finding, missingEvidence: "No assistant review text was captured." }];
-        })();
+      : [];
   const parsedConfidence = confidenceValue(parsed?.confidence);
+  const missingEvidence =
+    trimText(parsed?.missingEvidence) ??
+    (!parsed
+      ? "Reviewer did not return parseable structured JSON, so CadSense did not promote free-form text into action items."
+      : undefined);
 
   return {
     persona: input.persona,
     status: "completed",
     summary: trimText(parsed?.summary) ?? truncate(input.text || "Reviewer completed."),
     topConcerns,
+    positiveSignals: stringArrayFromUnknown(parsed?.positiveSignals),
     repeatedPatterns: stringArray(parsed?.repeatedPatterns),
     likelyFailureModes: stringArray(parsed?.likelyFailureModes),
     recommendedChanges: stringArray(parsed?.recommendedChanges),
     confidence:
       parsedConfidence ??
       (topConcerns.some((finding) => finding.confidence === "low") ? "low" : "medium"),
-    ...(trimText(parsed?.missingEvidence)
-      ? { missingEvidence: trimText(parsed?.missingEvidence) }
-      : {}),
+    ...(missingEvidence ? { missingEvidence } : {}),
     evidenceArtifactIds,
     toolCallIds: input.toolCalls.map((toolCall) => toolCall.id),
     createdAt: input.createdAt,
@@ -802,6 +793,7 @@ function failedPersonaReport(input: {
     status: "failed",
     summary: `${personaLabel(input.persona)} reviewer failed before producing a complete report.`,
     topConcerns: [],
+    positiveSignals: [],
     repeatedPatterns: [],
     likelyFailureModes: [],
     recommendedChanges: [],
@@ -895,9 +887,18 @@ function synthesizeServerSide(input: {
   readonly synthesisText: string;
 }): {
   readonly commonThemes: string[];
+  readonly positiveSignals: string[];
   readonly actionItems: CadReviewActionItem[];
 } {
   const parsed = extractJsonObject(input.synthesisText);
+  const findingById = new Map(
+    input.reports.flatMap((report) => report.topConcerns.map((finding) => [finding.id, finding])),
+  );
+  const evidenceArtifactIdsForFindings = (findingIds: ReadonlyArray<string>): string[] => [
+    ...new Set(
+      findingIds.flatMap((findingId) => findingById.get(findingId)?.evidenceArtifactIds ?? []),
+    ),
+  ];
   const commonThemes =
     stringArray(parsed?.commonThemes).length > 0
       ? stringArray(parsed?.commonThemes)
@@ -909,10 +910,20 @@ function synthesizeServerSide(input: {
             ]),
           ),
         ].slice(0, 6);
+  const positiveSignals =
+    stringArrayFromUnknown(parsed?.positiveSignals).length > 0
+      ? stringArrayFromUnknown(parsed?.positiveSignals)
+      : [
+          ...new Set(
+            input.reports.flatMap((report) => report.positiveSignals).filter((entry) => entry),
+          ),
+        ].slice(0, 6);
   const parsedActionItems = objectArray(parsed?.actionItems);
   const actionItems =
     parsedActionItems.length > 0
       ? parsedActionItems.map((entry, index): CadReviewActionItem => {
+          const sourceFindingIds = stringArray(entry.sourceFindingIds);
+          const explicitEvidenceArtifactIds = stringArrayFromUnknown(entry.evidenceArtifactIds);
           const actionItem: CadReviewActionItem = {
             id: `${input.reviewRunId}:action:${index + 1}`,
             title: trimText(entry.title) ?? `Action item ${index + 1}`,
@@ -921,7 +932,11 @@ function synthesizeServerSide(input: {
               trimText(entry.detail) ??
               "Follow up on the linked CAD review findings.",
             priority: priorityValue(entry.priority) ?? "medium",
-            sourceFindingIds: stringArray(entry.sourceFindingIds),
+            sourceFindingIds,
+            evidenceArtifactIds:
+              explicitEvidenceArtifactIds.length > 0
+                ? explicitEvidenceArtifactIds
+                : evidenceArtifactIdsForFindings(sourceFindingIds),
           };
           const subsystem = trimText(entry.subsystem);
           const issueType = trimText(entry.issueType);
@@ -957,6 +972,7 @@ function synthesizeServerSide(input: {
                 issueType: "focused deep dive",
                 priority: entry.deepDive.confidence === "high" ? "high" : "medium",
                 sourceFindingIds: entry.deepDive.sourceFindingIds,
+                evidenceArtifactIds: entry.deepDive.inspectedEvidenceArtifactIds,
                 rationale: entry.deepDive.summary,
                 verificationSteps: entry.deepDive.specificChecks,
               };
@@ -970,6 +986,7 @@ function synthesizeServerSide(input: {
               issueType: `${personaLabel(report.persona)} finding`,
               priority: finding.severity ?? (finding.confidence === "high" ? "high" : "medium"),
               sourceFindingIds: [finding.id],
+              evidenceArtifactIds: finding.evidenceArtifactIds,
             };
             if (finding.reasoning) {
               Object.assign(actionItem, { rationale: finding.reasoning });
@@ -982,7 +999,7 @@ function synthesizeServerSide(input: {
             }
             return actionItem;
           });
-  return { commonThemes, actionItems };
+  return { commonThemes, positiveSignals, actionItems };
 }
 
 const make = Effect.gen(function* () {
@@ -1493,6 +1510,7 @@ const make = Effect.gen(function* () {
         whatIsBeingReviewed: subject,
         ...(reviewPrompt ? { reviewPrompt } : {}),
         commonThemes: [],
+        positiveSignals: [],
         reviewerTraits: REVIEWER_TRAIT_SUMMARIES,
         personaReports: [],
         deepDiveReports: [],
@@ -1987,6 +2005,7 @@ const make = Effect.gen(function* () {
               : "completed",
         activePersona: undefined,
         commonThemes: synthesized.commonThemes,
+        positiveSignals: synthesized.positiveSignals,
         mergedActionItems: synthesized.actionItems,
         evidenceArtifacts: [...review.evidenceArtifacts, ...synthesisArtifacts],
         toolCallsByReviewer: {

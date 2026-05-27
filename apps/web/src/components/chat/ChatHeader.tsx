@@ -100,7 +100,7 @@ export const ChatHeader = memo(function ChatHeader({
   });
 
   return (
-    <div className="@container/header-actions flex min-w-0 flex-1 items-center gap-2">
+    <div className="@container/header-actions flex w-full min-w-0 flex-1 items-center justify-between gap-2">
       <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
         <SidebarTrigger className="size-7 shrink-0 md:hidden" />
         <h2
@@ -120,7 +120,7 @@ export const ChatHeader = memo(function ChatHeader({
           </Badge>
         )}
       </div>
-      <div className="flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+      <div className="ml-auto flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
         {activeProjectOnshapeContext ? (
           <OnshapeSyncControl
             context={activeProjectOnshapeContext}

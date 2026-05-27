@@ -31,6 +31,7 @@ import { readEnvironmentApi } from "../environmentApi";
 import { buildCadWebGlFailureUserMessage } from "../lib/cadViewerWebGl";
 import {
   deriveCadAgentViewStateForThread,
+  isCadRelatedToolActivity,
   latestCadAgentViewState,
 } from "../lib/cadAgentViewState";
 import {
@@ -144,6 +145,7 @@ const cadShellProps = {
 const CAD_MODEL_LOADING_TEXT_DELAY_MS = 350;
 const CAD_FULLSCREEN_TRANSITION_MS = 260;
 const CAD_FULLSCREEN_BEACON_RELEASE_MS = CAD_FULLSCREEN_TRANSITION_MS * 3;
+const CAD_AGENT_CONTROL_IDLE_TIMEOUT_MS = 2_000;
 const CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD = 2;
 
 interface CadAgentControlOverlayRect {
@@ -367,6 +369,9 @@ export default function CadPanel({
       review.status === "deep-diving" ||
       review.status === "synthesizing",
   );
+  const [regularCadAgentControlActive, setRegularCadAgentControlActive] = useState(false);
+  const cadAgentRequestResponderEnabled = !cadReviewInProgress || agentControlHost;
+  const cadAgentControlActive = cadReviewInProgress || regularCadAgentControlActive;
   const cadUiStateKey =
     activeThread && activeThreadStarted
       ? activeThread.id
@@ -432,6 +437,8 @@ export default function CadPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const [agentControlOverlayRect, setAgentControlOverlayRect] =
     useState<CadAgentControlOverlayRect | null>(null);
+  const lastRegularCadToolActivityIdRef = useRef<string | null>(null);
+  const regularCadAgentControlTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const fullscreenCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullscreenEnterTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -453,6 +460,67 @@ export default function CadPanel({
   const projectCadScopeKey = activeProject
     ? `${activeProject.environmentId}:${activeProject.id}`
     : (activeThread?.projectId ?? draftSession?.projectId ?? null);
+
+  useEffect(() => {
+    lastRegularCadToolActivityIdRef.current = null;
+    if (regularCadAgentControlTimeoutRef.current) {
+      clearTimeout(regularCadAgentControlTimeoutRef.current);
+      regularCadAgentControlTimeoutRef.current = null;
+    }
+    setRegularCadAgentControlActive(false);
+    return () => {
+      if (regularCadAgentControlTimeoutRef.current) {
+        clearTimeout(regularCadAgentControlTimeoutRef.current);
+        regularCadAgentControlTimeoutRef.current = null;
+      }
+    };
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (cadReviewInProgress || agentControlHost || !activeThread) {
+      if (regularCadAgentControlTimeoutRef.current) {
+        clearTimeout(regularCadAgentControlTimeoutRef.current);
+        regularCadAgentControlTimeoutRef.current = null;
+      }
+      setRegularCadAgentControlActive(false);
+      return;
+    }
+
+    if (activeThread.latestTurn?.state !== "running") {
+      if (regularCadAgentControlTimeoutRef.current) {
+        clearTimeout(regularCadAgentControlTimeoutRef.current);
+        regularCadAgentControlTimeoutRef.current = null;
+      }
+      setRegularCadAgentControlActive(false);
+      return;
+    }
+
+    const latestCadToolActivity = activeThread.activities.findLast(isCadRelatedToolActivity);
+    if (!latestCadToolActivity) {
+      return;
+    }
+
+    if (lastRegularCadToolActivityIdRef.current === latestCadToolActivity.id) {
+      return;
+    }
+
+    lastRegularCadToolActivityIdRef.current = latestCadToolActivity.id;
+    setRegularCadAgentControlActive(true);
+
+    if (regularCadAgentControlTimeoutRef.current) {
+      clearTimeout(regularCadAgentControlTimeoutRef.current);
+    }
+    regularCadAgentControlTimeoutRef.current = setTimeout(() => {
+      regularCadAgentControlTimeoutRef.current = null;
+      setRegularCadAgentControlActive(false);
+    }, CAD_AGENT_CONTROL_IDLE_TIMEOUT_MS);
+  }, [
+    activeThread,
+    activeThread?.activities,
+    activeThread?.latestTurn?.state,
+    agentControlHost,
+    cadReviewInProgress,
+  ]);
 
   const filesQuery = useQuery({
     queryKey: [
@@ -552,7 +620,6 @@ export default function CadPanel({
     activeFrameLoadIdRef.current += 1;
     loadedFrameRequestKeyRef.current = null;
     frameLoadStartedAtRef.current = performance.now();
-    consecutiveFrameTimeoutsRef.current = 0;
     setLoadState("loading");
     setLoadError(null);
     setFrameReadySequence(0);
@@ -901,7 +968,7 @@ export default function CadPanel({
   }, [agentControlHost, fullscreen, fullscreenMounted]);
 
   useEffect(() => {
-    if (!cadReviewInProgress || agentControlHost) {
+    if (!cadAgentControlActive || agentControlHost) {
       setAgentControlOverlayRect(null);
       return;
     }
@@ -952,7 +1019,7 @@ export default function CadPanel({
     };
   }, [
     agentControlHost,
-    cadReviewInProgress,
+    cadAgentControlActive,
     fullscreenClosing,
     fullscreenEntering,
     fullscreenMounted,
@@ -994,7 +1061,7 @@ export default function CadPanel({
   }, [agentViewCommand, applyCadViewCommand, loadState]);
 
   useEffect(() => {
-    if (!agentControlHost || !environmentApi || !cadRoutingThreadId) {
+    if (!cadAgentRequestResponderEnabled || !environmentApi || !cadRoutingThreadId) {
       return;
     }
     return environmentApi.onshape.onCadHierarchyRequest((req) => {
@@ -1018,7 +1085,7 @@ export default function CadPanel({
         }
       })();
     });
-  }, [cadRoutingThreadId, agentControlHost, environmentApi, postFrameRequest]);
+  }, [cadRoutingThreadId, cadAgentRequestResponderEnabled, environmentApi, postFrameRequest]);
 
   useEffect(() => {
     if (loadState !== "loaded") {
@@ -1037,7 +1104,7 @@ export default function CadPanel({
   }, [cadZoomToFitRequest, loadState, postFrameRequest]);
 
   useEffect(() => {
-    if (!agentControlHost || !environmentApi || !cadRoutingThreadId) {
+    if (!cadAgentRequestResponderEnabled || !environmentApi || !cadRoutingThreadId) {
       return;
     }
     return environmentApi.onshape.onCadScreenshotRequest((req) => {
@@ -1096,7 +1163,7 @@ export default function CadPanel({
     });
   }, [
     cadRoutingThreadId,
-    agentControlHost,
+    cadAgentRequestResponderEnabled,
     environmentApi,
     postFrameRequest,
     recordCadAgentViewCommand,
@@ -1329,7 +1396,7 @@ export default function CadPanel({
       ? createPortal(fullscreenControl, document.body)
       : null;
   const agentControlOverlay =
-    cadReviewInProgress &&
+    cadAgentControlActive &&
     !agentControlHost &&
     agentControlOverlayRect &&
     typeof document !== "undefined"
@@ -1414,14 +1481,14 @@ export default function CadPanel({
               className="absolute inset-0 size-full border-0 bg-transparent"
             />
           ) : null}
-          {cadReviewInProgress ? (
+          {cadAgentControlActive ? (
             <div
               className="absolute inset-0 z-[70] cursor-not-allowed"
               aria-hidden="true"
               data-cad-agent-control-interaction-blocker="true"
             />
           ) : null}
-          {cadReviewInProgress ? (
+          {cadAgentControlActive ? (
             <div className="pointer-events-none absolute inset-x-0 top-4 z-[80] flex justify-center">
               <div className="cad-agent-control-pill rounded-full border border-emerald-300/80 bg-emerald-950/45 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-100 shadow-[0_0_20px_rgba(16,185,129,0.45)] backdrop-blur">
                 Agent control

@@ -241,7 +241,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   if (!hasActiveThread || !activeProject) return null;
 
   return (
-    <div className="mx-auto flex w-full max-w-208 items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3">
+    <div className="flex w-full items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3">
       {isMobile ? (
         <MobileRunContextSelector
           envLocked={envLocked}
@@ -277,7 +277,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       )}
 
       <BranchToolbarBranchSelector
-        className="min-w-0 flex-1 justify-end md:ml-auto md:flex-none"
+        className="min-w-0 flex-1 justify-start md:flex-none"
         environmentId={environmentId}
         threadId={threadId}
         {...(draftId ? { draftId } : {})}

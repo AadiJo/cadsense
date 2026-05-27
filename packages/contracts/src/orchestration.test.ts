@@ -260,6 +260,7 @@ it.effect("decodes CAD reviews with planning, deep dives, and rich finding detai
       activePersona: "synthesis",
       whatIsBeingReviewed: "Intake",
       commonThemes: ["Roller path needs measurable compression checks."],
+      positiveSignals: ["The intake path is easy to isolate for review."],
       reviewerTraits: {
         systems_integration: "Integration",
         program_readiness: "Readiness",
@@ -323,6 +324,7 @@ it.effect("decodes CAD reviews with planning, deep dives, and rich finding detai
               recommendedFix: "Add support or increase shaft/tube stiffness.",
             },
           ],
+          positiveSignals: ["The mechanism has a clear roller path that can be measured."],
           repeatedPatterns: [],
           likelyFailureModes: [],
           recommendedChanges: [],
@@ -354,6 +356,7 @@ it.effect("decodes CAD reviews with planning, deep dives, and rich finding detai
           description: "Measure the roller span and calculate deflection before release.",
           priority: "high",
           sourceFindingIds: ["finding-1"],
+          evidenceArtifactIds: ["artifact-1"],
           rationale: "Compression consistency depends on shaft stiffness.",
           targetGeometry: "Upper intake roller",
           verificationSteps: ["Measure span", "Calculate deflection"],
@@ -386,7 +389,11 @@ it.effect("decodes CAD reviews with planning, deep dives, and rich finding detai
     );
     assert.strictEqual(parsed.reviewPlan?.reviewerSelection[0]?.enabled, true);
     assert.strictEqual(parsed.personaReports[0]?.topConcerns[0]?.severity, "high");
+    assert.deepStrictEqual(parsed.positiveSignals, [
+      "The intake path is easy to isolate for review.",
+    ]);
     assert.strictEqual(parsed.deepDiveReports?.[0]?.focus, "Unsupported roller span");
+    assert.deepStrictEqual(parsed.mergedActionItems[0]?.evidenceArtifactIds, ["artifact-1"]);
     assert.deepStrictEqual(parsed.mergedActionItems[0]?.verificationSteps, [
       "Measure span",
       "Calculate deflection",

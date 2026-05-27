@@ -535,6 +535,7 @@ export function projectEvent(
           whatIsBeingReviewed: "",
           ...(payload.reviewPrompt ? { reviewPrompt: payload.reviewPrompt } : {}),
           commonThemes: [],
+          positiveSignals: [],
           reviewerTraits: {
             systems_integration:
               "Integration, interfaces, mounting, materials, and dependency risk.",

@@ -11,7 +11,6 @@ function ChatThreadRouteView() {
   const threadRef = Route.useParams({
     select: (params) => resolveThreadRouteRef(params),
   });
-  const search = Route.useSearch();
   const bootstrapComplete = useStore(
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).bootstrapComplete,
   );
@@ -20,7 +19,6 @@ function ChatThreadRouteView() {
     threadRef ? store.getDraftThreadByRef(threadRef) !== null : false,
   );
   const routeThreadExists = threadExists || draftThreadExists;
-  const diffOpen = search.diff === "1";
 
   if (!threadRef || !bootstrapComplete || !routeThreadExists) {
     return null;
@@ -31,7 +29,6 @@ function ChatThreadRouteView() {
       <ChatView
         environmentId={threadRef.environmentId}
         threadId={threadRef.threadId}
-        reserveTitleBarControlInset={!diffOpen}
         routeKind="server"
       />
     </SidebarInset>

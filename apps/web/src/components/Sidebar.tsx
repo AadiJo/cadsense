@@ -1215,6 +1215,59 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     visibleProjectThreads,
   ]);
 
+  const createThreadForProjectMember = useCallback(
+    (member: SidebarProjectGroupMember) => {
+      const currentRouteParams =
+        router.state.matches[router.state.matches.length - 1]?.params ?? {};
+      const currentRouteTarget = resolveThreadRouteTarget(currentRouteParams);
+      const currentActiveThread =
+        currentRouteTarget?.kind === "server"
+          ? (selectThreadByRef(useStore.getState(), currentRouteTarget.threadRef) ?? null)
+          : null;
+      const draftStore = useComposerDraftStore.getState();
+      const currentActiveDraftThread =
+        currentRouteTarget?.kind === "server"
+          ? (draftStore.getDraftThread(currentRouteTarget.threadRef) ?? null)
+          : currentRouteTarget?.kind === "draft"
+            ? (draftStore.getDraftSession(currentRouteTarget.draftId) ?? null)
+            : null;
+      const seedContext = resolveSidebarNewThreadSeedContext({
+        projectId: member.id,
+        defaultEnvMode: resolveSidebarNewThreadEnvMode({
+          defaultEnvMode: defaultThreadEnvMode,
+        }),
+        activeThread:
+          currentActiveThread && currentActiveThread.projectId === member.id
+            ? {
+                projectId: currentActiveThread.projectId,
+                branch: currentActiveThread.branch,
+                worktreePath: currentActiveThread.worktreePath,
+              }
+            : null,
+        activeDraftThread:
+          currentActiveDraftThread && currentActiveDraftThread.projectId === member.id
+            ? {
+                projectId: currentActiveDraftThread.projectId,
+                branch: currentActiveDraftThread.branch,
+                worktreePath: currentActiveDraftThread.worktreePath,
+                envMode: currentActiveDraftThread.envMode,
+              }
+            : null,
+      });
+      if (isMobile) {
+        setOpenMobile(false);
+      }
+      void handleNewThread(scopeProjectRef(member.environmentId, member.id), {
+        ...(seedContext.branch !== undefined ? { branch: seedContext.branch } : {}),
+        ...(seedContext.worktreePath !== undefined
+          ? { worktreePath: seedContext.worktreePath }
+          : {}),
+        envMode: seedContext.envMode,
+      });
+    },
+    [defaultThreadEnvMode, handleNewThread, isMobile, router, setOpenMobile],
+  );
+
   const handleProjectButtonClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       if (suppressProjectClickForContextMenuRef.current) {
@@ -1237,15 +1290,22 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (useThreadSelectionStore.getState().hasSelection()) {
         clearSelection();
       }
+      if (visibleProjectThreads.length === 0 && project.memberProjects.length === 1) {
+        createThreadForProjectMember(project.memberProjects[0]!);
+        return;
+      }
       toggleProject(project.projectKey);
     },
     [
       clearSelection,
+      createThreadForProjectMember,
       dragInProgressRef,
+      project.memberProjects,
       project.projectKey,
       suppressProjectClickAfterDragRef,
       suppressProjectClickForContextMenuRef,
       toggleProject,
+      visibleProjectThreads.length,
     ],
   );
 
@@ -1256,9 +1316,20 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (dragInProgressRef.current) {
         return;
       }
+      if (visibleProjectThreads.length === 0 && project.memberProjects.length === 1) {
+        createThreadForProjectMember(project.memberProjects[0]!);
+        return;
+      }
       toggleProject(project.projectKey);
     },
-    [dragInProgressRef, project.projectKey, toggleProject],
+    [
+      createThreadForProjectMember,
+      dragInProgressRef,
+      project.memberProjects,
+      project.projectKey,
+      toggleProject,
+      visibleProjectThreads.length,
+    ],
   );
 
   const handleProjectButtonPointerDownCapture = useCallback(
@@ -1711,59 +1782,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       markThreadUnread,
       removeFromSelection,
     ],
-  );
-
-  const createThreadForProjectMember = useCallback(
-    (member: SidebarProjectGroupMember) => {
-      const currentRouteParams =
-        router.state.matches[router.state.matches.length - 1]?.params ?? {};
-      const currentRouteTarget = resolveThreadRouteTarget(currentRouteParams);
-      const currentActiveThread =
-        currentRouteTarget?.kind === "server"
-          ? (selectThreadByRef(useStore.getState(), currentRouteTarget.threadRef) ?? null)
-          : null;
-      const draftStore = useComposerDraftStore.getState();
-      const currentActiveDraftThread =
-        currentRouteTarget?.kind === "server"
-          ? (draftStore.getDraftThread(currentRouteTarget.threadRef) ?? null)
-          : currentRouteTarget?.kind === "draft"
-            ? (draftStore.getDraftSession(currentRouteTarget.draftId) ?? null)
-            : null;
-      const seedContext = resolveSidebarNewThreadSeedContext({
-        projectId: member.id,
-        defaultEnvMode: resolveSidebarNewThreadEnvMode({
-          defaultEnvMode: defaultThreadEnvMode,
-        }),
-        activeThread:
-          currentActiveThread && currentActiveThread.projectId === member.id
-            ? {
-                projectId: currentActiveThread.projectId,
-                branch: currentActiveThread.branch,
-                worktreePath: currentActiveThread.worktreePath,
-              }
-            : null,
-        activeDraftThread:
-          currentActiveDraftThread && currentActiveDraftThread.projectId === member.id
-            ? {
-                projectId: currentActiveDraftThread.projectId,
-                branch: currentActiveDraftThread.branch,
-                worktreePath: currentActiveDraftThread.worktreePath,
-                envMode: currentActiveDraftThread.envMode,
-              }
-            : null,
-      });
-      if (isMobile) {
-        setOpenMobile(false);
-      }
-      void handleNewThread(scopeProjectRef(member.environmentId, member.id), {
-        ...(seedContext.branch !== undefined ? { branch: seedContext.branch } : {}),
-        ...(seedContext.worktreePath !== undefined
-          ? { worktreePath: seedContext.worktreePath }
-          : {}),
-        envMode: seedContext.envMode,
-      });
-    },
-    [defaultThreadEnvMode, handleNewThread, isMobile, router, setOpenMobile],
   );
 
   const handleCreateThreadClick = useCallback(

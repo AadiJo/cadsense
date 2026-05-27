@@ -59,22 +59,25 @@ function updateProviderUpdateToast(input: {
   readonly toastId: ProviderUpdateToastId;
   readonly view: ProviderUpdateToastView;
   readonly openSettings: () => void;
+  readonly dismissToast: () => void;
 }) {
-  if (input.view.type === "loading" || input.view.type === "success") {
-    toastManager.update(input.toastId, {
-      type: input.view.type,
-      title: input.view.title,
-      description: input.view.description,
-      timeout: 0,
-      data: {
-        hideCopyButton: true,
-        ...(input.view.dismissAfterVisibleMs !== undefined
-          ? { dismissAfterVisibleMs: input.view.dismissAfterVisibleMs }
-          : {}),
-      },
-    });
-    return;
-  }
+  const actionProps =
+    input.view.phase === "running"
+      ? {
+          children: "Updating...",
+          disabled: true,
+        }
+      : input.view.phase === "succeeded"
+        ? {
+            children: "Dismiss",
+            onClick: input.dismissToast,
+          }
+        : {
+            children: "Settings",
+            onClick: input.openSettings,
+          };
+  const actionVariant =
+    input.view.phase === "running" || input.view.phase === "succeeded" ? "secondary" : "outline";
 
   toastManager.update(
     input.toastId,
@@ -83,13 +86,13 @@ function updateProviderUpdateToast(input: {
       title: input.view.title,
       description: input.view.description,
       timeout: 0,
-      actionProps: {
-        children: "Settings",
-        onClick: input.openSettings,
-      },
-      actionVariant: "outline",
+      actionProps,
+      actionVariant,
       data: {
         hideCopyButton: true,
+        ...(input.view.dismissAfterVisibleMs !== undefined
+          ? { dismissAfterVisibleMs: input.view.dismissAfterVisibleMs }
+          : {}),
       },
     }),
   );
@@ -133,6 +136,13 @@ export function ProviderUpdateLaunchNotification() {
     [navigate],
   );
 
+  const dismissProviderUpdateToast = useCallback((toastId: ProviderUpdateToastId) => {
+    toastManager.close(toastId);
+    if (activeToastRef.current?.toastId === toastId) {
+      activeToastRef.current = null;
+    }
+  }, []);
+
   useEffect(() => {
     const activeToast = activeToastRef.current;
     if (activeToast?.kind !== "update") {
@@ -150,12 +160,13 @@ export function ProviderUpdateLaunchNotification() {
       toastId: activeToast.toastId,
       view,
       openSettings: () => openProviderSettings(activeToast.toastId),
+      dismissToast: () => dismissProviderUpdateToast(activeToast.toastId),
     });
 
     if (isTerminalProviderUpdateToastView(view)) {
       activeToastRef.current = null;
     }
-  }, [providers, openProviderSettings]);
+  }, [dismissProviderUpdateToast, providers, openProviderSettings]);
 
   useEffect(() => {
     const activeToast = activeToastRef.current;
@@ -204,6 +215,7 @@ export function ProviderUpdateLaunchNotification() {
         toastId,
         view: getProviderUpdateRunningToastView(providerCount),
         openSettings,
+        dismissToast: () => dismissProviderUpdateToast(toastId),
       });
 
       void Promise.allSettled(
@@ -225,6 +237,7 @@ export function ProviderUpdateLaunchNotification() {
             toastId,
             view: getProviderUpdateRejectedToastView(providerCount, rejectedMessage),
             openSettings,
+            dismissToast: () => dismissProviderUpdateToast(toastId),
           });
           activeToastRef.current = null;
           return;
@@ -242,6 +255,7 @@ export function ProviderUpdateLaunchNotification() {
           toastId,
           view,
           openSettings,
+          dismissToast: () => dismissProviderUpdateToast(toastId),
         });
 
         if (isTerminalProviderUpdateToastView(view)) {
@@ -289,6 +303,7 @@ export function ProviderUpdateLaunchNotification() {
     activeToastRef.current = { kind: "prompt", key: notificationKey, toastId };
   }, [
     dismissNotificationKey,
+    dismissProviderUpdateToast,
     dismissedNotificationKeys,
     notificationKey,
     oneClickProviders,

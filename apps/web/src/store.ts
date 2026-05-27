@@ -1616,6 +1616,7 @@ function applyEnvironmentOrchestrationEvent(
             whatIsBeingReviewed: "",
             ...(event.payload.reviewPrompt ? { reviewPrompt: event.payload.reviewPrompt } : {}),
             commonThemes: [],
+            positiveSignals: [],
             reviewerTraits: {
               systems_integration:
                 "Integration, interfaces, mounting, materials, and dependency risk.",

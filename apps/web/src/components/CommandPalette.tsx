@@ -1984,7 +1984,7 @@ function OpenCommandPaletteDialog() {
               variant="outline"
               size="xs"
               tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
+              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2 motion-safe:not-disabled:hover:-translate-y-1/2 motion-safe:not-disabled:active:-translate-y-1/2"
               aria-label="Continue (Enter)"
               disabled={!canSubmitOnshapeFlow}
               onMouseDown={(event) => {
@@ -2005,7 +2005,7 @@ function OpenCommandPaletteDialog() {
               variant="outline"
               size="xs"
               tabIndex={-1}
-              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2"
+              className="absolute inset-e-2.5 top-1/2 gap-1.5 pe-1 ps-2 -translate-y-1/2 motion-safe:not-disabled:hover:-translate-y-1/2 motion-safe:not-disabled:active:-translate-y-1/2"
               aria-label={`${remoteProjectButtonLabel ?? "Continue"} (Enter)`}
               disabled={!canSubmitRemoteProjectFlow}
               onMouseDown={(event) => {

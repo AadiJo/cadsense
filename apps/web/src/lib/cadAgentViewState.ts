@@ -74,6 +74,11 @@ function toolNameFromActivity(activity: OrchestrationThreadActivity): string | u
   return typeof payload?.detail === "string" ? payload.detail : undefined;
 }
 
+function toolTitleFromActivity(activity: OrchestrationThreadActivity): string | undefined {
+  const payload = payloadRecord(activity.payload);
+  return typeof payload?.title === "string" ? payload.title : undefined;
+}
+
 function toolArgumentsFromActivity(
   activity: OrchestrationThreadActivity,
 ): Record<string, unknown> | undefined {
@@ -204,4 +209,22 @@ export function latestCadAgentViewState(
 
 export function isAgentCadViewCommand(command: CadViewCommand): command is CadAgentViewCommand {
   return command.type === "set-view" || command.type === "set-camera";
+}
+
+export function isCadRelatedToolActivity(activity: OrchestrationThreadActivity): boolean {
+  if (
+    activity.kind !== "tool.started" &&
+    activity.kind !== "tool.updated" &&
+    activity.kind !== "tool.completed"
+  ) {
+    return false;
+  }
+
+  const toolName = toolNameFromActivity(activity)?.toLocaleLowerCase();
+  if (toolName?.includes("cad") === true) {
+    return true;
+  }
+
+  const title = toolTitleFromActivity(activity)?.toLocaleLowerCase();
+  return title?.includes("cad") === true;
 }

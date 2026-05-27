@@ -9,7 +9,11 @@ import { describe, expect, it } from "vitest";
 
 import type { EnvironmentState } from "../store";
 import type { Thread, ThreadShell } from "../types";
-import { deriveCadAgentViewStateForThread, latestCadAgentViewState } from "./cadAgentViewState";
+import {
+  deriveCadAgentViewStateForThread,
+  isCadRelatedToolActivity,
+  latestCadAgentViewState,
+} from "./cadAgentViewState";
 
 const parentThreadId = ThreadId.make("parent-thread");
 const environmentId = EnvironmentId.make("env");
@@ -108,6 +112,7 @@ function makeParentThread(): Thread {
         status: "reviewing",
         whatIsBeingReviewed: "assembly",
         commonThemes: [],
+        positiveSignals: [],
         reviewerTraits: {},
         personaReports: [],
         deepDiveReports: [],
@@ -185,5 +190,27 @@ describe("cadAgentViewState", () => {
     };
 
     expect(latestCadAgentViewState(older, newer)).toBe(newer);
+  });
+
+  it("detects CAD-related tool lifecycle activity without matching non-tool text", () => {
+    expect(
+      isCadRelatedToolActivity(
+        activity("cad-tool", "2026-01-01T00:00:01.000Z", "export_cad_screenshot", {}),
+      ),
+    ).toBe(true);
+    expect(
+      isCadRelatedToolActivity({
+        ...activity("non-cad-tool", "2026-01-01T00:00:02.000Z", "read_file", {}),
+        payload: {
+          title: "Read CAD notes",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isCadRelatedToolActivity({
+        ...activity("cad-info", "2026-01-01T00:00:03.000Z", "export_cad_screenshot", {}),
+        kind: "turn.completed",
+      }),
+    ).toBe(false);
   });
 });

@@ -2908,6 +2908,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       status: "reviewing",
       whatIsBeingReviewed: "Drive base",
       commonThemes: [],
+      positiveSignals: [],
       reviewerTraits: {
         systems_integration: "Integration, interfaces, mounting, materials, and dependency risk.",
         program_readiness: "Schedule, team coordination, testability, and realistic ship scope.",

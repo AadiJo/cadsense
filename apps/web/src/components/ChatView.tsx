@@ -680,7 +680,6 @@ type ChatViewProps =
       environmentId: EnvironmentId;
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
-      reserveTitleBarControlInset?: boolean;
       routeKind: "server";
       draftId?: never;
     }
@@ -688,7 +687,6 @@ type ChatViewProps =
       environmentId: EnvironmentId;
       threadId: ThreadId;
       onDiffPanelOpen?: () => void;
-      reserveTitleBarControlInset?: boolean;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -945,13 +943,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 });
 
 export default function ChatView(props: ChatViewProps) {
-  const {
-    environmentId,
-    threadId,
-    routeKind,
-    onDiffPanelOpen,
-    reserveTitleBarControlInset = true,
-  } = props;
+  const { environmentId, threadId, routeKind, onDiffPanelOpen } = props;
   const markDiffOpenedFromRoutePanels = useChatRoutePanelsMarkOpened();
   const notifyDiffPanelOpened = onDiffPanelOpen ?? markDiffOpenedFromRoutePanels;
   const draftId = routeKind === "draft" ? props.draftId : null;
@@ -3180,8 +3172,12 @@ export default function ChatView(props: ChatViewProps) {
         promptForSend,
         sendableComposerTerminalContexts,
       ).trim();
+      const contextualReviewPrompt =
+        activeThread.title.trim().length > 0
+          ? `Review the CAD for this thread: ${activeThread.title}. Use the thread title and current CAD context to choose the scope; only run a holistic review if the title asks for one.`
+          : "Review the CAD using the current CAD context. Choose a focused scope when the visible mechanism is specific; only run a holistic review when the scope is broad or unclear.";
       const started = await onGenerateCadReview({
-        reviewPrompt: reviewPrompt || "Do a holistic CAD review.",
+        reviewPrompt: reviewPrompt || contextualReviewPrompt,
         threadTitle: reviewPrompt ? truncate(reviewPrompt) : "Review my CAD from all angles",
         selectedModelSelection: ctxSelectedModelSelection,
       });
@@ -4149,12 +4145,7 @@ export default function ChatView(props: ChatViewProps) {
         className={cn(
           "border-b border-border",
           isElectron
-            ? cn(
-                // Avoid `wco:h-[env(titlebar-area-height)]` — it steals vertical inset from padding.
-                "drag-region flex items-center px-3 py-1 sm:px-5 sm:py-1.5",
-                reserveTitleBarControlInset &&
-                  "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]",
-              )
+            ? cn("drag-region flex items-center px-3 py-1 sm:px-5 sm:py-1.5")
             : "pb-2 pt-2 pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.25rem)] sm:pb-2 sm:pt-2 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+0.25rem)]",
         )}
       >

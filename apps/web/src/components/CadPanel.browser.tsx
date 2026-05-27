@@ -25,6 +25,10 @@ let cadViewCommandHandler:
       readonly fit?: boolean;
     }) => void)
   | null = null;
+let cadHierarchyRequestHandler:
+  | ((request: { readonly requestId: string; readonly threadId: string }) => void)
+  | null = null;
+const uploadedCadHierarchies: unknown[] = [];
 
 const onshapeContext = {
   provider: "onshape" as const,
@@ -73,8 +77,18 @@ vi.mock("../environmentApi", () => ({
           }
         };
       }),
-      onCadHierarchyRequest: vi.fn(() => () => undefined),
-      uploadCadHierarchy: vi.fn(async () => ({ components: [] })),
+      onCadHierarchyRequest: vi.fn((handler) => {
+        cadHierarchyRequestHandler = handler;
+        return () => {
+          if (cadHierarchyRequestHandler === handler) {
+            cadHierarchyRequestHandler = null;
+          }
+        };
+      }),
+      uploadCadHierarchy: vi.fn(async (input) => {
+        uploadedCadHierarchies.push(input);
+        return { components: [] };
+      }),
       onCadScreenshotRequest: vi.fn(() => () => undefined),
       uploadCadScreenshot: vi.fn(async () => undefined),
     },
@@ -200,6 +214,8 @@ describe("CadPanel browser behavior", () => {
     vi.clearAllMocks();
     observedFrameRequests.length = 0;
     cadViewCommandHandler = null;
+    cadHierarchyRequestHandler = null;
+    uploadedCadHierarchies.length = 0;
     threadReviews = [];
     useUiStateStore.setState({
       cadExplodedByThreadId: {},
@@ -319,6 +335,37 @@ describe("CadPanel browser behavior", () => {
     queryClient.clear();
   });
 
+  it("answers CAD hierarchy requests from normal visible chats", async () => {
+    cadFrameUrl = delayedReadyFrameUrl();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await vi.waitFor(() => expect(cadHierarchyRequestHandler).toBeTypeOf("function"));
+
+    cadHierarchyRequestHandler?.({ requestId: "hierarchy-normal-chat", threadId });
+
+    await vi.waitFor(() => {
+      expect(uploadedCadHierarchies).toContainEqual({
+        requestId: "hierarchy-normal-chat",
+        components: [],
+      });
+    });
+
+    await screen.unmount();
+    queryClient.clear();
+  });
+
   it("replays the composite agent-controlled CAD state after the viewer loads", async () => {
     cadFrameUrl = delayedReadyFrameUrl();
     threadReviews = [activeReview];
@@ -431,6 +478,7 @@ describe("CadPanel browser behavior", () => {
     await screen.unmount();
     queryClient.clear();
   });
+
   it("covers fullscreen layout changes and keeps the control anchored during entry", async () => {
     cadFrameUrl = delayedReadyFrameUrl();
     const queryClient = new QueryClient({

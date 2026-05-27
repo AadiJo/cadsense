@@ -31,6 +31,7 @@ export const CAD_VIEW_MCP_CALCULATOR_TOOL_NAME = "frc_mechanical_calculator";
 export const CAD_VIEW_MCP_TOKEN_HEADER = "x-cadsense-cad-view-token";
 export const CAD_VIEW_MCP_TOKEN = randomUUID();
 export const CAD_VIEW_EXPORT_ROOT_ENV = "CADSENSE_CAD_VIEW_EXPORT_ROOT";
+export const CAD_HIERARCHY_HTTP_TIMEOUT_MS = 15_000;
 export const CAD_SCREENSHOT_HTTP_TIMEOUT_MS = 60_000;
 
 const CAD_VIEW_VALUES = [
@@ -767,11 +768,25 @@ async function postCadHierarchyRequest(
   if (!origin || !token) {
     throw new Error("Missing CADSENSE_CAD_VIEW_ORIGIN or CADSENSE_CAD_VIEW_TOKEN.");
   }
-  const response = await fetch(new URL("/api/cad/hierarchy", origin), {
-    method: "POST",
-    headers: { "content-type": "application/json", [CAD_VIEW_MCP_TOKEN_HEADER]: token },
-    body: JSON.stringify(input),
-  });
+  let response: Response;
+  try {
+    response = await fetch(new URL("/api/cad/hierarchy", origin), {
+      method: "POST",
+      headers: { "content-type": "application/json", [CAD_VIEW_MCP_TOKEN_HEADER]: token },
+      body: JSON.stringify(input),
+      signal: AbortSignal.timeout(CAD_HIERARCHY_HTTP_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new Error(
+        `CAD hierarchy request timed out after ${Math.round(
+          CAD_HIERARCHY_HTTP_TIMEOUT_MS / 1000,
+        )} seconds before the server responded.`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
   if (!response.ok) throw new Error(`Failed to get CAD hierarchy: HTTP ${response.status}`);
   return (await response.json()) as CadHierarchyResult;
 }
