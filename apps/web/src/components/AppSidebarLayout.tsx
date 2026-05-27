@@ -10,7 +10,8 @@ import {
 
 const THREAD_SIDEBAR_WIDTH_STORAGE_KEY = "chat_thread_sidebar_width";
 const THREAD_SIDEBAR_MIN_WIDTH = 13 * 16;
-const THREAD_MAIN_CONTENT_MIN_WIDTH = 40 * 16;
+const THREAD_MAIN_CONTENT_MIN_WIDTH = 34 * 16;
+const THREAD_SIDEBAR_MAX_VIEWPORT_FRACTION = 0.32;
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
 
@@ -60,6 +61,14 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         collapsible="offcanvas"
         className="border-r border-border bg-card text-foreground"
         resizable={{
+          getMaxWidth: ({ wrapper }) =>
+            Math.max(
+              THREAD_SIDEBAR_MIN_WIDTH,
+              Math.min(
+                wrapper.clientWidth * THREAD_SIDEBAR_MAX_VIEWPORT_FRACTION,
+                wrapper.clientWidth - THREAD_MAIN_CONTENT_MIN_WIDTH,
+              ),
+            ),
           minWidth: THREAD_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: ({ nextWidth, wrapper }) =>
             wrapper.clientWidth - nextWidth >= THREAD_MAIN_CONTENT_MIN_WIDTH,

@@ -39,6 +39,7 @@ type SidebarContextProps = {
 };
 
 type SidebarResizableOptions = {
+  getMaxWidth?: (context: { wrapper: HTMLElement }) => number;
   maxWidth?: number;
   minWidth?: number;
   onResize?: (width: number) => void;
@@ -54,6 +55,7 @@ type SidebarResizableOptions = {
 };
 
 type SidebarResolvedResizableOptions = {
+  getMaxWidth?: (context: { wrapper: HTMLElement }) => number;
   maxWidth: number;
   minWidth: number;
   onResize?: (width: number) => void;
@@ -195,6 +197,7 @@ function Sidebar({
       maxWidth: options.maxWidth ?? Number.POSITIVE_INFINITY,
       minWidth: options.minWidth ?? SIDEBAR_RESIZE_DEFAULT_MIN_WIDTH,
       storageKey: options.storageKey ?? null,
+      ...(options.getMaxWidth ? { getMaxWidth: options.getMaxWidth } : {}),
       ...(options.onResize ? { onResize: options.onResize } : {}),
       ...(options.shouldAcceptWidth ? { shouldAcceptWidth: options.shouldAcceptWidth } : {}),
     };
@@ -331,8 +334,28 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
   );
 }
 
-function clampSidebarWidth(width: number, options: SidebarResolvedResizableOptions): number {
-  return Math.max(options.minWidth, Math.min(width, options.maxWidth));
+function getSidebarMaxWidth(
+  options: SidebarResolvedResizableOptions,
+  wrapper: HTMLElement | null,
+): number {
+  const dynamicMaxWidth = wrapper ? options.getMaxWidth?.({ wrapper }) : undefined;
+  return Math.max(
+    options.minWidth,
+    Math.min(
+      options.maxWidth,
+      typeof dynamicMaxWidth === "number" && Number.isFinite(dynamicMaxWidth)
+        ? dynamicMaxWidth
+        : Number.POSITIVE_INFINITY,
+    ),
+  );
+}
+
+function clampSidebarWidth(
+  width: number,
+  options: SidebarResolvedResizableOptions,
+  wrapper: HTMLElement | null,
+): number {
+  return Math.max(options.minWidth, Math.min(width, getSidebarMaxWidth(options, wrapper)));
 }
 
 function SidebarRail({
@@ -413,7 +436,7 @@ function SidebarRail({
       }
 
       const startWidth = sidebarContainer.getBoundingClientRect().width;
-      const initialWidth = clampSidebarWidth(startWidth, resolvedResizable);
+      const initialWidth = clampSidebarWidth(startWidth, resolvedResizable, wrapper);
       const transitionTargets = [
         sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-gap']"),
         sidebarRoot.querySelector<HTMLElement>("[data-slot='sidebar-container']"),
@@ -464,6 +487,7 @@ function SidebarRail({
       resizeState.pendingWidth = clampSidebarWidth(
         resizeState.startWidth + delta,
         resolvedResizable,
+        resizeState.wrapper,
       );
       if (resizeState.rafId !== null) {
         return;
@@ -552,9 +576,40 @@ function SidebarRail({
 
     const storedWidth = getLocalStorageItem(resolvedResizable.storageKey, Schema.Finite);
     if (storedWidth === null) return;
-    const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable);
+    const clampedWidth = clampSidebarWidth(storedWidth, resolvedResizable, wrapper);
     wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
     resolvedResizable.onResize?.(clampedWidth);
+  }, [resolvedResizable]);
+
+  React.useEffect(() => {
+    if (!resolvedResizable || typeof ResizeObserver === "undefined") return;
+    const rail = railRef.current;
+    if (!rail) return;
+    const wrapper = rail.closest<HTMLElement>("[data-slot='sidebar-wrapper']");
+    const sidebarRoot = rail.closest<HTMLElement>("[data-slot='sidebar']");
+    const sidebarContainer = sidebarRoot?.querySelector<HTMLElement>(
+      "[data-slot='sidebar-container']",
+    );
+    if (!wrapper || !sidebarContainer) return;
+
+    const clampCurrentWidth = () => {
+      const currentWidth = sidebarContainer.getBoundingClientRect().width;
+      if (!Number.isFinite(currentWidth)) return;
+
+      const clampedWidth = clampSidebarWidth(currentWidth, resolvedResizable, wrapper);
+      if (Math.abs(clampedWidth - currentWidth) < 0.5) return;
+
+      wrapper.style.setProperty("--sidebar-width", `${clampedWidth}px`);
+      resolvedResizable.onResize?.(clampedWidth);
+    };
+
+    clampCurrentWidth();
+    const observer = new ResizeObserver(clampCurrentWidth);
+    observer.observe(wrapper);
+
+    return () => {
+      observer.disconnect();
+    };
   }, [resolvedResizable]);
 
   React.useEffect(() => {
