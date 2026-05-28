@@ -50,6 +50,8 @@ import {
   parseCadModelLeafFromPathname,
   posixFileBasename,
 } from "./cad/cadModelHttpPath.ts";
+import { MECHBASE_API_KEY_SECRET_NAME, fetchMechbaseArtifact } from "./mechbase/MechbaseApi.ts";
+import { decodeMechbaseApiKey } from "./mechbase/MechbaseConnection.ts";
 import { ServerEnvironment } from "./environment/Services/ServerEnvironment.ts";
 import {
   browserApiCorsAllowedHeaders,
@@ -65,6 +67,7 @@ const CAD_CONTROL_ROUTE_PATH = "/api/cad/control-command";
 const CAD_HIERARCHY_ROUTE_PATH = "/api/cad/hierarchy";
 const CAD_HIERARCHY_UPLOAD_ROUTE_PATH = "/api/cad/hierarchy-upload";
 const CAD_REVIEW_ARTIFACT_ROUTE_PATH = "/api/cad/review-artifact";
+const MECHBASE_ARTIFACT_ROUTE_PATH = "/api/mechbase/artifact";
 const CAD_SCREENSHOT_CAPTURE_ROUTE_PATH = "/api/cad/screenshot-capture";
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 const CAD_REVIEW_ARTIFACT_DIRECTORY_SEGMENT = "cadsense-cad-screenshots";
@@ -74,6 +77,10 @@ const decodeCadControlInput = Schema.decodeUnknownEffect(CadControlInput);
 const decodeCadHierarchyRequestInput = Schema.decodeUnknownEffect(CadHierarchyRequestInput);
 const decodeCadHierarchyUploadInput = Schema.decodeUnknownEffect(CadHierarchyUploadInput);
 const decodeCadScreenshotMcpCaptureInput = Schema.decodeUnknownEffect(CadScreenshotMcpCaptureInput);
+
+function makeMechbaseApiKeySecretPath(secretsDir: string): string {
+  return `${secretsDir.replace(/[\\/]+$/, "")}/${MECHBASE_API_KEY_SECRET_NAME}.bin`;
+}
 
 export const browserApiCorsLayer = HttpRouter.cors({
   allowedMethods: [...browserApiCorsAllowedMethods],
@@ -330,6 +337,53 @@ export const cadReviewArtifactRouteLayer = HttpRouter.add(
         Effect.succeed(HttpServerResponse.text("Internal Server Error", { status: 500 })),
       ),
     );
+  }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
+);
+
+export const mechbaseArtifactRouteLayer = HttpRouter.add(
+  "GET",
+  MECHBASE_ARTIFACT_ROUTE_PATH,
+  Effect.gen(function* () {
+    yield* requireAuthenticatedRequest;
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const url = HttpServerRequest.toURL(request);
+    if (Option.isNone(url)) {
+      return HttpServerResponse.text("Bad Request", { status: 400 });
+    }
+
+    const artifactUrl = url.value.searchParams.get("artifactUrl");
+    if (!artifactUrl) {
+      return HttpServerResponse.text("Missing artifactUrl parameter", { status: 400 });
+    }
+
+    const config = yield* ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const storedApiKey = yield* fileSystem
+      .readFile(makeMechbaseApiKeySecretPath(config.secretsDir))
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (!storedApiKey) {
+      return HttpServerResponse.text("Mechbase is not configured", { status: 404 });
+    }
+
+    const apiKey = decodeMechbaseApiKey(storedApiKey);
+    const artifact = yield* Effect.tryPromise(() =>
+      fetchMechbaseArtifact({ artifactUrl }, apiKey),
+    ).pipe(
+      Effect.catch((error) =>
+        Effect.succeed(error instanceof Error ? error.message : "Failed to fetch artifact"),
+      ),
+    );
+    if (typeof artifact === "string") {
+      return HttpServerResponse.text(artifact, { status: 400 });
+    }
+
+    return HttpServerResponse.uint8Array(artifact.data, {
+      status: 200,
+      contentType: artifact.mimeType,
+      headers: {
+        "Cache-Control": "private, max-age=3600",
+      },
+    });
   }).pipe(Effect.catchTag("AuthError", respondToAuthError)),
 );
 

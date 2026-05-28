@@ -2,6 +2,7 @@ import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
 import {
+  fetchMechbaseArtifact,
   MECHBASE_API_KEY_ENV,
   MECHBASE_PUBLIC_API_BASE_URL,
   searchMechbase,
@@ -10,6 +11,7 @@ import {
 
 export const MECHBASE_MCP_SERVER_NAME = "cadsense-mechbase";
 export const MECHBASE_MCP_SEARCH_TOOL_NAME = "search_mechbase";
+export const MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME = "fetch_mechbase_artifact";
 
 interface JsonRpcRequest {
   readonly jsonrpc?: string;
@@ -48,6 +50,37 @@ function jsonRpcError(id: string | number | null, code: number, message: string)
 
 function toolText(text: string) {
   return { content: [{ type: "text", text }] };
+}
+
+function artifactToolResult(input: {
+  readonly artifactUrl: string;
+  readonly mimeType: string;
+  readonly data: Uint8Array;
+  readonly sizeBytes: number;
+}) {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          {
+            artifactUrl: input.artifactUrl,
+            mimeType: input.mimeType,
+            sizeBytes: input.sizeBytes,
+            guidance:
+              "Use this image only if it visibly matches the mechanism or precedent being discussed. Cite the source URL when using it in a review.",
+          },
+          null,
+          2,
+        ),
+      },
+      {
+        type: "image",
+        data: Buffer.from(input.data).toString("base64"),
+        mimeType: input.mimeType,
+      },
+    ],
+  };
 }
 
 function getToolCall(
@@ -134,6 +167,7 @@ export async function handleMechbaseMcpRequest(
             "Search indexed FRC mechanism binders in Mechbase.",
             "Use this when the user asks for examples, references, page context, or design precedent from FRC mechanisms.",
             `Relative image and context URLs are returned as absolute URLs under ${MECHBASE_PUBLIC_API_BASE_URL}.`,
+            `Use ${MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME} only when one returned image URL looks likely to clarify the answer or review.`,
           ].join("\n"),
           inputSchema: {
             type: "object",
@@ -162,21 +196,48 @@ export async function handleMechbaseMcpRequest(
             additionalProperties: false,
           },
         },
+        {
+          name: MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
+          description: [
+            "Fetch one Mechbase image artifact returned by search_mechbase so the agent can inspect it visually.",
+            "Use this selectively after search_mechbase returns a promising artifact_url or linked_artifact_urls entry.",
+            "Only use and cite the fetched image if it visibly matches the mechanism or precedent being discussed.",
+          ].join("\n"),
+          inputSchema: {
+            type: "object",
+            properties: {
+              artifactUrl: {
+                type: "string",
+                description:
+                  "Required Mechbase artifact URL, usually artifact_url or linked_artifact_urls from search_mechbase.",
+              },
+            },
+            required: ["artifactUrl"],
+            additionalProperties: false,
+          },
+        },
       ],
     });
   }
   if (request.method === "tools/call") {
     const call = getToolCall(request);
     if (!call) return jsonRpcError(id, -32602, "Invalid tools/call parameters.");
-    if (call.name !== MECHBASE_MCP_SEARCH_TOOL_NAME) {
+    if (
+      call.name !== MECHBASE_MCP_SEARCH_TOOL_NAME &&
+      call.name !== MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME
+    ) {
       return jsonRpcError(id, -32601, `Unknown tool: ${call.name}`);
     }
     const apiKey = options?.apiKey ?? process.env[MECHBASE_API_KEY_ENV];
     if (!apiKey?.trim()) {
       return jsonRpcError(id, -32000, `Missing ${MECHBASE_API_KEY_ENV}.`);
     }
-    const result = await searchMechbase(call.arguments ?? {}, apiKey, options?.fetch);
-    return jsonRpcResult(id, toolText(JSON.stringify(result, null, 2)));
+    if (call.name === MECHBASE_MCP_SEARCH_TOOL_NAME) {
+      const result = await searchMechbase(call.arguments ?? {}, apiKey, options?.fetch);
+      return jsonRpcResult(id, toolText(JSON.stringify(result, null, 2)));
+    }
+    const result = await fetchMechbaseArtifact(call.arguments ?? {}, apiKey, options?.fetch);
+    return jsonRpcResult(id, artifactToolResult(result));
   }
   return jsonRpcError(id, -32601, `Unknown method: ${request.method ?? ""}`);
 }

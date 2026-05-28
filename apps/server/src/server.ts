@@ -17,6 +17,7 @@ import {
   staticAndDevRouteLayer,
   browserApiCorsLayer,
   cadReviewArtifactRouteLayer,
+  mechbaseArtifactRouteLayer,
 } from "./http.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
@@ -319,6 +320,7 @@ export const makeRoutesLayer = Layer.mergeAll(
   authWebSocketTokenRouteLayer,
   attachmentsRouteLayer,
   cadReviewArtifactRouteLayer,
+  mechbaseArtifactRouteLayer,
   orchestrationDispatchRouteLayer,
   orchestrationSnapshotRouteLayer,
   otlpTracesProxyRouteLayer,

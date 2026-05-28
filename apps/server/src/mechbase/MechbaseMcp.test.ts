@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  fetchMechbaseArtifact,
   MECHBASE_API_KEY_ENV,
   MECHBASE_PUBLIC_API_BASE_URL,
   normalizeMechbaseSearchInput,
@@ -8,6 +9,7 @@ import {
   validateMechbaseApiKey,
 } from "./MechbaseApi.ts";
 import {
+  MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
   MECHBASE_MCP_SEARCH_TOOL_NAME,
   MECHBASE_MCP_SERVER_NAME,
   handleMechbaseMcpRequest,
@@ -19,6 +21,19 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
     status: init?.status ?? 200,
     headers: { "content-type": "application/json", ...init?.headers },
+  });
+}
+
+function binaryResponse(
+  body: Uint8Array,
+  init?: { readonly status?: number; readonly contentType?: string },
+): Response {
+  return new Response(body, {
+    status: init?.status ?? 200,
+    headers: {
+      "content-type": init?.contentType ?? "image/png",
+      "content-length": String(body.byteLength),
+    },
   });
 }
 
@@ -102,6 +117,46 @@ describe("MechbaseApi", () => {
       `${MECHBASE_PUBLIC_API_BASE_URL}/images/254-2020/page-015/page.png`,
     );
   });
+
+  it("fetches image artifacts from Mechbase URLs", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const fetchImpl = vi.fn().mockResolvedValue(binaryResponse(bytes));
+    const artifactUrl = `${MECHBASE_PUBLIC_API_BASE_URL}/images/254-2020/page-015/page.png`;
+
+    const result = await fetchMechbaseArtifact({ artifactUrl }, "secret", fetchImpl);
+
+    expect(fetchImpl).toHaveBeenCalledWith(artifactUrl, {
+      headers: { Authorization: "Bearer secret" },
+    });
+    expect(result).toMatchObject({
+      artifactUrl,
+      mimeType: "image/png",
+      sizeBytes: 3,
+    });
+    expect([...result.data]).toEqual([1, 2, 3]);
+  });
+
+  it("rejects artifact fetches outside the Mechbase API origin", async () => {
+    await expect(
+      fetchMechbaseArtifact({ artifactUrl: "https://example.com/page.png" }, "secret", vi.fn()),
+    ).rejects.toThrow("configured Mechbase API origin");
+  });
+
+  it("rejects non-image artifact fetches", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      binaryResponse(new Uint8Array([1, 2, 3]), {
+        contentType: "application/json",
+      }),
+    );
+
+    await expect(
+      fetchMechbaseArtifact(
+        { artifactUrl: `${MECHBASE_PUBLIC_API_BASE_URL}/context/page.json` },
+        "secret",
+        fetchImpl,
+      ),
+    ).rejects.toThrow("not an image");
+  });
 });
 
 describe("MechbaseMcp", () => {
@@ -134,7 +189,10 @@ describe("MechbaseMcp", () => {
     });
     expect(response).toMatchObject({ jsonrpc: "2.0", id: 1 });
     const tools = (response as { result: { tools: { name: string }[] } }).result.tools;
-    expect(tools.map((tool) => tool.name)).toEqual([MECHBASE_MCP_SEARCH_TOOL_NAME]);
+    expect(tools.map((tool) => tool.name)).toEqual([
+      MECHBASE_MCP_SEARCH_TOOL_NAME,
+      MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
+    ]);
   });
 
   it("handles search tool calls", async () => {
@@ -156,5 +214,39 @@ describe("MechbaseMcp", () => {
     expect(response).toMatchObject({ jsonrpc: "2.0", id: 2 });
     const text = (response as { result: { content: { text: string }[] } }).result.content[0]?.text;
     expect(text).toContain('"team": "254"');
+  });
+
+  it("handles artifact fetch tool calls with image content", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    const fetchImpl = vi.fn().mockResolvedValue(binaryResponse(bytes));
+    const artifactUrl = `${MECHBASE_PUBLIC_API_BASE_URL}/images/254-2020/page-015/page.png`;
+
+    const response = await handleMechbaseMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: {
+          name: MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
+          arguments: { artifactUrl },
+        },
+      },
+      { apiKey: "secret", fetch: fetchImpl },
+    );
+
+    expect(response).toMatchObject({ jsonrpc: "2.0", id: 3 });
+    const content = (
+      response as {
+        result: {
+          content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+        };
+      }
+    ).result.content;
+    expect(content[0]?.text).toContain("visibly matches");
+    expect(content[1]).toMatchObject({
+      type: "image",
+      data: Buffer.from(bytes).toString("base64"),
+      mimeType: "image/png",
+    });
   });
 });

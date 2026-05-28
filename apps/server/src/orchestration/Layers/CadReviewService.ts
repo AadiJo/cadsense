@@ -350,6 +350,31 @@ function extractExportedScreenshotPaths(
   return [...paths];
 }
 
+function extractFetchedMechbaseArtifactUrls(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): string[] {
+  const urls = new Set<string>();
+  for (const activity of activities) {
+    for (const url of extractReferencedMechbaseArtifactUrls(activity)) {
+      urls.add(url);
+    }
+  }
+  return [...urls];
+}
+
+function extractReferencedMechbaseArtifactUrls(activity: OrchestrationThreadActivity): string[] {
+  const urls = new Set<string>();
+  for (const text of screenshotTextValues(activity)) {
+    for (const match of text.matchAll(/"artifactUrl"\s*:\s*"([^"]+)"/g)) {
+      const url = match[1]?.trim();
+      if (url?.startsWith("https://api-frcrag-v2.johari-dev.com/")) {
+        urls.add(url);
+      }
+    }
+  }
+  return [...urls];
+}
+
 function extractReferencedScreenshotPaths(activity: OrchestrationThreadActivity): string[] {
   const paths = new Set<string>();
   for (const text of screenshotTextValues(activity)) {
@@ -506,16 +531,19 @@ function artifactIdsForActivity(
   activity: OrchestrationThreadActivity,
   artifacts: ReadonlyArray<CadReviewEvidenceArtifact>,
 ): string[] {
-  const paths = new Set(
+  const references = new Set(
     extractReferencedScreenshotPaths(activity).map((path) => path.toLowerCase()),
   );
-  if (paths.size === 0) {
+  for (const url of extractReferencedMechbaseArtifactUrls(activity)) {
+    references.add(url.toLowerCase());
+  }
+  if (references.size === 0) {
     return [];
   }
   return artifacts
     .filter((artifact) => {
       const uri = artifact.artifactUri?.toLowerCase();
-      return uri !== undefined && paths.has(uri);
+      return uri !== undefined && references.has(uri);
     })
     .map((artifact) => artifact.id);
 }
@@ -1432,7 +1460,7 @@ const make = Effect.gen(function* () {
     readonly createdAt: string;
   }): CadReviewEvidenceArtifact[] => {
     const paths = extractExportedScreenshotPaths(input.childThread.activities);
-    return paths.map((path, index) => {
+    const pathArtifacts = paths.map((path, index) => {
       const artifact: CadReviewEvidenceArtifact = {
         id: `${input.reviewRunId}:${input.scope}:${input.persona ?? "baseline"}:${index + 1}`,
         scope: input.scope,
@@ -1447,6 +1475,25 @@ const make = Effect.gen(function* () {
       }
       return artifact;
     });
+    const mechbaseArtifacts = extractFetchedMechbaseArtifactUrls(input.childThread.activities).map(
+      (url, index) => {
+        const artifact: CadReviewEvidenceArtifact = {
+          id: `${input.reviewRunId}:${input.scope}:${input.persona ?? "baseline"}:mechbase:${
+            index + 1
+          }`,
+          scope: input.scope,
+          viewName: "Mechbase precedent image",
+          artifactUri: url,
+          status: "captured",
+          createdAt: input.createdAt,
+        };
+        if (input.persona !== undefined) {
+          return Object.assign(artifact, { persona: input.persona });
+        }
+        return artifact;
+      },
+    );
+    return [...pathArtifacts, ...mechbaseArtifacts];
   };
 
   const generateReview: CadReviewServiceShape["generateReview"] = (event) => {

@@ -925,6 +925,9 @@ function evidenceArtifactIdsForActionItem(
 }
 
 function cadReviewArtifactPreviewUrl(artifact: CadReviewEvidenceArtifact): string {
+  if (/^https:\/\/api-frcrag-v2\.johari-dev\.com\//i.test(artifact.artifactUri)) {
+    return `/api/mechbase/artifact?artifactUrl=${encodeURIComponent(artifact.artifactUri)}`;
+  }
   return `/api/cad/review-artifact?artifactUri=${encodeURIComponent(artifact.artifactUri)}`;
 }
 

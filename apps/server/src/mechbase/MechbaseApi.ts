@@ -29,6 +29,19 @@ export interface MechbaseSearchResult {
   readonly [key: string]: unknown;
 }
 
+export interface MechbaseArtifactFetchInput {
+  readonly artifactUrl: string;
+}
+
+export interface MechbaseArtifactFetchResult {
+  readonly artifactUrl: string;
+  readonly mimeType: string;
+  readonly data: Uint8Array;
+  readonly sizeBytes: number;
+}
+
+const MAX_MECHBASE_ARTIFACT_BYTES = 8 * 1024 * 1024;
+
 function mechbaseUrl(path: string): string {
   return new URL(path, MECHBASE_PUBLIC_API_BASE_URL).toString();
 }
@@ -98,6 +111,27 @@ export function resolveMechbaseUrl(value: unknown): unknown {
     return value;
   }
   return mechbaseUrl(value);
+}
+
+function normalizeMechbaseArtifactUrl(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error("Mechbase artifactUrl must be a non-empty string.");
+  }
+  const resolved = resolveMechbaseUrl(value.trim());
+  if (typeof resolved !== "string") {
+    throw new Error("Mechbase artifactUrl must be a string.");
+  }
+  const parsed = new URL(resolved);
+  const allowedOrigin = new URL(MECHBASE_PUBLIC_API_BASE_URL).origin;
+  if (parsed.origin !== allowedOrigin) {
+    throw new Error("Mechbase artifactUrl must point to the configured Mechbase API origin.");
+  }
+  return parsed.toString();
+}
+
+export function normalizeMechbaseArtifactFetchInput(input: unknown): MechbaseArtifactFetchInput {
+  assertObject(input, "Mechbase artifact fetch input");
+  return { artifactUrl: normalizeMechbaseArtifactUrl(input.artifactUrl) };
 }
 
 function normalizeSearchResultUrls(result: Record<string, unknown>): Record<string, unknown> {
@@ -180,4 +214,39 @@ export async function searchMechbase(
     ...body,
     ...(results ? { results } : {}),
   } as MechbaseSearchResult;
+}
+
+export async function fetchMechbaseArtifact(
+  input: unknown,
+  apiKey: string,
+  fetchImpl: MechbaseFetch = fetch,
+): Promise<MechbaseArtifactFetchResult> {
+  const normalizedInput = normalizeMechbaseArtifactFetchInput(input);
+  const response = await fetchImpl(normalizedInput.artifactUrl, {
+    headers: { Authorization: `Bearer ${apiKey.trim()}` },
+  });
+  if (!response.ok) {
+    throw new Error(`Mechbase artifact fetch failed: ${await readErrorBody(response)}`);
+  }
+  const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (!mimeType.startsWith("image/")) {
+    throw new Error(`Mechbase artifact is not an image: ${mimeType || "unknown content type"}.`);
+  }
+  const contentLength = response.headers.get("content-length");
+  if (contentLength !== null) {
+    const size = Number(contentLength);
+    if (Number.isFinite(size) && size > MAX_MECHBASE_ARTIFACT_BYTES) {
+      throw new Error("Mechbase artifact image is too large.");
+    }
+  }
+  const data = new Uint8Array(await response.arrayBuffer());
+  if (data.byteLength > MAX_MECHBASE_ARTIFACT_BYTES) {
+    throw new Error("Mechbase artifact image is too large.");
+  }
+  return {
+    artifactUrl: normalizedInput.artifactUrl,
+    mimeType,
+    data,
+    sizeBytes: data.byteLength,
+  };
 }
