@@ -222,6 +222,7 @@ const EMPTY_PROPOSED_PLANS: Thread["proposedPlans"] = [];
 const EMPTY_PROVIDERS: ServerProvider[] = [];
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_CAD_REVIEW_CHILD_ACTIVITY_BY_REVIEW_ID = {};
 const CAD_REVIEW_PANEL_PREWARM_MS = 1_000;
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
@@ -4037,16 +4038,25 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread.reviews, cadReviewWorkLogEntries],
   );
   const cadReviewChildActivityByReviewId = useStore(
-    useMemo(
-      () => (state) => {
+    useMemo(() => {
+      let previousEnvironmentState: unknown = null;
+      let previousResult = EMPTY_CAD_REVIEW_CHILD_ACTIVITY_BY_REVIEW_ID;
+
+      return (state) => {
         const environmentState = state.environmentStateById[activeThread.environmentId];
         if (!environmentState) {
-          return {};
+          previousEnvironmentState = null;
+          previousResult = EMPTY_CAD_REVIEW_CHILD_ACTIVITY_BY_REVIEW_ID;
+          return previousResult;
         }
-        return deriveCadReviewChildActivitySummaries(environmentState, activeThread);
-      },
-      [activeThread],
-    ),
+        if (previousEnvironmentState === environmentState) {
+          return previousResult;
+        }
+        previousEnvironmentState = environmentState;
+        previousResult = deriveCadReviewChildActivitySummaries(environmentState, activeThread);
+        return previousResult;
+      };
+    }, [activeThread]),
   );
   const onGenerateCadReview = async (input: {
     reviewPrompt: string;
