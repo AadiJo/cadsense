@@ -1,3 +1,6 @@
+import sharp from "sharp";
+import { JpxImage } from "jpeg2000";
+
 export const MECHBASE_PUBLIC_API_BASE_URL = "https://api-frcrag-v2.johari-dev.com";
 export const MECHBASE_API_KEY_ENV = "MECHBASE_API_KEY";
 export const MECHBASE_API_KEY_SECRET_NAME = "mechbase-api-key";
@@ -41,6 +44,39 @@ export interface MechbaseArtifactFetchResult {
 }
 
 const MAX_MECHBASE_ARTIFACT_BYTES = 8 * 1024 * 1024;
+const BROWSER_PREVIEWABLE_MECHBASE_IMAGE_MIME_TYPES = new Set([
+  "image/avif",
+  "image/gif",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/svg+xml",
+  "image/webp",
+]);
+const JPEG_2000_MECHBASE_IMAGE_MIME_TYPES = new Set([
+  "image/j2c",
+  "image/j2k",
+  "image/jp2",
+  "image/jpx",
+  "image/x-jp2",
+  "image/x-jpx",
+]);
+const MECHBASE_IMAGE_MIME_BY_EXTENSION = new Map<string, string>([
+  [".avif", "image/avif"],
+  [".bmp", "image/bmp"],
+  [".gif", "image/gif"],
+  [".j2c", "image/j2c"],
+  [".j2k", "image/j2k"],
+  [".jp2", "image/jp2"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".jpx", "image/jpx"],
+  [".png", "image/png"],
+  [".svg", "image/svg+xml"],
+  [".tif", "image/tiff"],
+  [".tiff", "image/tiff"],
+  [".webp", "image/webp"],
+]);
 
 function mechbaseUrl(path: string): string {
   return new URL(path, MECHBASE_PUBLIC_API_BASE_URL).toString();
@@ -145,6 +181,111 @@ function normalizeSearchResultUrls(result: Record<string, unknown>): Record<stri
   return normalized;
 }
 
+function inferMechbaseImageMimeType(artifactUrl: string, responseContentType: string): string {
+  if (responseContentType.startsWith("image/")) {
+    return responseContentType;
+  }
+  if (
+    responseContentType !== "" &&
+    responseContentType !== "application/octet-stream" &&
+    responseContentType !== "binary/octet-stream"
+  ) {
+    return responseContentType;
+  }
+  const pathname = new URL(artifactUrl).pathname.toLowerCase();
+  const extension = pathname.match(/\.[a-z0-9]+$/i)?.[0];
+  return extension
+    ? (MECHBASE_IMAGE_MIME_BY_EXTENSION.get(extension) ?? responseContentType)
+    : responseContentType;
+}
+
+async function convertMechbaseArtifactForBrowserPreview(input: {
+  readonly data: Uint8Array;
+  readonly mimeType: string;
+}): Promise<{ readonly data: Uint8Array; readonly mimeType: string }> {
+  if (BROWSER_PREVIEWABLE_MECHBASE_IMAGE_MIME_TYPES.has(input.mimeType)) {
+    return input;
+  }
+
+  try {
+    const converted = await sharp(input.data).png().toBuffer();
+    return {
+      data: new Uint8Array(converted),
+      mimeType: "image/png",
+    };
+  } catch (cause) {
+    if (JPEG_2000_MECHBASE_IMAGE_MIME_TYPES.has(input.mimeType)) {
+      try {
+        return await convertJpeg2000MechbaseArtifactForBrowserPreview(input.data);
+      } catch (jpeg2000Cause) {
+        const sharpMessage = cause instanceof Error ? cause.message : "unknown conversion error";
+        const jpeg2000Message =
+          jpeg2000Cause instanceof Error
+            ? jpeg2000Cause.message
+            : "unknown JPEG 2000 conversion error";
+        throw new Error(
+          `Mechbase artifact image format (${input.mimeType}) is not browser-previewable. Sharp conversion failed: ${sharpMessage}. JPEG 2000 fallback failed: ${jpeg2000Message}`,
+          { cause: jpeg2000Cause },
+        );
+      }
+    }
+    const message = cause instanceof Error ? cause.message : "unknown conversion error";
+    throw new Error(
+      `Mechbase artifact image format (${input.mimeType}) is not browser-previewable and conversion to PNG failed: ${message}`,
+      { cause },
+    );
+  }
+}
+
+async function convertJpeg2000MechbaseArtifactForBrowserPreview(
+  data: Uint8Array,
+): Promise<{ readonly data: Uint8Array; readonly mimeType: string }> {
+  const image = new JpxImage();
+  image.parse(Buffer.from(data));
+
+  if (!Number.isInteger(image.width) || image.width <= 0) {
+    throw new Error("JPEG 2000 image width is invalid.");
+  }
+  if (!Number.isInteger(image.height) || image.height <= 0) {
+    throw new Error("JPEG 2000 image height is invalid.");
+  }
+  if (
+    !Number.isInteger(image.componentsCount) ||
+    image.componentsCount < 1 ||
+    image.componentsCount > 4
+  ) {
+    throw new Error(`JPEG 2000 component count is unsupported: ${image.componentsCount}.`);
+  }
+  if (image.tiles.length === 0) {
+    throw new Error("JPEG 2000 image has no decoded tiles.");
+  }
+
+  const channels = image.componentsCount as 1 | 2 | 3 | 4;
+  const raw = new Uint8Array(image.width * image.height * channels);
+  for (const tile of image.tiles) {
+    const rowSize = tile.width * channels;
+    for (let y = 0; y < tile.height; y += 1) {
+      const sourceStart = y * rowSize;
+      const targetStart = ((tile.top + y) * image.width + tile.left) * channels;
+      raw.set(tile.items.subarray(sourceStart, sourceStart + rowSize), targetStart);
+    }
+  }
+
+  const converted = await sharp(raw, {
+    raw: {
+      width: image.width,
+      height: image.height,
+      channels,
+    },
+  })
+    .png()
+    .toBuffer();
+  return {
+    data: new Uint8Array(converted),
+    mimeType: "image/png",
+  };
+}
+
 export async function validateMechbaseApiKey(
   apiKey: string,
   fetchImpl: MechbaseFetch = fetch,
@@ -228,7 +369,9 @@ export async function fetchMechbaseArtifact(
   if (!response.ok) {
     throw new Error(`Mechbase artifact fetch failed: ${await readErrorBody(response)}`);
   }
-  const mimeType = response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+  const responseContentType =
+    response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ?? "";
+  const mimeType = inferMechbaseImageMimeType(normalizedInput.artifactUrl, responseContentType);
   if (!mimeType.startsWith("image/")) {
     throw new Error(`Mechbase artifact is not an image: ${mimeType || "unknown content type"}.`);
   }
@@ -239,13 +382,20 @@ export async function fetchMechbaseArtifact(
       throw new Error("Mechbase artifact image is too large.");
     }
   }
-  const data = new Uint8Array(await response.arrayBuffer());
-  if (data.byteLength > MAX_MECHBASE_ARTIFACT_BYTES) {
+  const originalData = new Uint8Array(await response.arrayBuffer());
+  if (originalData.byteLength > MAX_MECHBASE_ARTIFACT_BYTES) {
     throw new Error("Mechbase artifact image is too large.");
+  }
+  const { data, mimeType: previewMimeType } = await convertMechbaseArtifactForBrowserPreview({
+    data: originalData,
+    mimeType,
+  });
+  if (data.byteLength > MAX_MECHBASE_ARTIFACT_BYTES) {
+    throw new Error("Mechbase artifact image is too large after conversion.");
   }
   return {
     artifactUrl: normalizedInput.artifactUrl,
-    mimeType,
+    mimeType: previewMimeType,
     data,
     sizeBytes: data.byteLength,
   };

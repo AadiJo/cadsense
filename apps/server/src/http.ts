@@ -369,6 +369,12 @@ export const mechbaseArtifactRouteLayer = HttpRouter.add(
     const artifact = yield* Effect.tryPromise(() =>
       fetchMechbaseArtifact({ artifactUrl }, apiKey),
     ).pipe(
+      Effect.tapError((error) =>
+        Effect.logWarning("Mechbase artifact preview fetch failed", {
+          artifactUrl,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      ),
       Effect.catch((error) =>
         Effect.succeed(error instanceof Error ? error.message : "Failed to fetch artifact"),
       ),

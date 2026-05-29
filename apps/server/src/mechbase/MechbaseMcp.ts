@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import { createHash } from "node:crypto";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 
@@ -52,11 +57,54 @@ function toolText(text: string) {
   return { content: [{ type: "text", text }] };
 }
 
+function extensionForMimeType(mimeType: string): string {
+  switch (mimeType.toLowerCase()) {
+    case "image/avif":
+      return ".avif";
+    case "image/gif":
+      return ".gif";
+    case "image/jpeg":
+    case "image/jpg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/svg+xml":
+      return ".svg";
+    case "image/webp":
+      return ".webp";
+    default:
+      return ".img";
+  }
+}
+
+function localArtifactBaseName(artifactUrl: string, mimeType: string): string {
+  const parsed = new URL(artifactUrl);
+  const leaf = path.basename(parsed.pathname).replace(/\.[^.]+$/, "");
+  const safeLeaf = leaf.replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "");
+  const hash = createHash("sha256").update(artifactUrl).digest("hex").slice(0, 16);
+  const name = safeLeaf.length > 0 ? safeLeaf.slice(0, 48) : "mechbase-artifact";
+  return `${name}-${hash}${extensionForMimeType(mimeType)}`;
+}
+
+async function saveLocalArtifactForInspection(input: {
+  readonly artifactUrl: string;
+  readonly mimeType: string;
+  readonly data: Uint8Array;
+  readonly artifactDirectory?: string;
+}): Promise<string> {
+  const directory = input.artifactDirectory ?? path.join(tmpdir(), "cadsense-mechbase-artifacts");
+  await mkdir(directory, { recursive: true });
+  const localPath = path.join(directory, localArtifactBaseName(input.artifactUrl, input.mimeType));
+  await writeFile(localPath, input.data);
+  return localPath;
+}
+
 function artifactToolResult(input: {
   readonly artifactUrl: string;
   readonly mimeType: string;
   readonly data: Uint8Array;
   readonly sizeBytes: number;
+  readonly localPath: string;
 }) {
   return {
     content: [
@@ -65,10 +113,11 @@ function artifactToolResult(input: {
         text: JSON.stringify(
           {
             artifactUrl: input.artifactUrl,
+            localPath: input.localPath,
             mimeType: input.mimeType,
             sizeBytes: input.sizeBytes,
             guidance:
-              "Use this image only if it visibly matches the mechanism or precedent being discussed. Cite the source URL when using it in a review.",
+              "This image was saved locally for inspection and is also attached as image content. Inspect the visible image before embedding it in CadSense chat. Use it only if it visibly matches the requested mechanism or precedent; discard logos, covers, blank pages, or unrelated crops and fetch another candidate. If it matches, show it with Markdown image syntax and cite the source as plain text like 'Source: FRC 254 in 2020, page 22', not as a Mechbase URL hyperlink.",
           },
           null,
           2,
@@ -145,7 +194,11 @@ export function makeMechbaseClaudeMcpServers(apiKey: string): Record<
 
 export async function handleMechbaseMcpRequest(
   request: JsonRpcRequest,
-  options?: { readonly apiKey?: string; readonly fetch?: MechbaseFetch },
+  options?: {
+    readonly apiKey?: string;
+    readonly fetch?: MechbaseFetch;
+    readonly artifactDirectory?: string;
+  },
 ): Promise<JsonRpcResponse | null> {
   const id = request.id ?? null;
   if (request.method === "notifications/initialized") {
@@ -168,6 +221,8 @@ export async function handleMechbaseMcpRequest(
             "Use this when the user asks for examples, references, page context, or design precedent from FRC mechanisms.",
             `Relative image and context URLs are returned as absolute URLs under ${MECHBASE_PUBLIC_API_BASE_URL}.`,
             `Use ${MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME} only when one returned image URL looks likely to clarify the answer or review.`,
+            "Before answering with a Mechbase image, fetch the candidate image with fetch_mechbase_artifact and inspect the returned image content. Do not show logos, covers, blank pages, or unrelated crops.",
+            "When answering in CadSense chat, display the inspected matching image artifact with Markdown image syntax like ![short description](artifact_url). Do not use separate Mechbase source hyperlinks. Binder names use <TEAM>-<YEAR>.pdf; cite source as plain text like 'Source: FRC 254 in 2020, page 22'.",
           ].join("\n"),
           inputSchema: {
             type: "object",
@@ -200,8 +255,10 @@ export async function handleMechbaseMcpRequest(
           name: MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
           description: [
             "Fetch one Mechbase image artifact returned by search_mechbase so the agent can inspect it visually.",
+            "The fetched preview is saved to a local file and returned as image content.",
             "Use this selectively after search_mechbase returns a promising artifact_url or linked_artifact_urls entry.",
-            "Only use and cite the fetched image if it visibly matches the mechanism or precedent being discussed.",
+            "Only use and cite the fetched image if the inspected image visibly matches the mechanism or precedent being discussed. Discard logos, covers, blank pages, and unrelated crops.",
+            "In CadSense chat, show the matching artifact with Markdown image syntax and cite the source as plain text like 'Source: FRC 254 in 2020, page 22', not as a Mechbase URL hyperlink.",
           ].join("\n"),
           inputSchema: {
             type: "object",
@@ -237,7 +294,15 @@ export async function handleMechbaseMcpRequest(
       return jsonRpcResult(id, toolText(JSON.stringify(result, null, 2)));
     }
     const result = await fetchMechbaseArtifact(call.arguments ?? {}, apiKey, options?.fetch);
-    return jsonRpcResult(id, artifactToolResult(result));
+    const localPath = await saveLocalArtifactForInspection({
+      artifactUrl: result.artifactUrl,
+      mimeType: result.mimeType,
+      data: result.data,
+      ...(options?.artifactDirectory !== undefined
+        ? { artifactDirectory: options.artifactDirectory }
+        : {}),
+    });
+    return jsonRpcResult(id, artifactToolResult({ ...result, localPath }));
   }
   return jsonRpcError(id, -32601, `Unknown method: ${request.method ?? ""}`);
 }

@@ -1,3 +1,13 @@
+const CADSENSE_CHAT_RENDERING_INSTRUCTIONS = `## CadSense Chat Rendering
+
+CadSense regular assistant messages render Markdown image embeds. When the user asks you to show an image from a source URL, include standard Markdown image syntax such as \`![short description](https://source.example/image.png)\` in the message.
+
+For Mechbase results, do not embed an image directly from search results. First call \`fetch_mechbase_artifact\` for the candidate \`artifact_url\` or \`linked_artifact_urls\`; it saves a local preview copy and returns image content. Inspect the returned image and only show it if the visible content matches the requested mechanism or precedent. Discard logos, covers, blank pages, and unrelated crops, then fetch another candidate if needed. CadSense proxies Mechbase artifact URLs and converts unsupported image formats such as JPX/JP2/J2K/TIFF to browser-previewable PNG when needed.
+
+After inspecting a matching Mechbase image, display the exact original \`artifact_url\` or \`linked_artifact_urls\` with Markdown image syntax. Do not add separate "open image source" links.
+
+Mechbase direct API URLs require CadSense authentication and usually do not work as browser links. The binder source format is \`<TEAM>-<YEAR>.pdf\`; cite it as a human source, for example: \`Source: FRC 254 in 2020, page 22.\` Do not paste or hyperlink \`page_context_url\`, \`page_text_url\`, source PDFs, or Mechbase source citations.`;
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -118,6 +128,8 @@ plan content should be human and agent digestible. The final plan must be plan-o
 Do not ask "should I proceed?" in the final output. The user can easily switch out of Plan mode and request implementation if you have included a \`<proposed_plan>\` block in your response. Alternatively, they can decide to stay in Plan mode and continue refining the plan.
 
 Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
+
+${CADSENSE_CHAT_RENDERING_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
@@ -131,4 +143,6 @@ Your active mode changes only when new developer instructions with a different \
 The \`request_user_input\` tool is unavailable in Default mode. If you call it while in Default mode, it will return an error.
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
+
+${CADSENSE_CHAT_RENDERING_INSTRUCTIONS}
 </collaboration_mode>`;

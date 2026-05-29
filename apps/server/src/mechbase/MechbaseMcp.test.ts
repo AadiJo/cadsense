@@ -1,4 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { describe, expect, it, vi } from "vitest";
+import sharp from "sharp";
 
 import {
   fetchMechbaseArtifact,
@@ -36,6 +42,11 @@ function binaryResponse(
     },
   });
 }
+
+const JPEG_2000_2X2_RED_FIXTURE = Buffer.from(
+  "AAAADGpQICANCocKAAAAFGZ0eXBqcDIgAAAAAGpwMiAAAAAtanAyaAAAABZpaGRyAAAAAgAAAAIAAwcHAAAAAAAPY29scgEAAAAAABAAAACYanAyY/9P/1EALwAAAAAAAgAAAAIAAAAAAAAAAAAAAAIAAAACAAAAAAAAAAAAAwcBAQcBAQcBAf9SAAwAAAABAAEEBAAB/1wAB0BASEhQ/2QAJQABQ3JlYXRlZCBieSBPcGVuSlBFRyB2ZXJzaW9uIDIuNS40/5AACgAAAAAAHQAB/5PPtAQA34AIB9+ACAeAgID/2Q==",
+  "base64",
+);
 
 describe("MechbaseApi", () => {
   it("validates API keys through Mechbase", async () => {
@@ -136,6 +147,57 @@ describe("MechbaseApi", () => {
     expect([...result.data]).toEqual([1, 2, 3]);
   });
 
+  it("converts non-browser-previewable Mechbase image artifacts to PNG", async () => {
+    const bytes = new Uint8Array(
+      await sharp({
+        create: {
+          width: 2,
+          height: 2,
+          channels: 3,
+          background: { r: 255, g: 0, b: 0 },
+        },
+      })
+        .tiff()
+        .toBuffer(),
+    );
+    const fetchImpl = vi.fn().mockResolvedValue(
+      binaryResponse(bytes, {
+        contentType: "application/octet-stream",
+      }),
+    );
+    const artifactUrl = `${MECHBASE_PUBLIC_API_BASE_URL}/images/254-2020/page-015/image-001.tiff`;
+
+    const result = await fetchMechbaseArtifact({ artifactUrl }, "secret", fetchImpl);
+
+    expect(result).toMatchObject({
+      artifactUrl,
+      mimeType: "image/png",
+    });
+    expect(result.sizeBytes).toBeGreaterThan(3);
+    const metadata = await sharp(result.data).metadata();
+    expect(metadata.format).toBe("png");
+  });
+
+  it("converts JPEG 2000 Mechbase image artifacts to PNG", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      binaryResponse(JPEG_2000_2X2_RED_FIXTURE, {
+        contentType: "image/jpx",
+      }),
+    );
+    const artifactUrl = `${MECHBASE_PUBLIC_API_BASE_URL}/images/254-2024/page-014/image-000.jpx`;
+
+    const result = await fetchMechbaseArtifact({ artifactUrl }, "secret", fetchImpl);
+
+    expect(result).toMatchObject({
+      artifactUrl,
+      mimeType: "image/png",
+    });
+    const metadata = await sharp(result.data).metadata();
+    expect(metadata.format).toBe("png");
+    expect(metadata.width).toBe(2);
+    expect(metadata.height).toBe(2);
+  });
+
   it("rejects artifact fetches outside the Mechbase API origin", async () => {
     await expect(
       fetchMechbaseArtifact({ artifactUrl: "https://example.com/page.png" }, "secret", vi.fn()),
@@ -188,11 +250,15 @@ describe("MechbaseMcp", () => {
       method: "tools/list",
     });
     expect(response).toMatchObject({ jsonrpc: "2.0", id: 1 });
-    const tools = (response as { result: { tools: { name: string }[] } }).result.tools;
+    const tools = (response as { result: { tools: { name: string; description?: string }[] } })
+      .result.tools;
     expect(tools.map((tool) => tool.name)).toEqual([
       MECHBASE_MCP_SEARCH_TOOL_NAME,
       MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
     ]);
+    const descriptions = tools.map((tool) => tool.description ?? "").join("\n");
+    expect(descriptions).toContain("Markdown image syntax");
+    expect(descriptions).toContain("Source: FRC 254 in 2020, page 22");
   });
 
   it("handles search tool calls", async () => {
@@ -220,33 +286,43 @@ describe("MechbaseMcp", () => {
     const bytes = new Uint8Array([1, 2, 3]);
     const fetchImpl = vi.fn().mockResolvedValue(binaryResponse(bytes));
     const artifactUrl = `${MECHBASE_PUBLIC_API_BASE_URL}/images/254-2020/page-015/page.png`;
+    const artifactDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "cadsense-mechbase-mcp-"));
 
-    const response = await handleMechbaseMcpRequest(
-      {
-        jsonrpc: "2.0",
-        id: 3,
-        method: "tools/call",
-        params: {
-          name: MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
-          arguments: { artifactUrl },
+    try {
+      const response = await handleMechbaseMcpRequest(
+        {
+          jsonrpc: "2.0",
+          id: 3,
+          method: "tools/call",
+          params: {
+            name: MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
+            arguments: { artifactUrl },
+          },
         },
-      },
-      { apiKey: "secret", fetch: fetchImpl },
-    );
+        { apiKey: "secret", fetch: fetchImpl, artifactDirectory },
+      );
 
-    expect(response).toMatchObject({ jsonrpc: "2.0", id: 3 });
-    const content = (
-      response as {
-        result: {
-          content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-        };
-      }
-    ).result.content;
-    expect(content[0]?.text).toContain("visibly matches");
-    expect(content[1]).toMatchObject({
-      type: "image",
-      data: Buffer.from(bytes).toString("base64"),
-      mimeType: "image/png",
-    });
+      expect(response).toMatchObject({ jsonrpc: "2.0", id: 3 });
+      const content = (
+        response as {
+          result: {
+            content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+          };
+        }
+      ).result.content;
+      expect(content[0]?.text).toContain("saved locally");
+      const metadata = JSON.parse(content[0]?.text ?? "{}") as { localPath?: string };
+      expect(metadata.localPath).toContain(artifactDirectory);
+      expect(metadata.localPath).toMatch(/\.png$/);
+      expect(metadata.localPath ? fs.existsSync(metadata.localPath) : false).toBe(true);
+      expect(metadata.localPath ? [...fs.readFileSync(metadata.localPath)] : []).toEqual([1, 2, 3]);
+      expect(content[1]).toMatchObject({
+        type: "image",
+        data: Buffer.from(bytes).toString("base64"),
+        mimeType: "image/png",
+      });
+    } finally {
+      fs.rmSync(artifactDirectory, { recursive: true, force: true });
+    }
   });
 });

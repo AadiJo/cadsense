@@ -20,6 +20,7 @@ import ReactMarkdown from "react-markdown";
 import { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { VscodeEntryIcon } from "./chat/VscodeEntryIcon";
+import type { ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { renderSkillInlineMarkdownChildren } from "./chat/SkillInlineText";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { stackedThreadToast, toastManager } from "./ui/toast";
@@ -62,6 +63,7 @@ interface ChatMarkdownProps {
   cwd: string | undefined;
   isStreaming?: boolean;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
+  onImageExpand?: (preview: ExpandedImagePreview) => void;
 }
 
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
@@ -91,6 +93,20 @@ function nodeToPlainText(node: ReactNode): string {
   }
   if (isValidElement<{ children?: ReactNode }>(node)) {
     return nodeToPlainText(node.props.children);
+  }
+  return "";
+}
+
+function markdownAstNodeToPlainText(node: unknown): string {
+  if (!node || typeof node !== "object") {
+    return "";
+  }
+  const record = node as Record<string, unknown>;
+  if (typeof record.value === "string") {
+    return record.value;
+  }
+  if (Array.isArray(record.children)) {
+    return record.children.map((child) => markdownAstNodeToPlainText(child)).join("");
   }
   return "";
 }
@@ -295,6 +311,10 @@ interface MarkdownFileLinkProps {
 }
 
 const MARKDOWN_LINK_HREF_PATTERN = /\[[^\]]*]\(([^)\s]+)(?:\s+["'][^"']*["'])?\)/g;
+const MECHBASE_API_URL_PATTERN = /^https:\/\/api-frcrag-v2\.johari-dev\.com\//i;
+const MECHBASE_ARTIFACT_URL_PATTERN = /^https:\/\/api-frcrag-v2\.johari-dev\.com\/images\//i;
+const MECHBASE_PAGE_SOURCE_URL_PATTERN =
+  /^https:\/\/api-frcrag-v2\.johari-dev\.com\/pages\/(\d+)-(\d{4})\.pdf\/(\d+)/i;
 const MARKDOWN_FILE_LINK_CLASS_NAME =
   "chat-markdown-file-link relative top-[2px] max-w-full no-underline";
 const MARKDOWN_FILE_LINK_ICON_CLASS_NAME = "chat-markdown-file-link-icon size-3.5 shrink-0";
@@ -373,6 +393,148 @@ function extractMarkdownLinkHrefs(text: string): string[] {
 function normalizeMarkdownLinkHrefKey(href: string): string {
   const normalizedHref = normalizeMarkdownLinkDestination(href);
   return rewriteMarkdownFileUriHref(normalizedHref) ?? normalizedHref;
+}
+
+function isSafeMarkdownImageUrl(src: string): boolean {
+  if (src.startsWith("/")) {
+    return true;
+  }
+
+  try {
+    const url = new URL(src);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+function isMechbaseApiUrl(href: string): boolean {
+  return MECHBASE_API_URL_PATTERN.test(href);
+}
+
+function isMechbaseArtifactUrl(href: string): boolean {
+  return MECHBASE_ARTIFACT_URL_PATTERN.test(href);
+}
+
+function formatMechbaseSourceCitation(href: string, children: ReactNode): string {
+  const pageMatch = href.match(MECHBASE_PAGE_SOURCE_URL_PATTERN);
+  if (pageMatch) {
+    const [, team, year, page] = pageMatch;
+    return `FRC ${team} in ${year}, page ${page}`;
+  }
+
+  const label = nodeToPlainText(children).trim();
+  if (label && !isMechbaseApiUrl(label)) {
+    return label;
+  }
+
+  return "Mechbase source";
+}
+
+function toMarkdownImagePreviewUrl(src: string): string {
+  if (isMechbaseArtifactUrl(src)) {
+    return `/api/mechbase/artifact?artifactUrl=${encodeURIComponent(src)}`;
+  }
+  return src;
+}
+
+function cleanMarkdownImageLinkLabel(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^open\s+image\s+source\s*:?\s*/i, "")
+    .replace(/^image\s+source\s*:?\s*/i, "");
+}
+
+function markdownImageLabelFromLinkText(children: ReactNode, node: unknown): string {
+  const label = cleanMarkdownImageLinkLabel(nodeToPlainText(children));
+  if (label) {
+    return label;
+  }
+  const nodeLabel = cleanMarkdownImageLinkLabel(markdownAstNodeToPlainText(node));
+  if (nodeLabel) {
+    return nodeLabel;
+  }
+  return label || "Image";
+}
+
+function MarkdownImage({
+  src,
+  alt,
+  onImageExpand,
+}: {
+  src: string | undefined;
+  alt: string | undefined;
+  onImageExpand: ((preview: ExpandedImagePreview) => void) | undefined;
+}) {
+  const [failed, setFailed] = useState(false);
+  const safeSrc = typeof src === "string" && isSafeMarkdownImageUrl(src) ? src : "";
+  const previewSrc = safeSrc ? toMarkdownImagePreviewUrl(safeSrc) : "";
+  const imageLabel = alt?.trim() || "Image";
+
+  useEffect(() => {
+    setFailed(false);
+  }, [previewSrc]);
+
+  if (!previewSrc || failed) {
+    if (!safeSrc) {
+      return (
+        <span className="chat-markdown-image-fallback" role="note">
+          Image blocked
+        </span>
+      );
+    }
+    if (isMechbaseApiUrl(safeSrc)) {
+      return (
+        <span className="chat-markdown-image-fallback" role="note">
+          Image preview unavailable: {imageLabel}
+        </span>
+      );
+    }
+
+    return (
+      <a href={safeSrc} target="_blank" rel="noopener noreferrer">
+        {failed ? `Open image source: ${imageLabel}` : imageLabel}
+      </a>
+    );
+  }
+
+  const image = (
+    <img
+      src={previewSrc}
+      alt={imageLabel}
+      className="chat-markdown-image"
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+      draggable={false}
+    />
+  );
+
+  return (
+    <span className="chat-markdown-image-frame">
+      {onImageExpand ? (
+        <button
+          type="button"
+          className="chat-markdown-image-button"
+          aria-label={`Expand image: ${imageLabel}`}
+          onClick={() =>
+            onImageExpand({
+              images: [{ src: previewSrc, name: imageLabel }],
+              index: 0,
+            })
+          }
+        >
+          {image}
+        </button>
+      ) : (
+        <a href={safeSrc} target="_blank" rel="noopener noreferrer">
+          {image}
+        </a>
+      )}
+      {alt?.trim() ? <span className="chat-markdown-image-caption">{alt.trim()}</span> : null}
+    </span>
+  );
 }
 
 const MarkdownFileLink = memo(function MarkdownFileLink({
@@ -525,6 +687,7 @@ function ChatMarkdown({
   cwd,
   isStreaming = false,
   skills = EMPTY_MARKDOWN_SKILLS,
+  onImageExpand,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
@@ -558,11 +721,31 @@ function ChatMarkdown({
       li({ node: _node, children, ...props }) {
         return <li {...props}>{renderSkillInlineMarkdownChildren(children, skills)}</li>;
       },
-      a({ node: _node, href, ...props }) {
+      a({ node, href, children, ...props }) {
         const normalizedHref = href ? normalizeMarkdownLinkHrefKey(href) : "";
         const fileLinkMeta = normalizedHref ? markdownFileLinkMetaByHref.get(normalizedHref) : null;
+        if (!fileLinkMeta && normalizedHref && isMechbaseArtifactUrl(normalizedHref)) {
+          return (
+            <MarkdownImage
+              src={normalizedHref}
+              alt={markdownImageLabelFromLinkText(children, node)}
+              onImageExpand={onImageExpand}
+            />
+          );
+        }
+        if (!fileLinkMeta && normalizedHref && isMechbaseApiUrl(normalizedHref)) {
+          return (
+            <span className="chat-markdown-source-text" title="Mechbase source citation">
+              {formatMechbaseSourceCitation(normalizedHref, children)}
+            </span>
+          );
+        }
         if (!fileLinkMeta) {
-          return <a {...props} href={href} target="_blank" rel="noopener noreferrer" />;
+          return (
+            <a {...props} href={href} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          );
         }
 
         const parentSuffix = fileLinkParentSuffixByPath.get(fileLinkMeta.filePath);
@@ -609,12 +792,16 @@ function ChatMarkdown({
           </MarkdownCodeBlock>
         );
       },
+      img({ node: _node, src, alt }) {
+        return <MarkdownImage src={src} alt={alt} onImageExpand={onImageExpand} />;
+      },
     }),
     [
       diffThemeName,
       fileLinkParentSuffixByPath,
       isStreaming,
       markdownFileLinkMetaByHref,
+      onImageExpand,
       resolvedTheme,
       skills,
     ],

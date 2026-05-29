@@ -34,7 +34,9 @@
     "@pierre/diffs": "catalog:",
     "effect": "catalog:",
     "fflate": "0.8.2",
-    "node-pty": "^1.1.0"
+    "jpeg2000": "^1.1.1",
+    "node-pty": "^1.1.0",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@cadsense/contracts": "workspace:*",

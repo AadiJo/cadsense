@@ -94,6 +94,22 @@ function buildUserTimelineEntry(text: string) {
   };
 }
 
+function buildAssistantTimelineEntry(text: string) {
+  return {
+    id: "entry-assistant-1",
+    kind: "message" as const,
+    createdAt: MESSAGE_CREATED_AT,
+    message: {
+      id: "message-assistant-1" as never,
+      role: "assistant" as const,
+      text,
+      createdAt: MESSAGE_CREATED_AT,
+      completedAt: MESSAGE_CREATED_AT,
+      streaming: false,
+    },
+  };
+}
+
 describe("MessagesTimeline", () => {
   afterEach(() => {
     scrollToEndSpy.mockReset();
@@ -217,6 +233,53 @@ describe("MessagesTimeline", () => {
 
       const messageBody = document.querySelector("[data-user-message-body='true']");
       expect(messageBody?.getAttribute("data-user-message-collapsed")).toBe("true");
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("expands markdown images in regular assistant messages", async () => {
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          buildAssistantTimelineEntry("Here is the reference:\n\n![Intake](/favicon-16x16.png)"),
+        ]}
+      />,
+    );
+
+    try {
+      await page.getByRole("button", { name: "Expand image: Intake" }).click();
+      expect(props.onImageExpand).toHaveBeenCalledWith({
+        images: [{ src: "/favicon-16x16.png", name: "Intake" }],
+        index: 0,
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("does not render Mechbase artifact source links in assistant messages as clickable hyperlinks", async () => {
+    const props = buildProps();
+    const artifactUrl =
+      "https://api-frcrag-v2.johari-dev.com/images/254-2020/page-022/image-001.jpeg";
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          buildAssistantTimelineEntry(
+            `Here is the reference:\n\n[Open image source: Efficient shooter](${artifactUrl})`,
+          ),
+        ]}
+      />,
+    );
+
+    try {
+      await expect
+        .element(page.getByText("Image preview unavailable: Efficient shooter"))
+        .toBeVisible();
+      expect(document.querySelector(`a[href="${artifactUrl}"]`)).toBeNull();
     } finally {
       await screen.unmount();
     }

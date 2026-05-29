@@ -116,4 +116,107 @@ describe("ChatMarkdown", () => {
       await screen.unmount();
     }
   });
+
+  it("renders markdown image URLs and sends them to the expanded preview", async () => {
+    const onImageExpand = vi.fn();
+    const screen = await render(
+      <ChatMarkdown
+        text="![Shooter reference](/favicon-32x32.png)"
+        cwd="/repo/project"
+        onImageExpand={onImageExpand}
+      />,
+    );
+
+    try {
+      const image = page.getByRole("img", { name: "Shooter reference" });
+      await expect.element(image).toBeVisible();
+      expect(document.querySelector("img")?.getAttribute("src")).toBe("/favicon-32x32.png");
+
+      await page.getByRole("button", { name: "Expand image: Shooter reference" }).click();
+      expect(onImageExpand).toHaveBeenCalledWith({
+        images: [{ src: "/favicon-32x32.png", name: "Shooter reference" }],
+        index: 0,
+      });
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("routes Mechbase artifact image URLs through the authenticated preview endpoint", async () => {
+    const artifactUrl = "https://api-frcrag-v2.johari-dev.com/images/254-2020/page-015/page.png";
+    const expectedPreviewUrl = `/api/mechbase/artifact?artifactUrl=${encodeURIComponent(artifactUrl)}`;
+    const screen = await render(
+      <ChatMarkdown text={`![Mechbase page](${artifactUrl})`} cwd="/repo/project" />,
+    );
+
+    try {
+      const image = document.querySelector("img[alt='Mechbase page']");
+      expect(image?.getAttribute("src")).toBe(expectedPreviewUrl);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("does not render Mechbase artifact source links as clickable hyperlinks", async () => {
+    const artifactUrl =
+      "https://api-frcrag-v2.johari-dev.com/images/254-2020/page-022/image-001.jpeg";
+    const screen = await render(
+      <ChatMarkdown
+        text={`[Open image source: Efficient FRC shooter reference](${artifactUrl})`}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await expect
+        .element(page.getByText("Image preview unavailable: Efficient FRC shooter reference"))
+        .toBeVisible();
+      expect(document.querySelector(`a[href="${artifactUrl}"]`)).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("renders Mechbase source citations as team-year plain text because direct API URLs are not browser links", async () => {
+    const sourceUrl = "https://api-frcrag-v2.johari-dev.com/pages/254-2020.pdf/22";
+    const screen = await render(
+      <ChatMarkdown
+        text={`Source: [Team 254, 2020 technical binder, page 22](${sourceUrl})`}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await expect.element(page.getByText("FRC 254 in 2020, page 22")).toBeVisible();
+      expect(document.querySelector(`a[href="${sourceUrl}"]`)).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("formats bare Mechbase page URLs as FRC team-year citations", async () => {
+    const sourceUrl = "https://api-frcrag-v2.johari-dev.com/pages/254-2017.pdf/17";
+    const screen = await render(<ChatMarkdown text={`Source: ${sourceUrl}`} cwd="/repo/project" />);
+
+    try {
+      await expect.element(page.getByText("FRC 254 in 2017, page 17")).toBeVisible();
+      expect(document.body.textContent).not.toContain(sourceUrl);
+      expect(document.querySelector(`a[href="${sourceUrl}"]`)).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("blocks unsafe markdown image URLs instead of rendering them", async () => {
+    const screen = await render(
+      <ChatMarkdown text="![Unexpected](data:image/svg+xml;base64,PHN2Zy8+)" cwd="/repo/project" />,
+    );
+
+    try {
+      await expect.element(page.getByText("Image blocked")).toBeVisible();
+      expect(document.querySelector("img")).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
 });
