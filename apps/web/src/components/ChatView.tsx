@@ -1738,7 +1738,8 @@ export default function ChatView(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError: activeThread?.error,
   });
-  const isWorking = phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint;
+  const composerStopActive = phase === "running" || cadReviewInProgress;
+  const isWorking = composerStopActive || isSendBusy || isConnecting || isRevertingCheckpoint;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -3441,6 +3442,16 @@ export default function ChatView(props: ChatViewProps) {
   const onInterrupt = async () => {
     const api = readEnvironmentApi(environmentId);
     if (!api || !activeThread) return;
+    if (activeCadReview) {
+      await api.orchestration.dispatchCommand({
+        type: "thread.review.stop",
+        commandId: newCommandId(),
+        threadId: activeThread.id,
+        reviewRunId: activeCadReview.id,
+        createdAt: new Date().toISOString(),
+      });
+      return;
+    }
     await api.orchestration.dispatchCommand({
       type: "thread.turn.interrupt",
       commandId: newCommandId(),
@@ -4147,20 +4158,6 @@ export default function ChatView(props: ChatViewProps) {
       sendInFlightRef.current = false;
     }
   };
-  const onStopCadReview = async () => {
-    const api = readEnvironmentApi(activeThread.environmentId);
-    if (!api || !activeCadReview) {
-      return;
-    }
-    await api.orchestration.dispatchCommand({
-      type: "thread.review.stop",
-      commandId: newCommandId(),
-      threadId: activeThread.id,
-      reviewRunId: activeCadReview.id,
-      createdAt: new Date().toISOString(),
-    });
-  };
-
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background">
       {/* Top bar */}
@@ -4219,23 +4216,6 @@ export default function ChatView(props: ChatViewProps) {
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
       />
-      {cadReviewInProgress ? (
-        <div className="border-b border-border/70 bg-muted/20 px-3 py-2 sm:px-5">
-          <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
-            <p className="text-xs text-muted-foreground">
-              CAD review running. The agent is capturing views, checking selected review scopes, and
-              synthesizing findings.
-            </p>
-            <button
-              type="button"
-              className="inline-flex h-8 shrink-0 cursor-pointer items-center justify-center whitespace-nowrap rounded-md border border-rose-500/90 bg-rose-500/90 px-[calc(--spacing(2.5)-1px)] text-sm font-medium text-white shadow-xs shadow-rose-500/24 transition-all duration-150 hover:bg-rose-500 hover:text-white active:bg-rose-500 sm:h-7"
-              onClick={() => void onStopCadReview()}
-            >
-              Stop review
-            </button>
-          </div>
-        </div>
-      ) : null}
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 min-w-0 flex-1">
         {/* Chat column */}
@@ -4313,6 +4293,7 @@ export default function ChatView(props: ChatViewProps) {
                   isServerThread={isServerThread}
                   isLocalDraftThread={isLocalDraftThread}
                   phase={phase}
+                  isCadReviewInProgress={cadReviewInProgress}
                   isConnecting={isConnecting}
                   isSendBusy={isSendBusy}
                   isPreparingWorktree={isPreparingWorktree}

@@ -2876,7 +2876,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("stops an active CAD review from the banner", async () => {
+  it("stops an active CAD review from the composer stop button", async () => {
     const reviewRunId = "cad-review-browser-stop" as CadReviewReport["id"];
     const snapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-cad-review-stop" as MessageId,
@@ -2957,12 +2957,17 @@ describe("ChatView timeline estimator parity (full app)", () => {
     });
 
     try {
+      await vi.waitFor(
+        () => {
+          expect(document.body.textContent).not.toContain("Stop review");
+          expect(document.body.textContent).not.toContain("CAD review running.");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
       const stopReviewButton = await waitForElement(
-        () =>
-          Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find(
-            (button) => button.textContent?.trim() === "Stop review",
-          ) ?? null,
-        "Unable to find Stop review button.",
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Stop generation"]'),
+        "Unable to find composer stop button.",
       );
 
       expect(stopReviewButton.className).toContain("bg-rose-500");
