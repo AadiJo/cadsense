@@ -114,6 +114,10 @@ function reviewTitle(thread: OrchestrationThread, projectTitle: string | undefin
   return `${reviewSubject(thread, projectTitle)} CAD Review`;
 }
 
+function childReviewThreadInitialTitle(title: string): string {
+  return `[hidden] ${title}`;
+}
+
 function trimText(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
@@ -1244,7 +1248,7 @@ const make = Effect.gen(function* () {
         commandId: serverCommandId("cad-review-child-create"),
         threadId: childThreadId,
         projectId: input.parentThread.projectId,
-        title: `[hidden] ${input.title}`,
+        title: childReviewThreadInitialTitle(input.title),
         ...(input.parentThread.externalContext !== null
           ? { externalContext: input.parentThread.externalContext }
           : {}),
@@ -1420,6 +1424,7 @@ const make = Effect.gen(function* () {
           modelSelection: input.parentThread.modelSelection,
           runtimeMode: input.parentThread.runtimeMode,
           interactionMode: input.interactionMode ?? input.parentThread.interactionMode,
+          titleSeed: childReviewThreadInitialTitle(input.title),
           createdAt: input.createdAt,
         });
         const completed = yield* waitForChildTurn(childThreadId).pipe(
