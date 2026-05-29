@@ -487,6 +487,7 @@ function OpenCommandPaletteDialog() {
   const [addProjectOnshapeFlow, setAddProjectOnshapeFlow] = useState<AddProjectOnshapeFlow | null>(
     null,
   );
+  const addProjectOnshapeRequestIdRef = useRef(0);
   const [isOnshapePending, setIsOnshapePending] = useState(false);
   const [isRemoteProjectLookingUp, setIsRemoteProjectLookingUp] = useState(false);
   const [isRemoteProjectCloning, setIsRemoteProjectCloning] = useState(false);
@@ -811,6 +812,9 @@ function OpenCommandPaletteDialog() {
 
   function popView(): void {
     setAddProjectCloneFlow(null);
+    setAddProjectOnshapeFlow(null);
+    addProjectOnshapeRequestIdRef.current += 1;
+    setIsOnshapePending(false);
     if (viewStack.length <= 1) {
       setAddProjectEnvironmentId(null);
     }
@@ -856,6 +860,8 @@ function OpenCommandPaletteDialog() {
   );
 
   const startAddProjectOnshape = useCallback((environmentId: EnvironmentId): void => {
+    const requestId = addProjectOnshapeRequestIdRef.current + 1;
+    addProjectOnshapeRequestIdRef.current = requestId;
     setAddProjectEnvironmentId(environmentId);
     setAddProjectCloneFlow(null);
     setAddProjectOnshapeFlow(null);
@@ -867,6 +873,7 @@ function OpenCommandPaletteDialog() {
 
     const api = readEnvironmentApi(environmentId);
     if (!api) {
+      if (addProjectOnshapeRequestIdRef.current !== requestId) return;
       setAddProjectOnshapeFlow({ step: "connection", environmentId });
       return;
     }
@@ -875,6 +882,7 @@ function OpenCommandPaletteDialog() {
     void api.onshape
       .listConnections()
       .then((result) => {
+        if (addProjectOnshapeRequestIdRef.current !== requestId) return;
         const connection = result.connections[0];
         setAddProjectOnshapeFlow(
           connection
@@ -883,6 +891,7 @@ function OpenCommandPaletteDialog() {
         );
       })
       .catch((error) => {
+        if (addProjectOnshapeRequestIdRef.current !== requestId) return;
         toastManager.add(
           stackedThreadToast({
             type: "error",
@@ -892,7 +901,10 @@ function OpenCommandPaletteDialog() {
         );
         setAddProjectOnshapeFlow({ step: "connection", environmentId });
       })
-      .finally(() => setIsOnshapePending(false));
+      .finally(() => {
+        if (addProjectOnshapeRequestIdRef.current !== requestId) return;
+        setIsOnshapePending(false);
+      });
   }, []);
 
   const openSourceControlSettings = useCallback(() => {
@@ -2027,7 +2039,7 @@ function OpenCommandPaletteDialog() {
               size="xs"
               tabIndex={-1}
               className={cn(
-                "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2",
+                "absolute inset-e-2.5 top-1/2 pe-1 ps-2 -translate-y-1/2 motion-safe:not-disabled:hover:-translate-y-1/2 motion-safe:not-disabled:active:-translate-y-1/2",
                 hasHighlightedBrowseItem ? "gap-1" : "gap-1.5",
               )}
               aria-label={`${submitActionLabel} (${addShortcutLabel})`}
