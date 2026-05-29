@@ -370,7 +370,7 @@ export default function CadPanel({
       review.status === "synthesizing",
   );
   const [regularCadAgentControlActive, setRegularCadAgentControlActive] = useState(false);
-  const cadAgentRequestResponderEnabled = !cadReviewInProgress || agentControlHost;
+  const cadAgentRequestResponderEnabled = true;
   const cadAgentControlActive = cadReviewInProgress || regularCadAgentControlActive;
   const cadUiStateKey =
     activeThread && activeThreadStarted

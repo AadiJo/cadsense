@@ -366,6 +366,38 @@ describe("CadPanel browser behavior", () => {
     queryClient.clear();
   });
 
+  it("answers CAD hierarchy requests while the visible thread has an active CAD review", async () => {
+    cadFrameUrl = delayedReadyFrameUrl();
+    threadReviews = [activeReview];
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await vi.waitFor(() => expect(cadHierarchyRequestHandler).toBeTypeOf("function"));
+
+    cadHierarchyRequestHandler?.({ requestId: "hierarchy-active-review", threadId });
+
+    await vi.waitFor(() => {
+      expect(uploadedCadHierarchies).toContainEqual({
+        requestId: "hierarchy-active-review",
+        components: [],
+      });
+    });
+
+    await screen.unmount();
+    queryClient.clear();
+  });
+
   it("replays the composite agent-controlled CAD state after the viewer loads", async () => {
     cadFrameUrl = delayedReadyFrameUrl();
     threadReviews = [activeReview];
