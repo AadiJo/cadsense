@@ -29,6 +29,15 @@ let cadHierarchyRequestHandler:
   | ((request: { readonly requestId: string; readonly threadId: string }) => void)
   | null = null;
 const uploadedCadHierarchies: unknown[] = [];
+let cadScreenshotRequestHandler:
+  | ((request: {
+      readonly requestId: string;
+      readonly threadId: string;
+      readonly view?: "front";
+      readonly fit: boolean;
+    }) => void)
+  | null = null;
+const uploadedCadScreenshots: unknown[] = [];
 
 const onshapeContext = {
   provider: "onshape" as const,
@@ -89,8 +98,18 @@ vi.mock("../environmentApi", () => ({
         uploadedCadHierarchies.push(input);
         return { components: [] };
       }),
-      onCadScreenshotRequest: vi.fn(() => () => undefined),
-      uploadCadScreenshot: vi.fn(async () => undefined),
+      onCadScreenshotRequest: vi.fn((handler) => {
+        cadScreenshotRequestHandler = handler;
+        return () => {
+          if (cadScreenshotRequestHandler === handler) {
+            cadScreenshotRequestHandler = null;
+          }
+        };
+      }),
+      uploadCadScreenshot: vi.fn(async (input) => {
+        uploadedCadScreenshots.push(input);
+        return { absolutePath: "C:\\cad\\shot.png", relativePath: "shot.png" };
+      }),
     },
   }),
 }));
@@ -209,6 +228,54 @@ function stalledAfterLoadFrameUrl(): string {
   return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
 }
 
+function screenshotFrameUrl(): string {
+  const html = String.raw`
+    <!doctype html>
+    <html>
+      <body>
+        <script>
+          window.addEventListener("message", (event) => {
+            if (event.data?.source !== "cadsense-cad-viewer-parent") return;
+            parent.postMessage({
+              source: "cad-test-frame-observation",
+              request: event.data
+            }, "*");
+            if (event.data?.type === "load-file-urls") {
+              parent.postMessage({
+                source: "cadsense-cad-viewer-frame",
+                type: "response",
+                requestId: event.data.requestId,
+                ok: true,
+                payload: {
+                  loadStats: {
+                    strategy: "three-3mf-direct-url",
+                    bytes: 1024,
+                    fetchMs: 0,
+                    importMs: 1,
+                    totalMs: 1
+                  }
+                }
+              }, "*");
+              return;
+            }
+            if (event.data?.type === "set-view" || event.data?.type === "capture") {
+              parent.postMessage({
+                source: "cadsense-cad-viewer-frame",
+                type: "response",
+                requestId: event.data.requestId,
+                ok: true,
+                payload: event.data.type === "capture" ? { pngBase64: "cG5n" } : {}
+              }, "*");
+            }
+          });
+          parent.postMessage({ source: "cadsense-cad-viewer-frame", type: "ready" }, "*");
+        </script>
+      </body>
+    </html>
+  `;
+  return `data:text/html;charset=utf-8,${encodeURIComponent(html)}`;
+}
+
 describe("CadPanel browser behavior", () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -216,6 +283,8 @@ describe("CadPanel browser behavior", () => {
     cadViewCommandHandler = null;
     cadHierarchyRequestHandler = null;
     uploadedCadHierarchies.length = 0;
+    cadScreenshotRequestHandler = null;
+    uploadedCadScreenshots.length = 0;
     threadReviews = [];
     useUiStateStore.setState({
       cadExplodedByThreadId: {},
@@ -394,6 +463,68 @@ describe("CadPanel browser behavior", () => {
       });
     });
 
+    await screen.unmount();
+    queryClient.clear();
+  });
+
+  it("applies requested screenshot views before capturing the current CAD canvas", async () => {
+    cadFrameUrl = screenshotFrameUrl();
+    const onObservedRequest = (event: MessageEvent<unknown>) => {
+      if (
+        typeof event.data === "object" &&
+        event.data !== null &&
+        "source" in event.data &&
+        event.data.source === "cad-test-frame-observation" &&
+        "request" in event.data
+      ) {
+        observedFrameRequests.push(event.data.request);
+      }
+    };
+    window.addEventListener("message", onObservedRequest);
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await vi.waitFor(() => expect(cadScreenshotRequestHandler).toBeTypeOf("function"));
+
+    cadScreenshotRequestHandler?.({
+      requestId: "screenshot-front",
+      threadId,
+      view: "front",
+      fit: true,
+    });
+
+    await vi.waitFor(() => {
+      const captureRequests = observedFrameRequests.filter(
+        (request): request is { readonly type: string; readonly view?: string } =>
+          typeof request === "object" &&
+          request !== null &&
+          "type" in request &&
+          request.type === "capture",
+      );
+      expect(uploadedCadScreenshots).toContainEqual({
+        requestId: "screenshot-front",
+        pngBase64: "cG5n",
+      });
+      expect(observedFrameRequests).toContainEqual(
+        expect.objectContaining({ type: "set-view", view: "front", fit: true }),
+      );
+      expect(captureRequests).toHaveLength(1);
+      expect(captureRequests[0]).not.toHaveProperty("view");
+    });
+
+    window.removeEventListener("message", onObservedRequest);
     await screen.unmount();
     queryClient.clear();
   });
