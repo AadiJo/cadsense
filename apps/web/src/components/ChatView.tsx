@@ -4033,6 +4033,14 @@ export default function ChatView(props: ChatViewProps) {
     }
     void onRevertToTurnCountRef.current(targetTurnCount);
   }, []);
+  const activeProjectCadScopeKey = activeProject
+    ? `${activeProject.environmentId}:${activeProject.id}`
+    : null;
+  const localCadFileCount = useUiStateStore((store) =>
+    activeProjectCadScopeKey
+      ? (store.localCadFilesByScopeKey[activeProjectCadScopeKey]?.length ?? 0)
+      : 0,
+  );
 
   // Empty state: no active thread
   if (!activeThread) {
@@ -4042,7 +4050,8 @@ export default function ChatView(props: ChatViewProps) {
   const canGenerateCadReview = Boolean(
     activeThread &&
     (activeThread.externalContext?.provider === "onshape" ||
-      activeProject?.externalContext?.provider === "onshape"),
+      activeProject?.externalContext?.provider === "onshape" ||
+      localCadFileCount > 0),
   );
   const cadReviewOverlaySteps = useMemo(
     () => deriveCadReviewOverlaySteps(activeThread.reviews ?? [], cadReviewWorkLogEntries),
@@ -4079,10 +4088,7 @@ export default function ChatView(props: ChatViewProps) {
       return false;
     }
     if (!canGenerateCadReview) {
-      setThreadError(
-        activeThread.id,
-        "CAD review requires an Onshape CAD context for this project or thread.",
-      );
+      setThreadError(activeThread.id, "Select a CAD file before starting a review.");
       return false;
     }
     const reviewThreadId = activeThread.id;

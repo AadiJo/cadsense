@@ -43,6 +43,7 @@ export interface UiThreadState {
   cadExplodedByThreadId: Record<string, boolean>;
   cadZoomToFitRequestByThreadId: Record<string, number>;
   cadAgentViewStateByThreadId: Record<string, CadAgentViewState>;
+  localCadFilesByScopeKey: Record<string, readonly LocalCadFile[]>;
 }
 
 export interface UiEndpointState {
@@ -50,6 +51,13 @@ export interface UiEndpointState {
 }
 
 export interface UiState extends UiProjectState, UiThreadState, UiEndpointState {}
+
+export interface LocalCadFile {
+  readonly relativePath: string;
+  readonly url: string;
+  readonly isPreferred: boolean;
+  readonly sizeBytes?: number;
+}
 
 export interface SyncProjectInput {
   /** Physical project key (env + cwd). Used for manual sort order. */
@@ -72,6 +80,7 @@ const initialState: UiState = {
   cadExplodedByThreadId: {},
   cadZoomToFitRequestByThreadId: {},
   cadAgentViewStateByThreadId: {},
+  localCadFilesByScopeKey: {},
   defaultAdvertisedEndpointKey: null,
 };
 
@@ -647,6 +656,8 @@ interface UiStateStore extends UiState {
   setCadExploded: (threadId: string, exploded: boolean) => void;
   recordCadAgentViewCommand: (threadId: string, command: CadViewCommand) => void;
   requestCadZoomToFit: (threadId: string) => void;
+  setLocalCadFiles: (scopeKey: string, files: readonly LocalCadFile[]) => void;
+  clearLocalCadFiles: (scopeKey: string) => void;
   setDefaultAdvertisedEndpointKey: (key: string | null) => void;
   toggleProject: (projectId: string) => void;
   setProjectExpanded: (projectId: string, expanded: boolean) => void;
@@ -722,6 +733,26 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
         [threadId]: (state.cadZoomToFitRequestByThreadId[threadId] ?? 0) + 1,
       },
     })),
+  setLocalCadFiles: (scopeKey, files) =>
+    set((state) => ({
+      ...state,
+      localCadFilesByScopeKey: {
+        ...state.localCadFilesByScopeKey,
+        [scopeKey]: files,
+      },
+    })),
+  clearLocalCadFiles: (scopeKey) =>
+    set((state) => {
+      if (!(scopeKey in state.localCadFilesByScopeKey)) {
+        return state;
+      }
+      const nextFiles = { ...state.localCadFilesByScopeKey };
+      delete nextFiles[scopeKey];
+      return {
+        ...state,
+        localCadFilesByScopeKey: nextFiles,
+      };
+    }),
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),

@@ -667,25 +667,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.review.generate": {
-      const thread = yield* requireThreadNotArchived({
+      yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
-      const project = yield* requireProject({
-        readModel,
-        command,
-        projectId: thread.projectId,
-      });
-      if (
-        thread.externalContext?.provider !== "onshape" &&
-        project.externalContext?.provider !== "onshape"
-      ) {
-        return yield* new OrchestrationCommandInvariantError({
-          commandType: command.type,
-          detail: `Thread '${command.threadId}' does not have CAD context.`,
-        });
-      }
       return {
         ...withEventBase({
           aggregateKind: "thread",

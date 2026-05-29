@@ -153,6 +153,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
   submitMode: ComposerSubmitMode;
+  canGenerateCadReview: boolean;
   showSubmitModeToggle: boolean;
   showPlanToggle: boolean;
   planSidebarLabel: string;
@@ -171,6 +172,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
       {props.showSubmitModeToggle ? (
         <ComposerSubmitModeToggle
           submitMode={props.submitMode}
+          canGenerateCadReview={props.canGenerateCadReview}
           onSubmitModeChange={props.onSubmitModeChange}
         />
       ) : null}
@@ -205,6 +207,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
 
 const ComposerSubmitModeToggle = memo(function ComposerSubmitModeToggle(props: {
   submitMode: ComposerSubmitMode;
+  canGenerateCadReview: boolean;
   onSubmitModeChange: (mode: ComposerSubmitMode) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -240,13 +243,35 @@ const ComposerSubmitModeToggle = memo(function ComposerSubmitModeToggle(props: {
           <MenuRadioGroup
             value={props.submitMode}
             onValueChange={(value) => {
+              if (value === "review" && !props.canGenerateCadReview) {
+                return;
+              }
               if (value === "ask" || value === "review") {
                 props.onSubmitModeChange(value);
               }
             }}
           >
             <MenuRadioItem value="ask">Ask</MenuRadioItem>
-            <MenuRadioItem value="review">Review</MenuRadioItem>
+            {props.canGenerateCadReview ? (
+              <MenuRadioItem value="review">Review</MenuRadioItem>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuRadioItem
+                      value="review"
+                      disabled
+                      className="data-disabled:pointer-events-auto data-disabled:cursor-not-allowed"
+                    />
+                  }
+                >
+                  Review
+                </TooltipTrigger>
+                <TooltipPopup side="right" className="max-w-56 whitespace-normal">
+                  Select a CAD file before starting a review.
+                </TooltipPopup>
+              </Tooltip>
+            )}
           </MenuRadioGroup>
         </MenuPopup>
       </Menu>
@@ -2394,6 +2419,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     />
                     <ComposerSubmitModeToggle
                       submitMode={submitMode}
+                      canGenerateCadReview={canGenerateCadReview}
                       onSubmitModeChange={handleSubmitModeChange}
                     />
                   </>
@@ -2411,6 +2437,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       runtimeMode={runtimeMode}
                       submitMode={submitMode}
                       showSubmitModeToggle
+                      canGenerateCadReview={canGenerateCadReview}
                       showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}

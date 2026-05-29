@@ -45,7 +45,7 @@ import { selectProjectByRef, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { threadHasStarted } from "../threadLifecycle";
 import { resolveThreadRouteRef } from "../threadRoutes";
-import { useUiStateStore } from "../uiStateStore";
+import { useUiStateStore, type LocalCadFile } from "../uiStateStore";
 import { cn } from "../lib/utils";
 import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
 import {
@@ -148,6 +148,7 @@ const CAD_FULLSCREEN_BEACON_RELEASE_MS = CAD_FULLSCREEN_TRANSITION_MS * 3;
 const CAD_AGENT_CONTROL_IDLE_TIMEOUT_MS = 2_000;
 const CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD = 2;
 const CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS = 90_000;
+const EMPTY_LOCAL_CAD_FILES: readonly LocalCadFile[] = [];
 
 interface CadAgentControlOverlayRect {
   readonly left: number;
@@ -433,7 +434,6 @@ export default function CadPanel({
   const [fullscreenMistVisible, setFullscreenMistVisible] = useState(false);
   const [fullscreenMistOpaque, setFullscreenMistOpaque] = useState(false);
   const [components, setComponents] = useState<ReadonlyArray<CadViewerFrameComponentNode>>([]);
-  const [localCadFiles, setLocalCadFiles] = useState<ReadonlyArray<OnshapeSyncedCadFile>>([]);
   const [localCadFileError, setLocalCadFileError] = useState<string | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [agentControlOverlayRect, setAgentControlOverlayRect] =
@@ -461,6 +461,12 @@ export default function CadPanel({
   const projectCadScopeKey = activeProject
     ? `${activeProject.environmentId}:${activeProject.id}`
     : (activeThread?.projectId ?? draftSession?.projectId ?? null);
+  const localCadFiles = useUiStateStore((store) =>
+    projectCadScopeKey
+      ? (store.localCadFilesByScopeKey[projectCadScopeKey] ?? EMPTY_LOCAL_CAD_FILES)
+      : EMPTY_LOCAL_CAD_FILES,
+  );
+  const setLocalCadFiles = useUiStateStore((store) => store.setLocalCadFiles);
 
   useEffect(() => {
     lastRegularCadToolActivityIdRef.current = null;
@@ -555,50 +561,52 @@ export default function CadPanel({
   }, [filesQuery.data?.files, isOnshapeProject, localCadFiles]);
   modelFilesRef.current = modelFiles;
 
-  const handleSelectLocalCadFiles = useCallback((files: ReadonlyArray<File>) => {
-    const primaryFile = files[0];
-    if (
-      !primaryFile ||
-      !isSupportedCadModelPath(primaryFile.name) ||
-      isObjPreviewCompanionPath(primaryFile.name)
-    ) {
-      setLocalCadFileError("Choose a supported CAD file such as 3MF, STL, STEP, OBJ, or GLB.");
-      return;
-    }
-    const nextFiles = files.map((file, index) => ({
-      relativePath: file.name,
-      url: URL.createObjectURL(file),
-      isPreferred: index === 0,
-      sizeBytes: file.size,
-    }));
-    setLocalCadFiles((previous) => {
-      for (const file of previous) {
+  const handleSelectLocalCadFiles = useCallback(
+    (files: ReadonlyArray<File>) => {
+      const primaryFile = files[0];
+      if (
+        !primaryFile ||
+        !projectCadScopeKey ||
+        !isSupportedCadModelPath(primaryFile.name) ||
+        isObjPreviewCompanionPath(primaryFile.name)
+      ) {
+        setLocalCadFileError("Choose a supported CAD file such as 3MF, STL, STEP, OBJ, or GLB.");
+        return;
+      }
+      const nextFiles: LocalCadFile[] = files.map((file, index) => ({
+        relativePath: file.name,
+        url: URL.createObjectURL(file),
+        isPreferred: index === 0,
+        sizeBytes: file.size,
+      }));
+      for (const file of localCadFiles) {
         if (file.url.startsWith("blob:")) {
           URL.revokeObjectURL(file.url);
         }
       }
-      return nextFiles;
-    });
-    setLocalCadFileError(null);
-    if (primaryFile.name.toLowerCase().endsWith(".obj")) {
-      void primaryFile
-        .slice(0, OBJ_MTLLIB_SCAN_MAX_BYTES)
-        .text()
-        .then((source) => {
-          const selectedNames = new Set(files.map((file) => file.name.toLowerCase()));
-          const missingMaterials = parseObjMtllibFilenames(source).filter(
-            (name) =>
-              !selectedNames.has(name.replaceAll("\\", "/").split("/").pop()!.toLowerCase()),
-          );
-          if (missingMaterials.length > 0) {
-            setLocalCadFileError(
-              `This OBJ references ${missingMaterials.slice(0, 3).join(", ")}. Select the OBJ together with its MTL and texture files to preserve colors.`,
+      setLocalCadFiles(projectCadScopeKey, nextFiles);
+      setLocalCadFileError(null);
+      if (primaryFile.name.toLowerCase().endsWith(".obj")) {
+        void primaryFile
+          .slice(0, OBJ_MTLLIB_SCAN_MAX_BYTES)
+          .text()
+          .then((source) => {
+            const selectedNames = new Set(files.map((file) => file.name.toLowerCase()));
+            const missingMaterials = parseObjMtllibFilenames(source).filter(
+              (name) =>
+                !selectedNames.has(name.replaceAll("\\", "/").split("/").pop()!.toLowerCase()),
             );
-          }
-        })
-        .catch(() => undefined);
-    }
-  }, []);
+            if (missingMaterials.length > 0) {
+              setLocalCadFileError(
+                `This OBJ references ${missingMaterials.slice(0, 3).join(", ")}. Select the OBJ together with its MTL and texture files to preserve colors.`,
+              );
+            }
+          })
+          .catch(() => undefined);
+      }
+    },
+    [localCadFiles, projectCadScopeKey, setLocalCadFiles],
+  );
 
   const modelFileIdentityKey = useMemo(
     () => modelFiles.map((file) => `${file.url}:${file.sizeBytes ?? "unknown"}`).join("\0"),
@@ -934,27 +942,8 @@ export default function CadPanel({
   );
 
   useEffect(() => {
-    setLocalCadFiles((previous) => {
-      for (const file of previous) {
-        if (file.url.startsWith("blob:")) {
-          URL.revokeObjectURL(file.url);
-        }
-      }
-      return [];
-    });
     setLocalCadFileError(null);
   }, [projectCadScopeKey]);
-
-  useEffect(
-    () => () => {
-      for (const file of localCadFiles) {
-        if (file.url.startsWith("blob:")) {
-          URL.revokeObjectURL(file.url);
-        }
-      }
-    },
-    [localCadFiles],
-  );
 
   useEffect(() => {
     if (agentControlHost) {
