@@ -12,7 +12,7 @@ import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 
-const CAPTURE_TIMEOUT = Duration.seconds(45);
+const CAPTURE_TIMEOUT = Duration.seconds(120);
 export const MAX_SCREENSHOT_BYTES = 25 * 1024 * 1024;
 
 const cadScreenshotRequestPubSub = Effect.runSync(PubSub.unbounded<CadScreenshotBrowserRequest>());

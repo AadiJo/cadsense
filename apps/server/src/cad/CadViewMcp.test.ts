@@ -243,7 +243,9 @@ describe("CadViewMcp", () => {
         exportRoot: process.cwd(),
         fit: true,
       } as Parameters<typeof postCadScreenshotCapture>[0]);
-      await expect(capture).rejects.toThrow("timed out after 60 seconds");
+      await expect(capture).rejects.toThrow(
+        `timed out after ${Math.round(CAD_SCREENSHOT_HTTP_TIMEOUT_MS / 1000)} seconds`,
+      );
       expect(timeoutSpy).toHaveBeenCalledWith(CAD_SCREENSHOT_HTTP_TIMEOUT_MS);
     } finally {
       vi.restoreAllMocks();

@@ -32,7 +32,7 @@ export const CAD_VIEW_MCP_TOKEN_HEADER = "x-cadsense-cad-view-token";
 export const CAD_VIEW_MCP_TOKEN = randomUUID();
 export const CAD_VIEW_EXPORT_ROOT_ENV = "CADSENSE_CAD_VIEW_EXPORT_ROOT";
 export const CAD_HIERARCHY_HTTP_TIMEOUT_MS = 15_000;
-export const CAD_SCREENSHOT_HTTP_TIMEOUT_MS = 60_000;
+export const CAD_SCREENSHOT_HTTP_TIMEOUT_MS = 135_000;
 
 const CAD_VIEW_VALUES = [
   "top",

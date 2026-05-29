@@ -147,8 +147,7 @@ const CAD_FULLSCREEN_TRANSITION_MS = 260;
 const CAD_FULLSCREEN_BEACON_RELEASE_MS = CAD_FULLSCREEN_TRANSITION_MS * 3;
 const CAD_AGENT_CONTROL_IDLE_TIMEOUT_MS = 2_000;
 const CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD = 2;
-const CAD_AGENT_VIEW_COMMAND_TIMEOUT_MS = 5_000;
-const CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS = 40_000;
+const CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS = 90_000;
 
 interface CadAgentControlOverlayRect {
   readonly left: number;
@@ -1143,16 +1142,10 @@ export default function CadPanel({
             return;
           }
 
-          if (req.view) {
-            await postFrameRequest(
-              { type: "set-view", view: req.view, fit: req.fit },
-              CAD_AGENT_VIEW_COMMAND_TIMEOUT_MS,
-            );
-          }
-
           const result = await postFrameRequest(
             {
               type: "capture",
+              ...(req.view ? { view: req.view } : {}),
               fit: req.fit,
             },
             CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS,

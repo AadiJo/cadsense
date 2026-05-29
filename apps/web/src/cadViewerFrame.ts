@@ -107,6 +107,7 @@ const ZOOM_TO_FIT_VIEWPORT_FILL = 1.3;
 const ZOOM_TO_FIT_ANIMATION_MS = 240;
 const MODEL_REVEAL_TRANSITION = "opacity 300ms ease-out";
 const COMPONENT_ID_KEY = "cadSenseComponentId";
+const CAD_SCREENSHOT_MAX_DIMENSION = 1_400;
 
 function postToParent(message: CadViewerFrameResponseInput): void {
   window.parent.postMessage({ source: CAD_VIEWER_FRAME_SOURCE, ...message }, "*");
@@ -1348,9 +1349,43 @@ function getLoadedThreeViewer(): ThreeViewerState {
   return threeViewerRef;
 }
 
+function constrainedCaptureSize(input: {
+  readonly width: number;
+  readonly height: number;
+  readonly maxDimension?: number;
+}): { readonly width: number; readonly height: number } {
+  const maxDimension = input.maxDimension ?? CAD_SCREENSHOT_MAX_DIMENSION;
+  const scale = Math.min(1, maxDimension / Math.max(input.width, input.height));
+  return {
+    width: Math.max(1, Math.round(input.width * scale)),
+    height: Math.max(1, Math.round(input.height * scale)),
+  };
+}
+
+function downsampleCanvasForCapture(canvas: HTMLCanvasElement): HTMLCanvasElement {
+  const targetSize = constrainedCaptureSize({
+    width: canvas.width,
+    height: canvas.height,
+  });
+  if (targetSize.width === canvas.width && targetSize.height === canvas.height) {
+    return canvas;
+  }
+
+  const target = document.createElement("canvas");
+  target.width = targetSize.width;
+  target.height = targetSize.height;
+  const context = target.getContext("2d");
+  if (!context) {
+    return canvas;
+  }
+  context.drawImage(canvas, 0, 0, targetSize.width, targetSize.height);
+  return target;
+}
+
 function canvasToPngBase64(canvas: HTMLCanvasElement): Promise<string> {
+  const captureCanvas = downsampleCanvasForCapture(canvas);
   return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
+    captureCanvas.toBlob((blob) => {
       if (!blob) {
         reject(new Error("CAD canvas did not produce a PNG blob."));
         return;
@@ -1404,8 +1439,10 @@ async function capturePngBase64(input: {
 
   const viewer = embeddedViewer.GetViewer();
   const size = viewer.GetCanvasSize();
-  const width = Math.max(1, Math.round(size.width));
-  const height = Math.max(1, Math.round(size.height));
+  const { width, height } = constrainedCaptureSize({
+    width: Math.max(1, Math.round(size.width)),
+    height: Math.max(1, Math.round(size.height)),
+  });
   const capture = viewer as unknown as {
     GetImageAsDataUrl(width: number, height: number, isTransparent: boolean): string;
   };
