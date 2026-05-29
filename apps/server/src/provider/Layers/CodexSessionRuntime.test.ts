@@ -15,6 +15,7 @@ import {
   buildTurnStartParams,
   isRecoverableThreadResumeError,
   openCodexThread,
+  parseCodexRolloutTurnAbortedLine,
 } from "./CodexSessionRuntime.ts";
 const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 
@@ -192,6 +193,45 @@ describe("isRecoverableThreadResumeError", () => {
         }),
       ),
       false,
+    );
+  });
+});
+
+describe("parseCodexRolloutTurnAbortedLine", () => {
+  it("extracts turn abort events from Codex rollout JSONL", () => {
+    const parsed = parseCodexRolloutTurnAbortedLine(
+      JSON.stringify({
+        timestamp: "2026-05-29T20:05:55.075Z",
+        type: "event_msg",
+        payload: {
+          type: "turn_aborted",
+          turn_id: "turn-1",
+          reason: "interrupted",
+          duration_ms: 1147,
+        },
+      }),
+    );
+
+    assert.deepStrictEqual(parsed, {
+      timestampMs: Date.parse("2026-05-29T20:05:55.075Z"),
+      turnId: "turn-1",
+      reason: "interrupted",
+    });
+  });
+
+  it("ignores non-abort rollout lines", () => {
+    assert.equal(
+      parseCodexRolloutTurnAbortedLine(
+        JSON.stringify({
+          timestamp: "2026-05-29T20:05:53.939Z",
+          type: "event_msg",
+          payload: {
+            type: "task_started",
+            turn_id: "turn-1",
+          },
+        }),
+      ),
+      undefined,
     );
   });
 });

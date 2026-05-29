@@ -2047,7 +2047,7 @@ const make = Effect.gen(function* () {
         status:
           completedReports.length === 0
             ? "failed"
-            : failedReports.length > 0 || synthesisChild?.ok === false
+            : failedReports.length > 0
               ? "partial"
               : "completed",
         activePersona: undefined,
@@ -2059,21 +2059,18 @@ const make = Effect.gen(function* () {
           ...review.toolCallsByReviewer,
           synthesis: [...review.toolCallsByReviewer.synthesis, ...synthesisToolCalls],
         },
-        ...(synthesisChild?.ok === false
-          ? { error: `Synthesis failed: ${synthesisChild.error}` }
-          : {}),
         updatedAt,
       });
       yield* appendActivity({
         threadId: thread.id,
-        tone: synthesisChild?.ok === false ? "error" : "info",
+        tone: "info",
         kind:
           synthesisChild?.ok === false
-            ? "cad-review.synthesis.failed"
+            ? "cad-review.synthesis.fallback"
             : "cad-review.synthesis.completed",
         summary:
           synthesisChild?.ok === false
-            ? "CAD review synthesis failed; server fallback used"
+            ? "CAD review synthesis agent failed; server fallback completed"
             : "CAD review synthesis completed",
         payload: {
           reviewRunId: review.id,

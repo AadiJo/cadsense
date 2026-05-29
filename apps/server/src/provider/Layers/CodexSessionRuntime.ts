@@ -17,9 +17,12 @@ import {
   TurnId,
 } from "@cadsense/contracts";
 import { normalizeModelSlug } from "@cadsense/shared/model";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -230,6 +233,12 @@ interface PendingUserInput {
   readonly answers: Deferred.Deferred<ProviderUserInputAnswers>;
 }
 
+interface CodexRolloutTurnAborted {
+  readonly timestampMs: number | undefined;
+  readonly turnId: string;
+  readonly reason: string;
+}
+
 type CodexServerNotification = {
   readonly [M in CodexRpc.ServerNotificationMethod]: {
     readonly method: M;
@@ -256,6 +265,59 @@ function normalizeCodexModelSlug(
     return preferredId;
   }
   return normalized;
+}
+
+export function parseCodexRolloutTurnAbortedLine(
+  line: string,
+): CodexRolloutTurnAborted | undefined {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+
+  let record: unknown;
+  try {
+    record = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+
+  if (typeof record !== "object" || record === null) {
+    return undefined;
+  }
+  const topLevel = record as {
+    readonly timestamp?: unknown;
+    readonly type?: unknown;
+    readonly payload?: unknown;
+  };
+  if (topLevel.type !== "event_msg") {
+    return undefined;
+  }
+  const payload = topLevel.payload;
+  if (typeof payload !== "object" || payload === null) {
+    return undefined;
+  }
+  const event = payload as {
+    readonly type?: unknown;
+    readonly turn_id?: unknown;
+    readonly reason?: unknown;
+  };
+  if (event.type !== "turn_aborted" || typeof event.turn_id !== "string") {
+    return undefined;
+  }
+
+  const reason =
+    typeof event.reason === "string" && event.reason.trim().length > 0
+      ? event.reason.trim()
+      : "interrupted";
+  const timestampMs =
+    typeof topLevel.timestamp === "string" ? Date.parse(topLevel.timestamp) : Number.NaN;
+
+  return {
+    timestampMs: Number.isFinite(timestampMs) ? timestampMs : undefined,
+    turnId: event.turn_id,
+    reason,
+  };
 }
 
 function readResumeCursorThreadId(
@@ -709,10 +771,11 @@ export const makeCodexSessionRuntime = (
 ): Effect.Effect<
   CodexSessionRuntimeShape,
   CodexErrors.CodexAppServerError,
-  ChildProcessSpawner.ChildProcessSpawner | Scope.Scope
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem | Scope.Scope
 > =>
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const fileSystem = yield* FileSystem.FileSystem;
     const runtimeScope = yield* Scope.Scope;
     const events = yield* Queue.unbounded<ProviderEvent>();
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
@@ -720,6 +783,8 @@ export const makeCodexSessionRuntime = (
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
     const collabReceiverTurnsRef = yield* Ref.make(new Map<string, TurnId>());
     const closedRef = yield* Ref.make(false);
+    const watchedRolloutPathsRef = yield* Ref.make(new Set<string>());
+    const terminalTurnIdsRef = yield* Ref.make(new Set<string>());
 
     // `~` is not shell-expanded when env vars are set via
     // `child_process.spawn`; `expandHomePath` lets a configured
@@ -792,6 +857,114 @@ export const makeCodexSessionRuntime = (
         threadId: options.threadId,
         method,
         message,
+      });
+
+    const markTerminalTurn = (turnId: string) =>
+      Ref.update(terminalTurnIdsRef, (current) => {
+        const next = new Set(current);
+        next.add(turnId);
+        return next;
+      });
+
+    const hasTerminalTurn = (turnId: string) =>
+      Effect.map(Ref.get(terminalTurnIdsRef), (current) => current.has(turnId));
+
+    const emitRolloutTurnAborted = (aborted: CodexRolloutTurnAborted) =>
+      Effect.gen(function* () {
+        if (yield* hasTerminalTurn(aborted.turnId)) {
+          return;
+        }
+
+        const session = yield* Ref.get(sessionRef);
+        const activeTurnId = session.activeTurnId ? String(session.activeTurnId) : undefined;
+        const shouldApplyToSession =
+          session.status === "running" &&
+          (activeTurnId === undefined || activeTurnId === aborted.turnId);
+        if (!shouldApplyToSession) {
+          return;
+        }
+
+        yield* markTerminalTurn(aborted.turnId);
+        yield* updateSession(sessionRef, {
+          status: "ready",
+          activeTurnId: undefined,
+          lastError: aborted.reason,
+        });
+        yield* emitEvent({
+          kind: "notification",
+          threadId: options.threadId,
+          method: "turn/aborted",
+          turnId: TurnId.make(aborted.turnId),
+          message: aborted.reason,
+          payload: {
+            turnId: aborted.turnId,
+            reason: aborted.reason,
+          },
+        });
+      });
+
+    const watchCodexRolloutLogForAborts = (rolloutPath: string) =>
+      Effect.gen(function* () {
+        let offset = 0;
+        let remainder = "";
+        const startedAtMs = yield* Clock.currentTimeMillis;
+
+        while (!(yield* Ref.get(closedRef))) {
+          const text = yield* fileSystem
+            .readFileString(rolloutPath)
+            .pipe(Effect.catch(() => Effect.succeed("")));
+          if (text.length < offset) {
+            offset = 0;
+            remainder = "";
+          }
+          const chunkText = text.slice(offset);
+          offset = text.length;
+
+          if (chunkText.length > 0) {
+            const combined = remainder + chunkText;
+            const lines = combined.split("\n");
+            remainder = lines.pop() ?? "";
+            for (const line of lines) {
+              const aborted = parseCodexRolloutTurnAbortedLine(line);
+              if (!aborted) {
+                continue;
+              }
+              if (aborted.timestampMs !== undefined && aborted.timestampMs < startedAtMs - 5_000) {
+                continue;
+              }
+              yield* emitRolloutTurnAborted(aborted);
+            }
+          }
+
+          yield* Effect.sleep("1 second");
+        }
+      });
+
+    const startCodexRolloutWatcher = (rolloutPath: string | undefined | null) =>
+      Effect.gen(function* () {
+        if (!rolloutPath) {
+          return;
+        }
+        const shouldStart = yield* Ref.modify(watchedRolloutPathsRef, (current) => {
+          if (current.has(rolloutPath)) {
+            return [false, current] as const;
+          }
+          const next = new Set(current);
+          next.add(rolloutPath);
+          return [true, next] as const;
+        });
+        if (!shouldStart) {
+          return;
+        }
+        yield* watchCodexRolloutLogForAborts(rolloutPath).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("codex rollout abort watcher stopped", {
+              rolloutPath,
+              cause: Cause.pretty(cause),
+            }),
+          ),
+          Effect.forkIn(runtimeScope),
+        );
       });
 
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
@@ -903,7 +1076,7 @@ export const makeCodexSessionRuntime = (
           }
           return updateSession(sessionRef, {
             resumeCursor: { threadId: payload.thread.id },
-          });
+          }).pipe(Effect.andThen(startCodexRolloutWatcher(payload.thread.path)));
         }),
       ),
     );
@@ -924,20 +1097,23 @@ export const makeCodexSessionRuntime = (
 
     yield* client.handleServerNotification("turn/completed", (payload) =>
       currentSessionProviderThreadId.pipe(
-        Effect.flatMap((providerThreadId) => {
-          if (providerThreadId && payload.threadId !== providerThreadId) {
-            return Effect.void;
-          }
-          const lastError =
-            payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
-              ? payload.turn.error.message
-              : undefined;
-          return updateSession(sessionRef, {
-            status: payload.turn.status === "failed" ? "error" : "ready",
-            activeTurnId: undefined,
-            ...(lastError ? { lastError } : {}),
-          });
-        }),
+        Effect.flatMap((providerThreadId) =>
+          Effect.gen(function* () {
+            if (providerThreadId && payload.threadId !== providerThreadId) {
+              return;
+            }
+            const lastError =
+              payload.turn.status === "failed" && "error" in payload.turn && payload.turn.error
+                ? payload.turn.error.message
+                : undefined;
+            yield* markTerminalTurn(payload.turn.id);
+            yield* updateSession(sessionRef, {
+              status: payload.turn.status === "failed" ? "error" : "ready",
+              activeTurnId: undefined,
+              ...(lastError ? { lastError } : {}),
+            });
+          }),
+        ),
       ),
     );
 
