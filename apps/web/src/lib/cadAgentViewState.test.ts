@@ -193,6 +193,25 @@ describe("cadAgentViewState", () => {
     expect(latestCadAgentViewState(older, newer)).toBe(newer);
   });
 
+  it("does not promote screenshot captures into the live CAD view state", () => {
+    const derived = deriveCadAgentViewStateForThread(
+      makeEnvironmentState([
+        activity("view-front", "2026-01-01T00:00:01.000Z", "set_cad_view", {
+          view: "front",
+          fit: true,
+        }),
+        activity("screenshot-right", "2026-01-01T00:00:02.000Z", "export_cad_screenshot", {
+          view: "right",
+          fit: true,
+        }),
+      ]),
+      makeParentThread(),
+    );
+
+    expect(derived?.viewCommand).toMatchObject({ type: "set-view", view: "front", fit: true });
+    expect(derived?.updatedAt).toBe("2026-01-01T00:00:01.000Z");
+  });
+
   it("summarizes the latest child reviewer activity for an active review", () => {
     const summaries = deriveCadReviewChildActivitySummaries(
       makeEnvironmentState([

@@ -119,7 +119,7 @@ function viewCommandFromToolActivity(
   if (!toolName || !args) {
     return undefined;
   }
-  if (toolName === "set_cad_view" || toolName === "export_cad_screenshot") {
+  if (toolName === "set_cad_view") {
     const view = cadView(args.view);
     if (!view) {
       return undefined;

@@ -1415,8 +1415,25 @@ async function capturePngBase64(input: {
   if (threeViewerRef) {
     const state = getLoadedThreeViewer();
     if (input.view) {
+      const previousPosition = state.camera.position.clone();
+      const previousUp = state.camera.up.clone();
+      const previousTarget = state.controls.target.clone();
+      const previousNear = state.camera.near;
+      const previousFar = state.camera.far;
+      const previousAspect = state.camera.aspect;
       applyThreeCadView(state, input.view, input.fit);
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      renderThreeViewer(state);
+      const pngBase64 = await canvasToPngBase64(state.renderer.domElement);
+      state.camera.position.copy(previousPosition);
+      state.camera.up.copy(previousUp);
+      state.camera.near = previousNear;
+      state.camera.far = previousFar;
+      state.camera.aspect = previousAspect;
+      state.camera.updateProjectionMatrix();
+      state.controls.target.copy(previousTarget);
+      state.controls.update();
+      renderThreeViewer(state);
+      return pngBase64;
     }
     renderThreeViewer(state);
     return canvasToPngBase64(state.renderer.domElement);

@@ -1112,16 +1112,6 @@ export default function CadPanel({
       if (cadRoutingThreadId && req.threadId !== cadRoutingThreadId) {
         return;
       }
-      if (req.view) {
-        recordCadAgentViewCommand(cadRoutingThreadId, {
-          commandId: `capture:${req.requestId}`,
-          type: "set-view",
-          threadId: req.threadId,
-          view: req.view,
-          fit: req.fit,
-          createdAt: new Date().toISOString(),
-        });
-      }
       const capture = async () => {
         try {
           // Wait up to 10 seconds for the frame to finish loading.
