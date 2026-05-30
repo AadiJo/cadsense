@@ -332,6 +332,15 @@ code {
   display: none;
 }
 
+.cad-fullscreen-active .scroll-to-bottom-control {
+  z-index: 0;
+  display: none;
+}
+
+.scroll-to-bottom-control > button {
+  animation: scroll-to-bottom-control-in 180ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 .chat-composer-shell {
   border-radius: 0.875rem;
   background: transparent;
@@ -694,6 +703,21 @@ label:has(> select#reasoning-effort) select {
   }
   to {
     transform: scaleX(0);
+  }
+}
+
+@keyframes scroll-to-bottom-control-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px) scale(0.96);
+  }
+  70% {
+    opacity: 1;
+    transform: translateY(-1px) scale(1.02);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 

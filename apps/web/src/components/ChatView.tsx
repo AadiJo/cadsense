@@ -2232,7 +2232,21 @@ export default function ChatView(props: ChatViewProps) {
   // thread switches.  LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.
   const showScrollDebouncer = useRef(
-    new Debouncer(() => setShowScrollToBottom(true), { wait: 150 }),
+    new Debouncer(
+      () => {
+        const scrollport = document.querySelector(".timeline-scrollport");
+        if (
+          scrollport instanceof HTMLElement &&
+          scrollport.scrollHeight - scrollport.scrollTop - scrollport.clientHeight <= 4
+        ) {
+          isAtEndRef.current = true;
+          setShowScrollToBottom(false);
+          return;
+        }
+        setShowScrollToBottom(true);
+      },
+      { wait: 150 },
+    ),
   );
   const onIsAtEndChange = useCallback((isAtEnd: boolean) => {
     if (isAtEndRef.current === isAtEnd) return;
@@ -3618,11 +3632,11 @@ export default function ChatView(props: ChatViewProps) {
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
             {showScrollToBottom && (
-              <div className="pointer-events-none absolute bottom-36 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5 sm:bottom-40">
+              <div className="scroll-to-bottom-control pointer-events-none absolute bottom-36 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5 sm:bottom-40">
                 <button
                   type="button"
                   onClick={() => scrollToEnd(true)}
-                  className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border/70 bg-background/92 px-3 py-1 text-muted-foreground text-xs shadow-sm transition-[background-color,color,transform] duration-180 ease-[var(--motion-ease-out)] hover:-translate-y-px hover:bg-background hover:text-foreground hover:cursor-pointer active:translate-y-0 dark:bg-background/88"
+                  className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border/80 bg-background/86 px-3 py-1 text-muted-foreground text-xs shadow-[0_12px_30px_-16px_rgb(0_0_0/0.85),0_1px_0_rgb(255_255_255/0.08)_inset] backdrop-blur-md backdrop-saturate-150 transition-[background-color,border-color,color,transform,box-shadow] duration-180 ease-[var(--motion-ease-out)] hover:-translate-y-px hover:border-border hover:bg-background/95 hover:text-foreground hover:cursor-pointer active:translate-y-0 dark:bg-background/82 dark:shadow-[0_12px_32px_-14px_rgb(0_0_0/0.95),0_1px_0_rgb(255_255_255/0.05)_inset]"
                 >
                   <ChevronDownIcon className="size-3.5" />
                   Scroll to bottom

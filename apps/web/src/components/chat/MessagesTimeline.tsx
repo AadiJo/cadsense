@@ -109,6 +109,12 @@ const TIMELINE_LIST_HEADER = <div className="h-3 sm:h-4" />;
 const TIMELINE_LIST_FOOTER = <div className="h-44 sm:h-48" />;
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
+interface TimelineScrollMetricsTarget {
+  readonly scrollHeight: number;
+  readonly scrollTop: number;
+  readonly clientHeight: number;
+}
+
 // ---------------------------------------------------------------------------
 // Props (public API)
 // ---------------------------------------------------------------------------
@@ -197,14 +203,24 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   );
   const rows = useStableRows(rawRows);
 
-  const handleScroll = useCallback(() => {
-    const state = listRef.current?.getState?.();
-    if (state) {
-      onIsAtEndChange(state.isAtEnd);
-    }
-  }, [listRef, onIsAtEndChange]);
+  const handleScroll = useCallback(
+    (event?: unknown) => {
+      const state = listRef.current?.getState?.();
+      const scrollElement = resolveTimelineScrollMetricsTarget(event);
+      if (hasTimelineScrollMetrics(scrollElement)) {
+        const distanceFromBottom =
+          scrollElement.scrollHeight - scrollElement.scrollTop - scrollElement.clientHeight;
+        onIsAtEndChange(distanceFromBottom <= 4 ? true : (state?.isAtEnd ?? false));
+        return;
+      }
+      if (state) {
+        onIsAtEndChange(state.isAtEnd);
+      }
+    },
+    [listRef, onIsAtEndChange],
+  );
 
-  const previousRowCountRef = useRef(rows.length);
+  const previousRowCountRef = useRef(0);
   useEffect(() => {
     const previousRowCount = previousRowCountRef.current;
     previousRowCountRef.current = rows.length;
@@ -303,6 +319,43 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     </TimelineRowCtx>
   );
 });
+
+function hasTimelineScrollMetrics(value: unknown): value is TimelineScrollMetricsTarget {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "scrollHeight" in value &&
+    "scrollTop" in value &&
+    "clientHeight" in value &&
+    typeof value.scrollHeight === "number" &&
+    typeof value.scrollTop === "number" &&
+    typeof value.clientHeight === "number"
+  );
+}
+
+function resolveTimelineScrollMetricsTarget(event: unknown): unknown {
+  const eventRecord =
+    typeof event === "object" && event !== null ? (event as Record<string, unknown>) : null;
+  const currentTarget = eventRecord?.currentTarget;
+  if (hasTimelineScrollMetrics(currentTarget)) {
+    return currentTarget;
+  }
+  const target = eventRecord?.target;
+  if (hasTimelineScrollMetrics(target)) {
+    return target;
+  }
+  const nativeEvent = eventRecord?.nativeEvent;
+  if (typeof nativeEvent === "object" && nativeEvent !== null) {
+    const nativeRecord = nativeEvent as Record<string, unknown>;
+    if (hasTimelineScrollMetrics(nativeRecord.target)) {
+      return nativeRecord.target;
+    }
+  }
+  if (typeof document === "undefined") {
+    return null;
+  }
+  return document.querySelector(".timeline-scrollport");
+}
 
 function keyExtractor(item: MessagesTimelineRow) {
   return item.id;

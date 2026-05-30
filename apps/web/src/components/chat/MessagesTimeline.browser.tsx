@@ -19,6 +19,7 @@ vi.mock("@legendapp/list/react", async () => {
     renderItem: (args: { item: { id: string } }) => React.ReactNode;
     ListHeaderComponent?: React.ReactNode;
     ListFooterComponent?: React.ReactNode;
+    onScroll?: React.UIEventHandler<HTMLDivElement>;
     ref?: React.Ref<LegendListRef>;
   }) {
     React.useImperativeHandle(
@@ -31,7 +32,7 @@ vi.mock("@legendapp/list/react", async () => {
     );
 
     return (
-      <div data-testid="legend-list">
+      <div data-testid="legend-list" onScroll={props.onScroll}>
         {props.ListHeaderComponent}
         {props.data.map((item) => (
           <div key={props.keyExtractor(item)}>{props.renderItem({ item })}</div>
@@ -190,6 +191,72 @@ describe("MessagesTimeline", () => {
       expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
       expect(scrollToEndSpy).toHaveBeenCalledWith({ animated: false });
       expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("snaps to the bottom when mounting an already loaded timeline", async () => {
+    const requestAnimationFrameSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback) => {
+        callback(0);
+        return 1;
+      });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
+
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[
+          {
+            id: "work-1",
+            kind: "work",
+            createdAt: "2026-04-13T12:00:00.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-04-13T12:00:00.000Z",
+              label: "thinking",
+              detail: "Inspecting repository state",
+              tone: "thinking",
+            },
+          },
+        ]}
+      />,
+    );
+
+    try {
+      await expect.element(page.getByText("Thinking - Inspecting repository state")).toBeVisible();
+      expect(props.onIsAtEndChange).toHaveBeenCalledWith(true);
+      expect(scrollToEndSpy).toHaveBeenCalledWith({ animated: false });
+      expect(requestAnimationFrameSpy).toHaveBeenCalled();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("reports at-end from scroll geometry when list state is stale", async () => {
+    getStateSpy.mockReturnValue({ isAtEnd: false });
+    const props = buildProps();
+    const screen = await render(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={[buildUserTimelineEntry(buildLongUserMessageText())]}
+      />,
+    );
+
+    try {
+      const scrollport = document.querySelector("[data-testid='legend-list']") as HTMLDivElement;
+      Object.defineProperties(scrollport, {
+        clientHeight: { configurable: true, value: 400 },
+        scrollHeight: { configurable: true, value: 1_200 },
+        scrollTop: { configurable: true, value: 800 },
+      });
+
+      scrollport.dispatchEvent(new Event("scroll", { bubbles: true }));
+
+      expect(props.onIsAtEndChange).toHaveBeenLastCalledWith(true);
     } finally {
       await screen.unmount();
     }
