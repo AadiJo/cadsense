@@ -219,4 +219,74 @@ describe("ChatMarkdown", () => {
       await screen.unmount();
     }
   });
+
+  it("renders mermaid code fences as diagrams", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={"```mermaid\ngraph LR\n  A[Start] --> B[Done]\n```"}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector(".chat-markdown-mermaid svg")).not.toBeNull();
+        },
+        { timeout: 20_000 },
+      );
+      expect(document.querySelector(".chat-markdown-shiki")).toBeNull();
+      expect(document.body.textContent).not.toContain("graph LR");
+      await expect.element(page.getByRole("button", { name: "Zoom in diagram" })).toBeVisible();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("zooms and resets rendered mermaid diagrams without rerendering the code block", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={"```mermaid\ngraph LR\n  A[Start] --> B[Done]\n```"}
+        cwd="/repo/project"
+      />,
+    );
+
+    try {
+      await vi.waitFor(
+        () => {
+          expect(document.querySelector(".chat-markdown-mermaid-canvas svg")).not.toBeNull();
+        },
+        { timeout: 20_000 },
+      );
+      const canvas = document.querySelector<HTMLElement>(".chat-markdown-mermaid-canvas");
+      expect(canvas).not.toBeNull();
+      expect(canvas?.style.transform).toContain("scale(1)");
+
+      await page.getByRole("button", { name: "Zoom in diagram" }).click();
+      expect(canvas?.style.transform).toContain("scale(1.2)");
+
+      await page.getByRole("button", { name: "Reset diagram view" }).click();
+      expect(canvas?.style.transform).toContain("scale(1)");
+      expect(document.querySelector(".chat-markdown-shiki")).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
+
+  it("keeps mermaid fences as plain code while streaming", async () => {
+    const screen = await render(
+      <ChatMarkdown
+        text={"```mermaid\ngraph LR\n  A[Start] --> B[Done]\n```"}
+        cwd="/repo/project"
+        isStreaming
+      />,
+    );
+
+    try {
+      await expect.element(page.getByText("graph LR")).toBeVisible();
+      expect(document.querySelector(".chat-markdown-mermaid svg")).toBeNull();
+    } finally {
+      await screen.unmount();
+    }
+  });
 });

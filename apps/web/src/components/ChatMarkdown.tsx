@@ -1,15 +1,18 @@
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
-import { CheckIcon, CopyIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, MinusIcon, PlusIcon, RotateCcwIcon } from "lucide-react";
 import type { ServerProviderSkill } from "@cadsense/contracts";
 import React, {
   Children,
   Suspense,
   type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
   isValidElement,
   use,
   useCallback,
   memo,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState,
@@ -69,13 +72,24 @@ interface ChatMarkdownProps {
 const EMPTY_MARKDOWN_SKILLS: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">> = [];
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
+const MERMAID_LANGUAGES = new Set(["mermaid", "mmd"]);
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
+const MAX_MERMAID_CACHE_ENTRIES = 100;
+const MAX_MERMAID_CACHE_MEMORY_BYTES = 10 * 1024 * 1024;
+const MERMAID_MIN_ZOOM = 0.5;
+const MERMAID_MAX_ZOOM = 3;
+const MERMAID_ZOOM_STEP = 0.2;
 const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
 );
+const mermaidSvgCache = new LRUCache<string>(
+  MAX_MERMAID_CACHE_ENTRIES,
+  MAX_MERMAID_CACHE_MEMORY_BYTES,
+);
 const highlighterPromiseCache = new Map<string, Promise<DiffsHighlighter>>();
+let mermaidPromise: Promise<typeof import("mermaid").default> | null = null;
 
 function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
@@ -137,8 +151,20 @@ function createHighlightCacheKey(code: string, language: string, themeName: Diff
   return `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
 }
 
+function createMermaidCacheKey(code: string, theme: "light" | "dark"): string {
+  return `${fnv1a32(code).toString(36)}:${code.length}:${theme}`;
+}
+
 function estimateHighlightedSize(html: string, code: string): number {
   return Math.max(html.length * 2, code.length * 3);
+}
+
+function estimateMermaidSvgSize(svg: string, code: string): number {
+  return Math.max(svg.length * 2, code.length * 3);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
@@ -160,6 +186,11 @@ function getHighlighterPromise(language: string): Promise<DiffsHighlighter> {
   });
   highlighterPromiseCache.set(language, promise);
   return promise;
+}
+
+function getMermaidPromise(): Promise<typeof import("mermaid").default> {
+  mermaidPromise ??= import("mermaid").then((module) => module.default);
+  return mermaidPromise;
 }
 
 function MarkdownCodeBlock({ code, children }: { code: string; children: ReactNode }) {
@@ -297,6 +328,195 @@ function UncachedShikiCodeBlock({
 
   return (
     <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlightedHtml }} />
+  );
+}
+
+interface MermaidCodeBlockProps {
+  code: string;
+  theme: "light" | "dark";
+  isStreaming: boolean;
+}
+
+function MermaidCodeBlock({ code, theme, isStreaming }: MermaidCodeBlockProps) {
+  const renderId = useId();
+  const panStateRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
+  const [svg, setSvg] = useState<string | null>(() => {
+    if (isStreaming) return null;
+    return mermaidSvgCache.get(createMermaidCacheKey(code, theme)) ?? null;
+  });
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [viewport, setViewport] = useState({ scale: 1, x: 0, y: 0 });
+  const normalizedRenderId = `chat-mermaid-${renderId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const canZoomOut = viewport.scale > MERMAID_MIN_ZOOM;
+  const canZoomIn = viewport.scale < MERMAID_MAX_ZOOM;
+  const hasViewportTransform = viewport.scale !== 1 || viewport.x !== 0 || viewport.y !== 0;
+
+  const updateScale = useCallback((delta: number) => {
+    setViewport((current) => ({
+      ...current,
+      scale: clampNumber(current.scale + delta, MERMAID_MIN_ZOOM, MERMAID_MAX_ZOOM),
+    }));
+  }, []);
+
+  const resetViewport = useCallback(() => {
+    panStateRef.current = null;
+    setViewport({ scale: 1, x: 0, y: 0 });
+  }, []);
+
+  const handleViewportWheel = useCallback(
+    (event: ReactWheelEvent<HTMLDivElement>) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const direction = event.deltaY > 0 ? -MERMAID_ZOOM_STEP : MERMAID_ZOOM_STEP;
+      updateScale(direction);
+    },
+    [updateScale],
+  );
+
+  const handleViewportPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    panStateRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+  }, []);
+
+  const handleViewportPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const panState = panStateRef.current;
+    if (!panState || panState.pointerId !== event.pointerId) return;
+    const deltaX = event.clientX - panState.x;
+    const deltaY = event.clientY - panState.y;
+    panStateRef.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    setViewport((current) => ({ ...current, x: current.x + deltaX, y: current.y + deltaY }));
+  }, []);
+
+  const stopViewportPan = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if (panStateRef.current?.pointerId === event.pointerId) {
+      panStateRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isStreaming) {
+      setSvg(null);
+      setErrorMessage(null);
+      return;
+    }
+
+    const cacheKey = createMermaidCacheKey(code, theme);
+    const cachedSvg = mermaidSvgCache.get(cacheKey);
+    if (cachedSvg != null) {
+      setSvg(cachedSvg);
+      setErrorMessage(null);
+      return;
+    }
+
+    let cancelled = false;
+    setSvg(null);
+    setErrorMessage(null);
+
+    void getMermaidPromise()
+      .then(async (mermaid) => {
+        mermaid.initialize({
+          startOnLoad: false,
+          securityLevel: "strict",
+          theme: theme === "dark" ? "dark" : "default",
+        });
+        const result = await mermaid.render(normalizedRenderId, code);
+        if (cancelled) return;
+        mermaidSvgCache.set(cacheKey, result.svg, estimateMermaidSvgSize(result.svg, code));
+        setSvg(result.svg);
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        const message =
+          error instanceof Error ? error.message : "Could not render Mermaid diagram.";
+        setErrorMessage(message);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [code, isStreaming, normalizedRenderId, theme]);
+
+  useEffect(() => {
+    resetViewport();
+  }, [code, resetViewport, theme]);
+
+  if (isStreaming) {
+    return (
+      <pre className="chat-markdown-streaming-code language-mermaid">
+        <code>{code}</code>
+      </pre>
+    );
+  }
+
+  if (errorMessage) {
+    return (
+      <div className="chat-markdown-mermaid-error" role="note">
+        <span>Mermaid diagram could not be rendered.</span>
+        <pre>
+          <code>{code}</code>
+        </pre>
+      </div>
+    );
+  }
+
+  if (!svg) {
+    return (
+      <div className="chat-markdown-mermaid-loading" role="status" aria-label="Rendering diagram" />
+    );
+  }
+
+  return (
+    <div className="chat-markdown-mermaid-shell">
+      <div className="chat-markdown-mermaid-toolbar" aria-label="Mermaid diagram controls">
+        <button
+          type="button"
+          className="chat-markdown-mermaid-tool-button"
+          onClick={() => updateScale(MERMAID_ZOOM_STEP)}
+          disabled={!canZoomIn}
+          title="Zoom in"
+          aria-label="Zoom in diagram"
+        >
+          <PlusIcon className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          className="chat-markdown-mermaid-tool-button"
+          onClick={() => updateScale(-MERMAID_ZOOM_STEP)}
+          disabled={!canZoomOut}
+          title="Zoom out"
+          aria-label="Zoom out diagram"
+        >
+          <MinusIcon className="size-3.5" />
+        </button>
+        <button
+          type="button"
+          className="chat-markdown-mermaid-tool-button"
+          onClick={resetViewport}
+          disabled={!hasViewportTransform}
+          title="Reset view"
+          aria-label="Reset diagram view"
+        >
+          <RotateCcwIcon className="size-3.5" />
+        </button>
+      </div>
+      <div
+        className="chat-markdown-mermaid"
+        onWheel={handleViewportWheel}
+        onPointerDown={handleViewportPointerDown}
+        onPointerMove={handleViewportPointerMove}
+        onPointerUp={stopViewportPan}
+        onPointerCancel={stopViewportPan}
+      >
+        <div
+          className="chat-markdown-mermaid-canvas"
+          style={{
+            transform: `translate3d(${viewport.x}px, ${viewport.y}px, 0) scale(${viewport.scale})`,
+          }}
+          dangerouslySetInnerHTML={{ __html: svg }}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -775,6 +995,19 @@ function ChatMarkdown({
         const codeBlock = extractCodeBlock(children);
         if (!codeBlock) {
           return <pre {...props}>{children}</pre>;
+        }
+        const language = extractFenceLanguage(codeBlock.className);
+
+        if (MERMAID_LANGUAGES.has(language)) {
+          return (
+            <MarkdownCodeBlock code={codeBlock.code}>
+              <MermaidCodeBlock
+                code={codeBlock.code}
+                theme={resolvedTheme}
+                isStreaming={isStreaming}
+              />
+            </MarkdownCodeBlock>
+          );
         }
 
         return (
