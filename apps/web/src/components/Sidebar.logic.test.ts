@@ -15,6 +15,7 @@ import {
   resolveProjectStatusIndicator,
   resolveSidebarNewThreadSeedContext,
   resolveSidebarNewThreadEnvMode,
+  resolveThreadRailStatusClassName,
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
@@ -637,6 +638,35 @@ describe("resolveThreadRowClassName", () => {
     const className = resolveThreadRowClassName({ isActive: true, isSelected: false });
     expect(className).toContain("bg-accent/85");
     expect(className).toContain("hover:bg-accent");
+  });
+});
+
+describe("resolveThreadRailStatusClassName", () => {
+  it("maps only working and reviewing statuses to sidebar rail colors", () => {
+    expect(
+      resolveThreadRailStatusClassName({
+        label: "Working",
+        colorClass: "text-sky-600",
+        dotClass: "bg-sky-500",
+        pulse: true,
+      }),
+    ).toContain("bg-sky-400");
+    expect(
+      resolveThreadRailStatusClassName({
+        label: "Reviewing",
+        colorClass: "text-yellow-600",
+        dotClass: "bg-yellow-500",
+        pulse: true,
+      }),
+    ).toContain("bg-yellow-400");
+    expect(
+      resolveThreadRailStatusClassName({
+        label: "Pending Approval",
+        colorClass: "text-amber-600",
+        dotClass: "bg-amber-500",
+        pulse: false,
+      }),
+    ).toBeNull();
   });
 });
 

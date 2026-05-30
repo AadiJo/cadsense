@@ -328,6 +328,18 @@ export function resolveThreadRowClassName(input: {
   return cn(baseClassName, "text-muted-foreground hover:bg-accent hover:text-foreground");
 }
 
+export function resolveThreadRailStatusClassName(status: ThreadStatusPill | null): string | null {
+  if (status?.label === "Working") {
+    return "bg-sky-400 dark:bg-sky-300";
+  }
+
+  if (status?.label === "Reviewing") {
+    return "bg-yellow-400 dark:bg-yellow-300";
+  }
+
+  return null;
+}
+
 export function resolveThreadStatusPill(input: {
   thread: ThreadStatusInput;
 }): ThreadStatusPill | null {
