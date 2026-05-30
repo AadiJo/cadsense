@@ -98,9 +98,11 @@ let explodedAnimationFrame = 0;
 let zoomToFitAnimationFrame = 0;
 const threeModelCache = new Map<string, CachedThreeModel>();
 const THREE_MODEL_CACHE_LIMIT = 3;
-const MATERIAL_DARKEN_FACTOR = 0.42;
+const MATERIAL_DARKEN_FACTOR_DARK = 0.42;
+const MATERIAL_DARKEN_FACTOR_LIGHT = 0.68;
 const MATERIAL_SATURATION_FACTOR = 1.25;
-const CANVAS_COLOR_GRADE_FILTER = "brightness(0.76) contrast(1.28) saturate(1.45)";
+const CANVAS_COLOR_GRADE_FILTER_DARK = "brightness(0.76) contrast(1.28) saturate(1.45)";
+const CANVAS_COLOR_GRADE_FILTER_LIGHT = "brightness(0.92) contrast(1.12) saturate(1.3)";
 const EXPLODED_DISTANCE_FACTOR = 0.18;
 const EXPLODED_ANIMATION_MS = 260;
 const ZOOM_TO_FIT_VIEWPORT_FILL = 1.3;
@@ -130,6 +132,10 @@ function preventMiddleMouseDefault(event: MouseEvent | PointerEvent): void {
   if (event.button === 1) {
     event.preventDefault();
   }
+}
+
+function isDarkTheme(): boolean {
+  return document.documentElement.classList.contains("dark");
 }
 
 function preventMiddlePanEvent(event: PointerEvent): void {
@@ -677,14 +683,14 @@ function cloneCachedThreeModel(model: CachedThreeModel): CachedThreeModel {
   };
 }
 
-function darkenColor(color: ThreeNamespace.Color): void {
-  color.multiplyScalar(MATERIAL_DARKEN_FACTOR);
+function tuneMaterialColor(color: ThreeNamespace.Color, darkTheme: boolean): void {
+  color.multiplyScalar(darkTheme ? MATERIAL_DARKEN_FACTOR_DARK : MATERIAL_DARKEN_FACTOR_LIGHT);
   const hsl = { h: 0, s: 0, l: 0 };
   color.getHSL(hsl);
   color.setHSL(hsl.h, Math.min(1, hsl.s * MATERIAL_SATURATION_FACTOR), hsl.l);
 }
 
-function tuneThreeMaterial(material: ThreeNamespace.Material): void {
+function tuneThreeMaterial(material: ThreeNamespace.Material, darkTheme: boolean): void {
   const maybeColor = material as ThreeNamespace.Material & {
     color?: ThreeNamespace.Color;
     emissive?: ThreeNamespace.Color;
@@ -698,7 +704,7 @@ function tuneThreeMaterial(material: ThreeNamespace.Material): void {
   }
   maybeColor.userData.cadSenseTuned = true;
   if (maybeColor.color) {
-    darkenColor(maybeColor.color);
+    tuneMaterialColor(maybeColor.color, darkTheme);
   }
   if (maybeColor.emissive) {
     maybeColor.emissive.setRGB(0, 0, 0);
@@ -716,6 +722,7 @@ function tuneThreeMaterial(material: ThreeNamespace.Material): void {
 }
 
 function tuneThreeModelMaterials(group: ThreeObject3D, three: ThreeModule): void {
+  const darkTheme = isDarkTheme();
   group.traverse((child) => {
     const mesh = child as Partial<ThreeNamespace.Mesh>;
     if (!mesh.isMesh) {
@@ -726,7 +733,7 @@ function tuneThreeModelMaterials(group: ThreeObject3D, three: ThreeModule): void
     for (const mat of materials) {
       if (isThreeMaterial(mat)) {
         mat.side = three.DoubleSide;
-        tuneThreeMaterial(mat);
+        tuneThreeMaterial(mat, darkTheme);
       }
     }
   });
@@ -1178,7 +1185,9 @@ async function loadFilesDirect3mfUrl(
   renderer.domElement.style.display = "block";
   renderer.domElement.style.width = "100%";
   renderer.domElement.style.height = "100%";
-  renderer.domElement.style.filter = CANVAS_COLOR_GRADE_FILTER;
+  renderer.domElement.style.filter = isDarkTheme()
+    ? CANVAS_COLOR_GRADE_FILTER_DARK
+    : CANVAS_COLOR_GRADE_FILTER_LIGHT;
   renderer.domElement.style.transition = MODEL_REVEAL_TRANSITION;
   renderer.domElement.style.opacity = "0";
   renderer.domElement.addEventListener("mousedown", preventMiddleMouseDefault);
