@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * ExternalLauncher - external application launch service interface.
  *
@@ -18,6 +19,9 @@ import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as NodeFs from "node:fs";
+import * as NodeOs from "node:os";
+import * as NodePath from "node:path";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 // ==============================
@@ -43,6 +47,11 @@ interface TargetPathAndPosition {
   readonly path: string;
   readonly line: string;
   readonly column: Option.Option<string>;
+}
+
+interface WpilibVsCodeInstall {
+  readonly year: number;
+  readonly command: string;
 }
 
 const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
@@ -118,6 +127,105 @@ function resolveAvailableCommand(
       return Option.some(command);
     }
   }
+  return Option.none();
+}
+
+function directoryExists(directoryPath: string): boolean {
+  try {
+    return NodeFs.statSync(directoryPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+function fileExists(filePath: string): boolean {
+  try {
+    return NodeFs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function wpilibRootsForPlatform(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): ReadonlyArray<string> {
+  const userProfile = env.USERPROFILE?.trim();
+  const publicProfile = env.PUBLIC?.trim();
+  const home = env.HOME?.trim() || NodeOs.homedir();
+
+  if (platform === "win32") {
+    return [
+      ...(userProfile ? [NodePath.join(userProfile, "wpilib")] : []),
+      ...(publicProfile ? [NodePath.join(publicProfile, "wpilib")] : []),
+      String.raw`C:\Users\Public\wpilib`,
+    ];
+  }
+
+  return home ? [NodePath.join(home, "wpilib")] : [];
+}
+
+function hasWpilibVsCodeProfile(yearDirectory: string): boolean {
+  const extensionsDirectory = NodePath.join(yearDirectory, "vscode", "data", "extensions");
+  try {
+    return NodeFs.readdirSync(extensionsDirectory, { withFileTypes: true }).some(
+      (entry) => entry.isDirectory() && entry.name.startsWith("wpilibsuite.vscode-wpilib-"),
+    );
+  } catch {
+    return false;
+  }
+}
+
+function wpilibVsCodeCommandForYear(
+  yearDirectory: string,
+  year: number,
+  platform: NodeJS.Platform,
+): string | null {
+  const extension = platform === "win32" ? ".cmd" : "";
+  const launcherPath = NodePath.join(yearDirectory, "frccode", `frccode${year}${extension}`);
+  if (fileExists(launcherPath)) return launcherPath;
+
+  const codeLauncher = NodePath.join(
+    yearDirectory,
+    "vscode",
+    "bin",
+    platform === "win32" ? "code.cmd" : "code",
+  );
+  return fileExists(codeLauncher) ? codeLauncher : null;
+}
+
+function resolveWpilibVsCodeInstall(
+  platform: NodeJS.Platform,
+  env: NodeJS.ProcessEnv,
+): Option.Option<WpilibVsCodeInstall> {
+  const installs: WpilibVsCodeInstall[] = [];
+
+  for (const root of wpilibRootsForPlatform(platform, env)) {
+    if (!directoryExists(root)) continue;
+
+    for (const entry of NodeFs.readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !/^\d{4}$/.test(entry.name)) continue;
+
+      const year = Number(entry.name);
+      const yearDirectory = NodePath.join(root, entry.name);
+      if (!hasWpilibVsCodeProfile(yearDirectory)) continue;
+
+      const command = wpilibVsCodeCommandForYear(yearDirectory, year, platform);
+      if (command) installs.push({ year, command });
+    }
+  }
+
+  installs.sort((left, right) => right.year - left.year);
+  const latestInstall = installs[0];
+  if (latestInstall) return Option.some(latestInstall);
+
+  for (let year = 2035; year >= 2019; year -= 1) {
+    const command = `frccode${year}`;
+    if (isCommandAvailable(command, { platform, env })) {
+      return Option.some({ year, command });
+    }
+  }
+
   return Option.none();
 }
 
@@ -219,6 +327,13 @@ export function resolveAvailableEditors(
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    if (editor.id === "wpilib-vscode") {
+      if (Option.isSome(resolveWpilibVsCodeInstall(platform, env))) {
+        available.push(editor.id);
+      }
+      continue;
+    }
+
     if (editor.commands === null) {
       const command = fileManagerCommandForPlatform(platform);
       if (isCommandAvailable(command, { platform, env })) {
@@ -280,6 +395,16 @@ export const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (editorDef.commands) {
+    if (editorDef.id === "wpilib-vscode") {
+      const install = resolveWpilibVsCodeInstall(platform, env);
+      if (Option.isSome(install)) {
+        return {
+          command: install.value.command,
+          args: resolveEditorArgs(editorDef, input.cwd),
+        };
+      }
+    }
+
     const command = Option.getOrElse(
       resolveAvailableCommand(editorDef.commands, { platform, env }),
       () => editorDef.commands[0],

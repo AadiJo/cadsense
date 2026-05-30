@@ -1,140 +1,30 @@
 import { EditorId, type ResolvedKeybindingsConfig } from "@cadsense/contracts";
-import { memo, useCallback, useEffect, useMemo } from "react";
+import { memo, useCallback, useEffect, useMemo, type ReactNode } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
 import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
-import {
-  AntigravityIcon,
-  CursorIcon,
-  Icon,
-  KiroIcon,
-  TraeIcon,
-  VisualStudioCode,
-  VisualStudioCodeInsiders,
-  VSCodium,
-  Zed,
-} from "../Icons";
-import {
-  AquaIcon,
-  CLionIcon,
-  DataGripIcon,
-  DataSpellIcon,
-  GoLandIcon,
-  IntelliJIdeaIcon,
-  PhpStormIcon,
-  PyCharmIcon,
-  RiderIcon,
-  RubyMineIcon,
-  RustRoverIcon,
-  WebStormIcon,
-} from "../JetBrainsIcons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 
+type OptionIcon = React.FC<{ className?: string; "aria-hidden"?: boolean | "true" | "false" }>;
+
+const WpilibIcon: OptionIcon = ({ className, ...props }) => (
+  <img {...props} src="/wpilib.svg" alt="" className={className} />
+);
+
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
-  const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
+  const baseOptions: ReadonlyArray<{
+    label: string;
+    Icon: OptionIcon;
+    value: EditorId;
+  }> = [
     {
-      label: "Cursor",
-      Icon: CursorIcon,
-      value: "cursor",
-    },
-    {
-      label: "Trae",
-      Icon: TraeIcon,
-      value: "trae",
-    },
-    {
-      label: "Kiro",
-      Icon: KiroIcon,
-      value: "kiro",
-    },
-    {
-      label: "VS Code",
-      Icon: VisualStudioCode,
-      value: "vscode",
-    },
-    {
-      label: "VS Code Insiders",
-      Icon: VisualStudioCodeInsiders,
-      value: "vscode-insiders",
-    },
-    {
-      label: "VSCodium",
-      Icon: VSCodium,
-      value: "vscodium",
-    },
-    {
-      label: "Zed",
-      Icon: Zed,
-      value: "zed",
-    },
-    {
-      label: "Antigravity",
-      Icon: AntigravityIcon,
-      value: "antigravity",
-    },
-    {
-      label: "IntelliJ IDEA",
-      Icon: IntelliJIdeaIcon,
-      value: "idea",
-    },
-    {
-      label: "Aqua",
-      Icon: AquaIcon,
-      value: "aqua",
-    },
-    {
-      label: "CLion",
-      Icon: CLionIcon,
-      value: "clion",
-    },
-    {
-      label: "DataGrip",
-      Icon: DataGripIcon,
-      value: "datagrip",
-    },
-    {
-      label: "DataSpell",
-      Icon: DataSpellIcon,
-      value: "dataspell",
-    },
-    {
-      label: "GoLand",
-      Icon: GoLandIcon,
-      value: "goland",
-    },
-    {
-      label: "PhpStorm",
-      Icon: PhpStormIcon,
-      value: "phpstorm",
-    },
-    {
-      label: "PyCharm",
-      Icon: PyCharmIcon,
-      value: "pycharm",
-    },
-    {
-      label: "Rider",
-      Icon: RiderIcon,
-      value: "rider",
-    },
-    {
-      label: "RubyMine",
-      Icon: RubyMineIcon,
-      value: "rubymine",
-    },
-    {
-      label: "RustRover",
-      Icon: RustRoverIcon,
-      value: "rustrover",
-    },
-    {
-      label: "WebStorm",
-      Icon: WebStormIcon,
-      value: "webstorm",
+      label: "WPILib VS Code",
+      Icon: WpilibIcon,
+      value: "wpilib-vscode",
     },
     {
       label: isMacPlatform(platform)
@@ -148,6 +38,10 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
   ];
   return baseOptions.filter((option) => availableEditors.includes(option.value));
 };
+
+function renderOptionIcon(IconComponent: OptionIcon, className: string): ReactNode {
+  return <IconComponent aria-hidden="true" className={className} />;
+}
 
 export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
@@ -199,6 +93,13 @@ export const OpenInPicker = memo(function OpenInPicker({
     const handler = (e: globalThis.KeyboardEvent) => {
       const api = readLocalApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
+
+      if (onshapeUrl) {
+        e.preventDefault();
+        openInOnshape();
+        return;
+      }
+
       if (!api || !openInCwd) return;
       if (!preferredEditor) return;
 
@@ -207,10 +108,13 @@ export const OpenInPicker = memo(function OpenInPicker({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [preferredEditor, keybindings, openInCwd]);
+  }, [preferredEditor, keybindings, openInCwd, onshapeUrl, openInOnshape]);
 
   return (
-    <Group aria-label="Subscription actions">
+    <Group
+      aria-label="Open options"
+      className="motion-safe:transition-transform motion-safe:duration-180 motion-safe:ease-[var(--motion-ease-out)] motion-safe:has-[button:not(:disabled):hover]:-translate-y-px motion-safe:has-[button:not(:disabled):active]:translate-y-0 motion-safe:has-[button:not(:disabled):active]:scale-[0.985] [&_[data-slot=button]]:hover:!translate-y-0 [&_[data-slot=button]]:active:!scale-100"
+    >
       <Button
         size="xs"
         variant="outline"
@@ -226,7 +130,8 @@ export const OpenInPicker = memo(function OpenInPicker({
         {onshapeUrl ? (
           <img src="/onshape.svg" alt="" className="size-3.5 rounded-sm object-contain" />
         ) : (
-          primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />
+          primaryOption?.Icon &&
+          renderOptionIcon(primaryOption.Icon, "size-3.5 rounded-sm object-contain")
         )}
         <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
           Open
@@ -242,14 +147,17 @@ export const OpenInPicker = memo(function OpenInPicker({
             <MenuItem onClick={openInOnshape}>
               <img src="/onshape.svg" alt="" className="size-4 rounded-sm object-contain" />
               Onshape
+              {openFavoriteEditorShortcutLabel && (
+                <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
+              )}
             </MenuItem>
           )}
           {options.length === 0 && <MenuItem disabled>No installed editors found</MenuItem>}
           {options.map(({ label, Icon, value }) => (
             <MenuItem key={value} onClick={() => openInEditor(value)}>
-              <Icon aria-hidden="true" className="text-muted-foreground" />
+              {renderOptionIcon(Icon, "size-4 rounded-sm object-contain text-muted-foreground")}
               {label}
-              {value === preferredEditor && openFavoriteEditorShortcutLabel && (
+              {!onshapeUrl && value === preferredEditor && openFavoriteEditorShortcutLabel && (
                 <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
               )}
             </MenuItem>

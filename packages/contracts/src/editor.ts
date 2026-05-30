@@ -17,6 +17,7 @@ export const EDITORS = [
   { id: "trae", label: "Trae", commands: ["trae"], launchStyle: "goto" },
   { id: "kiro", label: "Kiro", commands: ["kiro"], baseArgs: ["ide"], launchStyle: "goto" },
   { id: "vscode", label: "VS Code", commands: ["code"], launchStyle: "goto" },
+  { id: "wpilib-vscode", label: "WPILib VS Code", commands: ["frccode"], launchStyle: "goto" },
   {
     id: "vscode-insiders",
     label: "VS Code Insiders",

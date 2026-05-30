@@ -101,6 +101,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
         args: ["/tmp/workspace"],
       });
 
+      const wpilibVsCodeFallbackLaunch = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace", editor: "wpilib-vscode" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(wpilibVsCodeFallbackLaunch, {
+        command: "frccode",
+        args: ["/tmp/workspace"],
+      });
+
       const vscodeInsidersLaunch = yield* resolveEditorLaunch(
         { cwd: "/tmp/workspace", editor: "vscode-insiders" },
         "darwin",
@@ -287,6 +297,16 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       );
       assert.deepEqual(vscodeLineAndColumn, {
         command: "code",
+        args: ["--goto", "/tmp/workspace/src/process/externalLauncher.ts:71:5"],
+      });
+
+      const wpilibVsCodeLineAndColumn = yield* resolveEditorLaunch(
+        { cwd: "/tmp/workspace/src/process/externalLauncher.ts:71:5", editor: "wpilib-vscode" },
+        "darwin",
+        { PATH: "" },
+      );
+      assert.deepEqual(wpilibVsCodeLineAndColumn, {
+        command: "frccode",
         args: ["--goto", "/tmp/workspace/src/process/externalLauncher.ts:71:5"],
       });
 
@@ -508,6 +528,48 @@ it.layer(NodeServices.layer)("resolveEditorLaunch", (it) => {
       assert.deepEqual(launch3, {
         command: "xdg-open",
         args: ["/tmp/workspace"],
+      });
+    }),
+  );
+
+  it.effect("uses the latest detected WPILib VS Code launcher", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "cadsense-wpilib-" });
+      const oldYear = path.join(root, "wpilib", "2024");
+      const newYear = path.join(root, "wpilib", "2025");
+
+      for (const yearDirectory of [oldYear, newYear]) {
+        yield* fs.makeDirectory(path.join(yearDirectory, "frccode"), { recursive: true });
+        yield* fs.makeDirectory(
+          path.join(
+            yearDirectory,
+            "vscode",
+            "data",
+            "extensions",
+            "wpilibsuite.vscode-wpilib-2025.0.0",
+          ),
+          { recursive: true },
+        );
+      }
+
+      yield* fs.writeFileString(path.join(oldYear, "frccode", "frccode2024.cmd"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(newYear, "frccode", "frccode2025.cmd"), "@echo off\r\n");
+
+      const launch = yield* resolveEditorLaunch(
+        { cwd: "C:\\workspace", editor: "wpilib-vscode" },
+        "win32",
+        {
+          PATH: "",
+          PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          USERPROFILE: root,
+        },
+      );
+
+      assert.deepEqual(launch, {
+        command: path.join(newYear, "frccode", "frccode2025.cmd"),
+        args: ["C:\\workspace"],
       });
     }),
   );
@@ -740,6 +802,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
 
       yield* fs.writeFileString(path.join(dir, "trae.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "kiro.CMD"), "@echo off\r\n");
+      yield* fs.writeFileString(path.join(dir, "frccode2025.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "code-insiders.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "codium.CMD"), "@echo off\r\n");
       yield* fs.writeFileString(path.join(dir, "aqua.CMD"), "@echo off\r\n");
@@ -761,6 +824,7 @@ it.layer(NodeServices.layer)("resolveAvailableEditors", (it) => {
       assert.deepEqual(editors, [
         "trae",
         "kiro",
+        "wpilib-vscode",
         "vscode-insiders",
         "vscodium",
         "aqua",
