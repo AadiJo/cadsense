@@ -4,7 +4,7 @@ export const TerminalOpenInput = Schema.Struct({
   threadId: Schema.String,
   terminalId: Schema.String,
   cwd: Schema.optional(Schema.String),
-  worktreePath: Schema.optional(Schema.String),
+  worktreePath: Schema.optional(Schema.NullOr(Schema.String)),
   env: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   cols: Schema.optional(Schema.Number),
   rows: Schema.optional(Schema.Number),

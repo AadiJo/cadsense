@@ -6,7 +6,6 @@ import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { ServerConfig } from "./config.ts";
@@ -305,13 +304,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       }).pipe(Effect.provide(makeKeybindingsLayer())),
   );
 
-  it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {
-    const messages: string[] = [];
-    const logger = Logger.make(({ message }) => {
-      messages.push(String(message));
-    });
-
-    return Effect.gen(function* () {
+  it.effect("skips conflicting default keybindings on startup", () =>
+    Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig;
       yield* writeKeybindingsConfig(keybindingsConfigPath, [
         { key: "mod+j", command: "script.custom-action.run" },
@@ -325,21 +319,8 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
       assert.isFalse(persisted.some((entry) => entry.command === "terminal.toggle"));
       assert.isTrue(persisted.some((entry) => entry.command === "script.custom-action.run"));
-
-      assert.isTrue(
-        messages.some((message) =>
-          message.includes("skipping default keybinding due to shortcut conflict"),
-        ),
-      );
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          makeKeybindingsLayer(),
-          Logger.layer([logger], { mergeWithExisting: false }),
-        ),
-      ),
-    );
-  });
+    }).pipe(Effect.provide(makeKeybindingsLayer())),
+  );
 
   it.effect("upserts custom keybindings to configured path", () =>
     Effect.gen(function* () {

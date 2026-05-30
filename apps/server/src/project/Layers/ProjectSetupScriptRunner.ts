@@ -10,9 +10,11 @@ import {
   ProjectSetupScriptRunner,
   ProjectSetupScriptRunnerError,
 } from "../Services/ProjectSetupScriptRunner.ts";
+import { TerminalManager } from "../../terminal/Services/Manager.ts";
 
 const makeProjectSetupScriptRunner = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
+  const terminalManager = yield* TerminalManager;
 
   const runForThread: ProjectSetupScriptRunnerShape["runForThread"] = (input) =>
     Effect.gen(function* () {
@@ -42,8 +44,29 @@ const makeProjectSetupScriptRunner = Effect.gen(function* () {
         } as const;
       }
 
+      const terminalId = `setup-${script.id}`;
+      const snapshot = yield* terminalManager.open({
+        threadId: input.threadId,
+        terminalId,
+        cwd: input.worktreePath,
+        worktreePath: input.worktreePath,
+        env: {
+          CADSENSE_PROJECT_ROOT: project.workspaceRoot,
+          CADSENSE_WORKTREE_PATH: input.worktreePath,
+        },
+      });
+      yield* terminalManager.write({
+        threadId: input.threadId,
+        terminalId,
+        data: `${script.command}\r`,
+      });
+
       return {
-        status: "no-script",
+        status: "started",
+        scriptId: script.id,
+        scriptName: script.name,
+        terminalId: snapshot.terminalId,
+        cwd: input.worktreePath,
       } as const;
     }).pipe(
       Effect.mapError((cause) => {

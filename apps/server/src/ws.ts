@@ -97,6 +97,7 @@ import { OnshapeIndexRepositoryLive } from "./persistence/Layers/OnshapeIndex.ts
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerSecretStore } from "./auth/Services/ServerSecretStore.ts";
+import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { MECHBASE_API_KEY_SECRET_NAME, validateMechbaseApiKey } from "./mechbase/MechbaseApi.ts";
 import { decodeMechbaseApiKey, encodeMechbaseApiKey } from "./mechbase/MechbaseConnection.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
@@ -650,6 +651,7 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const sessions = yield* SessionCredentialService;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
+      const terminalManager = yield* TerminalManager;
       const serverCommandId = (tag: string) =>
         CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
@@ -1137,6 +1139,19 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     ),
                   );
                 }
+                yield* terminalManager
+                  .close({
+                    threadId: normalizedCommand.threadId,
+                    deleteHistory: true,
+                  })
+                  .pipe(
+                    Effect.catchCause((cause) =>
+                      Effect.logWarning("failed to close terminals during archive", {
+                        threadId: normalizedCommand.threadId,
+                        cause,
+                      }),
+                    ),
+                  );
               }
               return result;
             }).pipe(
@@ -1850,37 +1865,27 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.terminalOpen,
-            Effect.succeed({
-              ...input,
-              status: "disabled",
-            }),
-            { "rpc.aggregate": "terminal" },
-          ),
-        [WS_METHODS.terminalWrite]: () =>
-          observeRpcEffect(WS_METHODS.terminalWrite, Effect.void, {
+          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
             "rpc.aggregate": "terminal",
           }),
-        [WS_METHODS.terminalResize]: () =>
-          observeRpcEffect(WS_METHODS.terminalResize, Effect.void, {
+        [WS_METHODS.terminalWrite]: (input) =>
+          observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
             "rpc.aggregate": "terminal",
           }),
-        [WS_METHODS.terminalClear]: () =>
-          observeRpcEffect(WS_METHODS.terminalClear, Effect.void, {
+        [WS_METHODS.terminalResize]: (input) =>
+          observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
+            "rpc.aggregate": "terminal",
+          }),
+        [WS_METHODS.terminalClear]: (input) =>
+          observeRpcEffect(WS_METHODS.terminalClear, terminalManager.clear(input), {
             "rpc.aggregate": "terminal",
           }),
         [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(
-            WS_METHODS.terminalRestart,
-            Effect.succeed({
-              ...input,
-              status: "disabled",
-            }),
-            { "rpc.aggregate": "terminal" },
-          ),
-        [WS_METHODS.terminalClose]: () =>
-          observeRpcEffect(WS_METHODS.terminalClose, Effect.void, {
+          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
+            "rpc.aggregate": "terminal",
+          }),
+        [WS_METHODS.terminalClose]: (input) =>
+          observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
             "rpc.aggregate": "terminal",
           }),
         [WS_METHODS.subscribeServerConfig]: (_input) =>

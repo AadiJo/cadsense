@@ -1875,21 +1875,70 @@ export default function ChatView(props: ChatViewProps) {
     });
   }, [focusComposer]);
   const runProjectScript = useCallback(
-    (script: ProjectScript) => {
-      if (!activeProject) return;
+    async (script: ProjectScript) => {
+      const targetThreadId = activeThreadId ?? threadId;
+      if (!activeProject || !targetThreadId) return;
       setLastInvokedScriptByProjectId((current) => {
         if (current[activeProject.id] === script.id) return current;
         return { ...current, [activeProject.id]: script.id };
       });
-      toastManager.add(
-        stackedThreadToast({
-          type: "info",
-          title: "Integrated terminal removed",
-          description: `Script "${script.name}" can no longer be run inside CadSense.`,
-        }),
-      );
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to run script",
+            description: "The environment connection is unavailable.",
+          }),
+        );
+        return;
+      }
+
+      const cwd = projectScriptCwd({
+        project: { cwd: activeProject.cwd },
+        worktreePath: activeThreadWorktreePath,
+      });
+      const env = activeThreadWorktreePath
+        ? {
+            CADSENSE_PROJECT_ROOT: activeProject.cwd,
+            CADSENSE_WORKTREE_PATH: activeThreadWorktreePath,
+          }
+        : {
+            CADSENSE_PROJECT_ROOT: activeProject.cwd,
+          };
+      const terminalId = `script-${script.id}`;
+
+      try {
+        await api.terminal.open({
+          threadId: targetThreadId,
+          terminalId,
+          cwd,
+          worktreePath: activeThreadWorktreePath,
+          env,
+        });
+        await api.terminal.write({
+          threadId: targetThreadId,
+          terminalId,
+          data: `${script.command}\r`,
+        });
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Script failed to start",
+            description: error instanceof Error ? error.message : `Could not run "${script.name}".`,
+          }),
+        );
+      }
     },
-    [activeProject, setLastInvokedScriptByProjectId],
+    [
+      activeProject,
+      activeThreadId,
+      activeThreadWorktreePath,
+      environmentId,
+      setLastInvokedScriptByProjectId,
+      threadId,
+    ],
   );
 
   const persistProjectScripts = useCallback(

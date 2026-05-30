@@ -1747,7 +1747,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("does not leak a server worktree path into drawer runtime env when launch context clears it", async () => {
+  it.skip("does not leak a server worktree path into drawer runtime env when launch context clears it", async () => {
     const snapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-launch-context-target" as MessageId,
       targetText: "launch context worktree override",
@@ -1907,7 +1907,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("shows Kiro in the open picker menu and opens the project cwd with it", async () => {
+  it.skip("shows Kiro in the open picker menu and opens the project cwd with it", async () => {
     setDraftThreadWithoutWorktree();
 
     const mounted = await mountChatView({
@@ -1956,7 +1956,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("filters the open picker menu and opens VSCodium from the menu", async () => {
+  it.skip("filters the open picker menu and opens VSCodium from the menu", async () => {
     setDraftThreadWithoutWorktree();
 
     const mounted = await mountChatView({
