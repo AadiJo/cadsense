@@ -42,7 +42,7 @@ describe("KeybindingsSettings.logic", () => {
         command: "terminal.toggle",
         key: "mod+j",
         when: "!terminalFocus",
-        defaultKey: "mod+j",
+        defaultKey: null,
         defaultWhen: "",
         source: "Custom",
       }),
@@ -172,10 +172,6 @@ describe("KeybindingsSettings.logic", () => {
             altKey: false,
             shiftKey: false,
           },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
-          },
         },
         {
           command: "chat.new",
@@ -186,10 +182,6 @@ describe("KeybindingsSettings.logic", () => {
             ctrlKey: false,
             altKey: false,
             shiftKey: true,
-          },
-          whenAst: {
-            type: "not",
-            node: { type: "identifier", name: "terminalFocus" },
           },
         },
       ] satisfies ResolvedKeybindingsConfig,
