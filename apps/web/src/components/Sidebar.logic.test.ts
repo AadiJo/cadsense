@@ -522,6 +522,33 @@ describe("resolveThreadStatusPill", () => {
     ).toMatchObject({ label: "Working", pulse: true });
   });
 
+  it("treats provider startup as working instead of a separate connecting state", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          session: {
+            ...baseThread.session,
+            status: "connecting",
+            orchestrationStatus: "starting",
+          },
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
+  it("shows working while a turn start is pending before provider state arrives", () => {
+    expect(
+      resolveThreadStatusPill({
+        thread: {
+          ...baseThread,
+          pendingTurnStartedAt: "2026-03-09T10:00:00.000Z",
+          session: null,
+        },
+      }),
+    ).toMatchObject({ label: "Working", pulse: true });
+  });
+
   it("shows reviewing with a yellow active indicator when a CAD review is running", () => {
     expect(
       resolveThreadStatusPill({

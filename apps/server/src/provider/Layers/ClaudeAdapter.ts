@@ -68,11 +68,8 @@ import * as Stream from "effect/Stream";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { makeCadViewClaudeMcpServers } from "../../cad/CadViewMcp.ts";
 import { ServerConfig } from "../../config.ts";
-import {
-  MECHBASE_API_KEY_SECRET_NAME,
-  validateMechbaseApiKey,
-} from "../../mechbase/MechbaseApi.ts";
-import { decodeMechbaseApiKey } from "../../mechbase/MechbaseConnection.ts";
+import { MECHBASE_API_KEY_SECRET_NAME } from "../../mechbase/MechbaseApi.ts";
+import { getCachedValidatedMechbaseApiKey } from "../../mechbase/MechbaseConnection.ts";
 import { makeMechbaseClaudeMcpServers } from "../../mechbase/MechbaseMcp.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
@@ -2910,12 +2907,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const validatedMechbase = yield* fileSystem
         .readFile(makeMechbaseApiKeySecretPath(serverConfig.secretsDir))
         .pipe(
-          Effect.flatMap((storedApiKey) => {
-            const apiKey = decodeMechbaseApiKey(storedApiKey);
-            return Effect.tryPromise(() => validateMechbaseApiKey(apiKey)).pipe(
-              Effect.as({ apiKey }),
-            );
-          }),
+          Effect.flatMap((storedApiKey) => getCachedValidatedMechbaseApiKey(storedApiKey)),
           Effect.catch(() => Effect.succeed(null)),
         );
       const queryOptions: ClaudeQueryOptions = {

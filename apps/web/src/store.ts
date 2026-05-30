@@ -271,6 +271,7 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    pendingTurnStartedAt: undefined,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
@@ -308,6 +309,7 @@ function mapThreadShell(
   const session = thread.session ? mapSession(thread.session) : null;
   const turnState: ThreadTurnState = {
     latestTurn: thread.latestTurn,
+    pendingTurnStartedAt: undefined,
     pendingSourceProposedPlan: thread.latestTurn?.sourceProposedPlan,
   };
   const summary: SidebarThreadSummary = {
@@ -322,6 +324,7 @@ function mapThreadShell(
     archivedAt: thread.archivedAt,
     updatedAt: thread.updatedAt,
     latestTurn: thread.latestTurn,
+    pendingTurnStartedAt: undefined,
     branch: thread.branch,
     worktreePath: thread.worktreePath,
     latestUserMessageAt: thread.latestUserMessageAt,
@@ -361,6 +364,7 @@ function toThreadShell(thread: Thread): ThreadShell {
 function toThreadTurnState(thread: Thread): ThreadTurnState {
   return {
     latestTurn: thread.latestTurn,
+    ...(thread.pendingTurnStartedAt ? { pendingTurnStartedAt: thread.pendingTurnStartedAt } : {}),
     ...(thread.pendingSourceProposedPlan
       ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
       : {}),
@@ -425,6 +429,7 @@ function sidebarThreadSummariesEqual(
     left.archivedAt === right.archivedAt &&
     left.updatedAt === right.updatedAt &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
+    left.pendingTurnStartedAt === right.pendingTurnStartedAt &&
     left.branch === right.branch &&
     left.worktreePath === right.worktreePath &&
     left.latestUserMessageAt === right.latestUserMessageAt &&
@@ -459,7 +464,21 @@ function threadTurnStatesEqual(left: ThreadTurnState | undefined, right: ThreadT
   return (
     left !== undefined &&
     latestTurnsEqual(left.latestTurn, right.latestTurn) &&
+    left.pendingTurnStartedAt === right.pendingTurnStartedAt &&
     sourceProposedPlansEqual(left.pendingSourceProposedPlan, right.pendingSourceProposedPlan)
+  );
+}
+
+function shouldRetainPendingTurnStart(
+  previousTurnState: ThreadTurnState | undefined,
+  nextTurnState: ThreadTurnState,
+  nextSession: ThreadSession | null,
+): boolean {
+  return Boolean(
+    previousTurnState?.pendingTurnStartedAt &&
+    nextTurnState.pendingTurnStartedAt === undefined &&
+    nextTurnState.latestTurn === null &&
+    nextSession?.orchestrationStatus !== "running",
   );
 }
 
@@ -618,9 +637,19 @@ function writeThreadState(
   previousThread?: Thread,
 ): EnvironmentState {
   const nextShell = toThreadShell(nextThread);
-  const nextTurnState = toThreadTurnState(nextThread);
   const previousShell = state.threadShellById[nextThread.id];
   const previousTurnState = state.threadTurnStateById[nextThread.id];
+  const rawNextTurnState = toThreadTurnState(nextThread);
+  const nextTurnState = shouldRetainPendingTurnStart(
+    previousTurnState,
+    rawNextTurnState,
+    nextThread.session,
+  )
+    ? {
+        ...rawNextTurnState,
+        pendingTurnStartedAt: previousTurnState?.pendingTurnStartedAt,
+      }
+    : rawNextTurnState;
 
   let nextState = ensureThreadRegistered(
     state,
@@ -788,29 +817,40 @@ function writeThreadShellState(
     };
   }
 
-  if (
-    !threadTurnStatesEqual(state.threadTurnStateById[nextThread.shell.id], nextThread.turnState)
-  ) {
+  const previousTurnState = state.threadTurnStateById[nextThread.shell.id];
+  const nextTurnState = shouldRetainPendingTurnStart(
+    previousTurnState,
+    nextThread.turnState,
+    nextThread.session,
+  )
+    ? {
+        ...nextThread.turnState,
+        pendingTurnStartedAt: previousTurnState?.pendingTurnStartedAt,
+      }
+    : nextThread.turnState;
+  const nextSummary: SidebarThreadSummary = {
+    ...nextThread.summary,
+    pendingTurnStartedAt: nextTurnState.pendingTurnStartedAt,
+  };
+
+  if (!threadTurnStatesEqual(previousTurnState, nextTurnState)) {
     nextState = {
       ...nextState,
       threadTurnStateById: {
         ...nextState.threadTurnStateById,
-        [nextThread.shell.id]: nextThread.turnState,
+        [nextThread.shell.id]: nextTurnState,
       },
     };
   }
 
   if (
-    !sidebarThreadSummariesEqual(
-      state.sidebarThreadSummaryById[nextThread.shell.id],
-      nextThread.summary,
-    )
+    !sidebarThreadSummariesEqual(state.sidebarThreadSummaryById[nextThread.shell.id], nextSummary)
   ) {
     nextState = {
       ...nextState,
       sidebarThreadSummaryById: {
         ...nextState.sidebarThreadSummaryById,
-        [nextThread.shell.id]: nextThread.summary,
+        [nextThread.shell.id]: nextSummary,
       },
     };
   }
@@ -1361,7 +1401,11 @@ function applyEnvironmentOrchestrationEvent(
         },
         environmentId,
       );
-      return writeThreadState(state, nextThread, previousThread);
+      return writeThreadState(
+        state,
+        { ...nextThread, pendingTurnStartedAt: event.payload.createdAt },
+        previousThread,
+      );
     }
 
     case "thread.deleted":
@@ -1412,8 +1456,8 @@ function applyEnvironmentOrchestrationEvent(
         updatedAt: event.payload.updatedAt,
       }));
 
-    case "thread.turn-start-requested":
-      return updateThreadState(state, event.payload.threadId, (thread) => ({
+    case "thread.turn-start-requested": {
+      const nextState = updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
         ...(event.payload.modelSelection !== undefined
           ? { modelSelection: normalizeModelSelection(event.payload.modelSelection) }
@@ -1421,8 +1465,14 @@ function applyEnvironmentOrchestrationEvent(
         runtimeMode: event.payload.runtimeMode,
         interactionMode: event.payload.interactionMode,
         pendingSourceProposedPlan: event.payload.sourceProposedPlan,
+        pendingTurnStartedAt: event.payload.createdAt,
         updatedAt: event.occurredAt,
       }));
+      return updateSidebarThreadSummary(nextState, event.payload.threadId, (summary) => ({
+        ...summary,
+        pendingTurnStartedAt: event.payload.createdAt,
+      }));
+    }
 
     case "thread.turn-interrupt-requested": {
       if (event.payload.turnId === undefined) {
@@ -1449,8 +1499,8 @@ function applyEnvironmentOrchestrationEvent(
       });
     }
 
-    case "thread.message-sent":
-      return updateThreadState(state, event.payload.threadId, (thread) => {
+    case "thread.message-sent": {
+      const nextState = updateThreadState(state, event.payload.threadId, (thread) => {
         const message = mapMessage(thread.environmentId, {
           id: event.payload.messageId,
           role: event.payload.role,
@@ -1516,11 +1566,13 @@ function applyEnvironmentOrchestrationEvent(
                 requestedAt:
                   thread.latestTurn?.turnId === event.payload.turnId
                     ? thread.latestTurn.requestedAt
-                    : event.payload.createdAt,
+                    : (thread.pendingTurnStartedAt ?? event.payload.createdAt),
                 startedAt:
                   thread.latestTurn?.turnId === event.payload.turnId
-                    ? (thread.latestTurn.startedAt ?? event.payload.createdAt)
-                    : event.payload.createdAt,
+                    ? (thread.latestTurn.startedAt ??
+                      thread.pendingTurnStartedAt ??
+                      event.payload.createdAt)
+                    : (thread.pendingTurnStartedAt ?? event.payload.createdAt),
                 sourceProposedPlan: thread.pendingSourceProposedPlan,
                 completedAt: event.payload.streaming
                   ? thread.latestTurn?.turnId === event.payload.turnId
@@ -1535,15 +1587,29 @@ function applyEnvironmentOrchestrationEvent(
           messages: cappedMessages,
           turnDiffSummaries,
           latestTurn,
+          pendingTurnStartedAt:
+            event.payload.role === "user" ? thread.pendingTurnStartedAt : undefined,
           updatedAt: event.occurredAt,
         };
       });
+      const updatedThread = getThreadFromEnvironmentState(nextState, event.payload.threadId);
+      return updateSidebarThreadSummary(nextState, event.payload.threadId, (summary) => ({
+        ...summary,
+        latestTurn: updatedThread?.latestTurn ?? summary.latestTurn,
+        pendingTurnStartedAt: updatedThread?.pendingTurnStartedAt,
+        latestUserMessageAt:
+          event.payload.role === "user" ? event.payload.createdAt : summary.latestUserMessageAt,
+      }));
+    }
 
-    case "thread.session-set":
-      return updateThreadState(state, event.payload.threadId, (thread) => ({
+    case "thread.session-set": {
+      const nextSession = mapSession(event.payload.session);
+      const nextState = updateThreadState(state, event.payload.threadId, (thread) => ({
         ...thread,
-        session: mapSession(event.payload.session),
+        session: nextSession,
         error: sanitizeThreadErrorMessage(event.payload.session.lastError),
+        pendingTurnStartedAt:
+          event.payload.session.status === "running" ? undefined : thread.pendingTurnStartedAt,
         latestTurn:
           event.payload.session.status === "running" && event.payload.session.activeTurnId !== null
             ? buildLatestTurn({
@@ -1553,11 +1619,11 @@ function applyEnvironmentOrchestrationEvent(
                 requestedAt:
                   thread.latestTurn?.turnId === event.payload.session.activeTurnId
                     ? thread.latestTurn.requestedAt
-                    : event.payload.session.updatedAt,
+                    : (thread.pendingTurnStartedAt ?? event.payload.session.updatedAt),
                 startedAt:
                   thread.latestTurn?.turnId === event.payload.session.activeTurnId
                     ? (thread.latestTurn.startedAt ?? event.payload.session.updatedAt)
-                    : event.payload.session.updatedAt,
+                    : (thread.pendingTurnStartedAt ?? event.payload.session.updatedAt),
                 completedAt: null,
                 assistantMessageId:
                   thread.latestTurn?.turnId === event.payload.session.activeTurnId
@@ -1568,6 +1634,14 @@ function applyEnvironmentOrchestrationEvent(
             : thread.latestTurn,
         updatedAt: event.occurredAt,
       }));
+      const updatedThread = getThreadFromEnvironmentState(nextState, event.payload.threadId);
+      return updateSidebarThreadSummary(nextState, event.payload.threadId, (summary) => ({
+        ...summary,
+        session: nextSession,
+        latestTurn: updatedThread?.latestTurn ?? summary.latestTurn,
+        pendingTurnStartedAt: updatedThread?.pendingTurnStartedAt,
+      }));
+    }
 
     case "thread.session-stop-requested":
       return updateThreadState(state, event.payload.threadId, (thread) =>
@@ -1739,6 +1813,7 @@ function applyEnvironmentOrchestrationEvent(
           ...thread,
           turnDiffSummaries,
           latestTurn,
+          pendingTurnStartedAt: undefined,
           updatedAt: event.occurredAt,
         };
       });

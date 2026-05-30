@@ -5,3 +5,12 @@ export function threadHasStarted(thread: Thread | null | undefined): boolean {
     thread && (thread.latestTurn !== null || thread.messages.length > 0 || thread.session !== null),
   );
 }
+
+export function threadHasProviderWorkStarted(thread: Thread | null | undefined): boolean {
+  return Boolean(
+    thread &&
+    (thread.latestTurn !== null ||
+      thread.session?.orchestrationStatus === "running" ||
+      thread.messages.some((message) => message.role === "assistant")),
+  );
+}

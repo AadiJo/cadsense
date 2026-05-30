@@ -136,6 +136,9 @@ function makeState(thread: Thread): AppState {
     threadTurnStateById: {
       [thread.id]: {
         latestTurn: thread.latestTurn,
+        ...(thread.pendingTurnStartedAt
+          ? { pendingTurnStartedAt: thread.pendingTurnStartedAt }
+          : {}),
         ...(thread.pendingSourceProposedPlan
           ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
           : {}),
@@ -870,6 +873,111 @@ describe("incremental orchestration updates", () => {
     expect(threadsOf(next)[0]?.session?.status).toBe("running");
     expect(threadsOf(next)[0]?.latestTurn?.state).toBe("completed");
     expect(threadsOf(next)[0]?.messages).toHaveLength(1);
+  });
+
+  it("tracks a pending turn start before provider runtime state exists", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const requestedAt = "2026-02-27T00:00:02.000Z";
+
+    const requested = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.turn-start-requested", {
+        threadId: thread.id,
+        messageId: MessageId.make("message-1"),
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: requestedAt,
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(requested)[0]?.pendingTurnStartedAt).toBe(requestedAt);
+
+    const running = applyOrchestrationEvent(
+      requested,
+      makeEvent("thread.session-set", {
+        threadId: thread.id,
+        session: {
+          threadId: thread.id,
+          status: "running",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: TurnId.make("turn-1"),
+          lastError: null,
+          updatedAt: "2026-02-27T00:00:12.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(running)[0]?.pendingTurnStartedAt).toBeUndefined();
+    expect(threadsOf(running)[0]?.latestTurn?.state).toBe("running");
+    expect(threadsOf(running)[0]?.latestTurn?.startedAt).toBe(requestedAt);
+  });
+
+  it("keeps pending work active when the projected user message arrives before runtime state", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const requestedAt = "2026-02-27T00:00:02.000Z";
+
+    const requested = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.turn-start-requested", {
+        threadId: thread.id,
+        messageId: MessageId.make("message-1"),
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        createdAt: requestedAt,
+      }),
+      localEnvironmentId,
+    );
+
+    const messageProjected = applyOrchestrationEvent(
+      requested,
+      makeEvent("thread.message-sent", {
+        threadId: thread.id,
+        messageId: MessageId.make("message-1"),
+        role: "user",
+        text: "hello",
+        turnId: null,
+        streaming: false,
+        createdAt: "2026-02-27T00:00:03.000Z",
+        updatedAt: "2026-02-27T00:00:03.000Z",
+      }),
+      localEnvironmentId,
+    );
+
+    expect(threadsOf(messageProjected)[0]?.pendingTurnStartedAt).toBe(requestedAt);
+    expect(threadsOf(messageProjected)[0]?.messages[0]?.role).toBe("user");
+  });
+
+  it("marks a newly created thread as pending work before turn start is projected", () => {
+    const thread = makeThread();
+    const state = makeState(thread);
+    const nextThreadId = ThreadId.make("thread-2");
+    const createdAt = "2026-02-27T00:00:01.000Z";
+
+    const created = applyOrchestrationEvent(
+      state,
+      makeEvent("thread.created", {
+        threadId: nextThreadId,
+        projectId: thread.projectId,
+        title: "New thread",
+        modelSelection: thread.modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+        updatedAt: createdAt,
+      }),
+      localEnvironmentId,
+    );
+
+    expect(
+      threadsOf(created).find((entry) => entry.id === nextThreadId)?.pendingTurnStartedAt,
+    ).toBe(createdAt);
   });
 
   it("does not regress latestTurn when an older turn diff completes late", () => {

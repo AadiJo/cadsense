@@ -17,6 +17,13 @@ const decodeServerSettings = Schema.decodeUnknownSync(ServerSettings);
 const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 
+describe("ServerSettings.enableAssistantStreaming", () => {
+  it("defaults assistant message streaming to enabled", () => {
+    expect(DEFAULT_SERVER_SETTINGS.enableAssistantStreaming).toBe(true);
+    expect(decodeServerSettings({}).enableAssistantStreaming).toBe(true);
+  });
+});
+
 describe("ClientSettings.displayCadReviewWorkLog", () => {
   it("defaults CAD review work logs to hidden", () => {
     expect(DEFAULT_CLIENT_SETTINGS.displayCadReviewWorkLog).toBe(false);

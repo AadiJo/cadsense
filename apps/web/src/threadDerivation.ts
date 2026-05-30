@@ -150,6 +150,7 @@ export function getThreadFromEnvironmentState(
     ...shell,
     session,
     latestTurn: turnState?.latestTurn ?? null,
+    pendingTurnStartedAt: turnState?.pendingTurnStartedAt,
     pendingSourceProposedPlan: turnState?.pendingSourceProposedPlan,
     messages,
     activities,

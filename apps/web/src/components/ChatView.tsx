@@ -821,7 +821,6 @@ export default function ChatView(props: ChatViewProps) {
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
     Record<string, string | null>
   >({});
-  const [isConnecting, _setIsConnecting] = useState(false);
   const [isRevertingCheckpoint, setIsRevertingCheckpoint] = useState(false);
   const [respondingRequestIds, setRespondingRequestIds] = useState<ApprovalRequestId[]>([]);
   const [respondingUserInputRequestIds, setRespondingUserInputRequestIds] = useState<
@@ -1351,6 +1350,7 @@ export default function ChatView(props: ChatViewProps) {
   );
   const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
   const phase = derivePhase(activeThread?.session ?? null);
+  const isConnecting = phase === "connecting";
   const threadActivities = activeThread?.activities ?? EMPTY_ACTIVITIES;
   const workLogEntries = useMemo(
     () => deriveWorkLogEntries(threadActivities, activeLatestTurn?.turnId ?? undefined),
@@ -1456,13 +1456,22 @@ export default function ChatView(props: ChatViewProps) {
     activePendingUserInput: activePendingUserInput?.requestId ?? null,
     threadError: activeThread?.error,
   });
-  const composerStopActive = phase === "running" || cadReviewInProgress;
-  const isWorking = composerStopActive || isSendBusy || isConnecting || isRevertingCheckpoint;
-  const activeWorkStartedAt = deriveActiveWorkStartedAt(
-    activeLatestTurn,
-    activeThread?.session ?? null,
-    localDispatchStartedAt,
-  );
+  const providerWorkActive = phase === "connecting" || phase === "running";
+  const latestTurnWorkActive = activeLatestTurn?.state === "running";
+  const pendingTurnStartedAt = activeThread?.pendingTurnStartedAt ?? null;
+  const isWorking =
+    providerWorkActive ||
+    latestTurnWorkActive ||
+    isSendBusy ||
+    isRevertingCheckpoint ||
+    pendingTurnStartedAt !== null;
+  const activeWorkStartedAt =
+    pendingTurnStartedAt ??
+    deriveActiveWorkStartedAt(
+      activeLatestTurn,
+      activeThread?.session ?? null,
+      localDispatchStartedAt,
+    );
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);

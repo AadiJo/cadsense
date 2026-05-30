@@ -17,7 +17,7 @@ import {
   createThreadSelectorAcrossEnvironments,
   createThreadSelectorByRef,
 } from "../storeSelectors";
-import { threadHasStarted } from "../threadLifecycle";
+import { threadHasProviderWorkStarted, threadHasStarted } from "../threadLifecycle";
 import { buildThreadRouteParams } from "../threadRoutes";
 
 const THREAD_ROUTE_ID = "/_chat/$environmentId/$threadId" as const;
@@ -91,7 +91,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
       [draftSession?.threadId],
     ),
   );
-  const serverThreadStartedForDraft = threadHasStarted(serverThreadForDraft);
+  const serverThreadStartedForDraft = threadHasProviderWorkStarted(serverThreadForDraft);
   const canonicalThreadRef = useMemo(
     () =>
       draftSession?.promotedTo

@@ -532,6 +532,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
       | "thread.review-upserted"
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
+      | "thread.turn-start-requested"
       | "thread.reverted"
       | "thread.session-set";
   }
@@ -543,6 +544,7 @@ function isThreadDetailEvent(event: OrchestrationEvent): event is Extract<
     event.type === "thread.review-upserted" ||
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
+    event.type === "thread.turn-start-requested" ||
     event.type === "thread.reverted" ||
     event.type === "thread.session-set"
   );

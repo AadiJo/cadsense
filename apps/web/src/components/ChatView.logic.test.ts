@@ -300,6 +300,9 @@ function setStoreThreads(threads: ReadonlyArray<ReturnType<typeof makeThread>>) 
         thread.id,
         {
           latestTurn: thread.latestTurn,
+          ...(thread.pendingTurnStartedAt
+            ? { pendingTurnStartedAt: thread.pendingTurnStartedAt }
+            : {}),
           ...(thread.pendingSourceProposedPlan
             ? { pendingSourceProposedPlan: thread.pendingSourceProposedPlan }
             : {}),

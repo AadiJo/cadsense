@@ -5,9 +5,10 @@ import { readEnvironmentConnection } from "./environments/runtime";
 
 const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>();
 
-export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
-  return {
-    terminal: {
+function environmentTerminalApi(rpcClient: WsRpcClient): EnvironmentApi["terminal"] {
+  const terminalRpc = (rpcClient as unknown as { terminal?: EnvironmentApi["terminal"] }).terminal;
+  return (
+    terminalRpc ?? {
       open: async () => ({}),
       write: async () => undefined,
       resize: async () => undefined,
@@ -15,7 +16,13 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
       restart: async () => ({}),
       close: async () => undefined,
       onEvent: () => () => undefined,
-    },
+    }
+  );
+}
+
+export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
+  return {
+    terminal: environmentTerminalApi(rpcClient),
     projects: {
       searchEntries: rpcClient.projects.searchEntries,
       writeFile: rpcClient.projects.writeFile,

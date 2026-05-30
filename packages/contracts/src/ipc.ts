@@ -512,7 +512,7 @@ export interface LocalApi {
  * `environmentId` rather than reaching through the local desktop bridge.
  */
 export interface EnvironmentApi {
-  /** Deprecated no-op surface retained for older client-side tests and persisted drafts. */
+  /** Legacy terminal surface; forwarded when the environment client provides it. */
   terminal: {
     open: (input: unknown) => Promise<unknown>;
     write: (input: unknown) => Promise<void>;

@@ -8,6 +8,12 @@ After inspecting a matching Mechbase image, display the exact original \`artifac
 
 Mechbase direct API URLs require CadSense authentication and usually do not work as browser links. The binder source format is \`<TEAM>-<YEAR>.pdf\`; cite it as a human source, for example: \`Source: FRC 254 in 2020, page 22.\` Do not paste or hyperlink \`page_context_url\`, \`page_text_url\`, source PDFs, or Mechbase source citations.`;
 
+const MECHBASE_PRECEDENT_INSTRUCTIONS = `## Mechbase Design Precedent
+
+When the \`cadsense-mechbase\` MCP server is available, strongly prefer using \`search_mechbase\` before answering FRC mechanism design questions where real robot examples would materially improve the answer. This includes open-ended build prompts such as "How would I go about building a drum shooter?", "how should I design an intake?", or "what are examples of climbers/elevators/shooters?".
+
+For these precedent-seeking prompts, run one focused search for the mechanism or design pattern before giving recommendations. Use the results to ground tradeoffs, cite useful binder sources in plain text, and fetch image artifacts only when inspecting the image would clarify the mechanism. Skip Mechbase only when the user explicitly asks not to search, the question is unrelated to FRC mechanisms, or the answer is purely about code/project files.`;
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -130,6 +136,8 @@ Do not ask "should I proceed?" in the final output. The user can easily switch o
 Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
 
 ${CADSENSE_CHAT_RENDERING_INSTRUCTIONS}
+
+${MECHBASE_PRECEDENT_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
@@ -145,4 +153,6 @@ The \`request_user_input\` tool is unavailable in Default mode. If you call it w
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
 
 ${CADSENSE_CHAT_RENDERING_INSTRUCTIONS}
+
+${MECHBASE_PRECEDENT_INSTRUCTIONS}
 </collaboration_mode>`;

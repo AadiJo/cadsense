@@ -2,7 +2,7 @@ import { createFileRoute, retainSearchParams } from "@tanstack/react-router";
 import { useMemo } from "react";
 
 import ChatView from "../components/ChatView";
-import { threadHasStarted } from "../components/ChatView.logic";
+import { threadHasProviderWorkStarted } from "../threadLifecycle";
 import { SidebarInset } from "~/components/ui/sidebar";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { type DiffRouteSearch, parseDiffRouteSearch } from "../diffRouteSearch";
@@ -19,7 +19,7 @@ function DraftChatThreadRouteView() {
       [draftSession?.threadId],
     ),
   );
-  const serverThreadStarted = threadHasStarted(serverThread);
+  const serverThreadStarted = threadHasProviderWorkStarted(serverThread);
   const canonicalThreadRef = useMemo(
     () =>
       draftSession?.promotedTo
