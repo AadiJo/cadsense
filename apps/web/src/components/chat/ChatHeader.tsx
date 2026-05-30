@@ -10,7 +10,7 @@ import { scopeThreadRef } from "@cadsense/client-runtime";
 import { memo } from "react";
 import GitActionsControl from "../GitActionsControl";
 import { type DraftId } from "~/composerDraftStore";
-import { TerminalSquareIcon } from "lucide-react";
+import { BoxIcon, TerminalSquareIcon } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
@@ -64,6 +64,12 @@ export function shouldShowOpenInPicker(input: {
   );
 }
 
+export function shouldShowCadPanelToggle(input: {
+  readonly activeProjectName: string | undefined;
+}): boolean {
+  return Boolean(input.activeProjectName);
+}
+
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
   activeThreadId,
@@ -80,7 +86,9 @@ export const ChatHeader = memo(function ChatHeader({
   terminalAvailable,
   terminalOpen,
   terminalToggleShortcutLabel,
+  diffToggleShortcutLabel,
   gitCwd,
+  diffOpen,
   onshapeSyncing,
   cadExploded,
   onRunProjectScript,
@@ -88,6 +96,7 @@ export const ChatHeader = memo(function ChatHeader({
   onUpdateProjectScript,
   onDeleteProjectScript,
   onToggleTerminal,
+  onToggleDiff,
   onSyncOnshape,
   onToggleCadExploded,
   onZoomCadToFit,
@@ -98,6 +107,7 @@ export const ChatHeader = memo(function ChatHeader({
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
+  const showCadPanelToggle = shouldShowCadPanelToggle({ activeProjectName });
 
   return (
     <div className="@container/header-actions flex w-full min-w-0 flex-1 items-center justify-between gap-2">
@@ -120,7 +130,11 @@ export const ChatHeader = memo(function ChatHeader({
           </Badge>
         )}
       </div>
-      <div className="ml-auto flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3">
+      <div
+        className={`ml-auto flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3 ${
+          diffOpen ? "" : "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+0.5em)]"
+        }`}
+      >
         {activeProjectOnshapeContext ? (
           <OnshapeSyncControl
             context={activeProjectOnshapeContext}
@@ -180,6 +194,29 @@ export const ChatHeader = memo(function ChatHeader({
                 : "Toggle terminal drawer"}
           </TooltipPopup>
         </Tooltip>
+        {showCadPanelToggle ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={diffOpen}
+                  onPressedChange={onToggleDiff}
+                  aria-label="Toggle CAD view"
+                  variant="outline"
+                  size="xs"
+                >
+                  <BoxIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {diffToggleShortcutLabel
+                ? `Toggle CAD view (${diffToggleShortcutLabel})`
+                : "Toggle CAD view"}
+            </TooltipPopup>
+          </Tooltip>
+        ) : null}
       </div>
     </div>
   );

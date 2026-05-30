@@ -1,7 +1,7 @@
 import { EnvironmentId } from "@cadsense/contracts";
 import { describe, expect, it } from "vitest";
 
-import { shouldShowOpenInPicker } from "./ChatHeader";
+import { shouldShowCadPanelToggle, shouldShowOpenInPicker } from "./ChatHeader";
 
 describe("shouldShowOpenInPicker", () => {
   const primaryEnvironmentId = EnvironmentId.make("environment-primary");
@@ -44,5 +44,15 @@ describe("shouldShowOpenInPicker", () => {
         primaryEnvironmentId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("shouldShowCadPanelToggle", () => {
+  it("shows the toggle for active projects", () => {
+    expect(shouldShowCadPanelToggle({ activeProjectName: "Bracket" })).toBe(true);
+  });
+
+  it("hides the toggle when there is no active project", () => {
+    expect(shouldShowCadPanelToggle({ activeProjectName: undefined })).toBe(false);
   });
 });
