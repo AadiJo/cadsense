@@ -36,7 +36,6 @@ import {
   type OnshapeListSyncedCadFilesResult,
   type OnshapeSyncedCadFile,
   ThreadId,
-  type TerminalEvent,
   WS_METHODS,
   WsRpcGroup,
 } from "@cadsense/contracts";
@@ -72,7 +71,6 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import { ServerLifecycleEvents } from "./serverLifecycleEvents.ts";
 import { ServerRuntimeStartup } from "./serverRuntimeStartup.ts";
 import { redactServerSettingsForClient, ServerSettingsService } from "./serverSettings.ts";
-import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { WorkspaceEntries } from "./workspace/Services/WorkspaceEntries.ts";
 import { WorkspaceFileSystem } from "./workspace/Services/WorkspaceFileSystem.ts";
 import { WorkspacePathOutsideRootError } from "./workspace/Services/WorkspacePaths.ts";
@@ -624,7 +622,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
       const gitWorkflow = yield* GitWorkflowService;
       const vcsProvisioning = yield* VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
-      const terminalManager = yield* TerminalManager;
       const providerRegistry = yield* ProviderRegistry;
       const providerMaintenanceRunner = yield* ProviderMaintenanceRunner.ProviderMaintenanceRunner;
       const config = yield* ServerConfig;
@@ -1138,15 +1135,6 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     ),
                   );
                 }
-
-                yield* terminalManager.close({ threadId: normalizedCommand.threadId }).pipe(
-                  Effect.catch((error) =>
-                    Effect.logWarning("failed to close thread terminals after archive", {
-                      threadId: normalizedCommand.threadId,
-                      error: error.message,
-                    }),
-                  ),
-                );
               }
               return result;
             }).pipe(
@@ -1860,40 +1848,39 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.terminalOpen]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalOpen, terminalManager.open(input), {
+          observeRpcEffect(
+            WS_METHODS.terminalOpen,
+            Effect.succeed({
+              ...input,
+              status: "disabled",
+            }),
+            { "rpc.aggregate": "terminal" },
+          ),
+        [WS_METHODS.terminalWrite]: () =>
+          observeRpcEffect(WS_METHODS.terminalWrite, Effect.void, {
             "rpc.aggregate": "terminal",
           }),
-        [WS_METHODS.terminalWrite]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalWrite, terminalManager.write(input), {
+        [WS_METHODS.terminalResize]: () =>
+          observeRpcEffect(WS_METHODS.terminalResize, Effect.void, {
             "rpc.aggregate": "terminal",
           }),
-        [WS_METHODS.terminalResize]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalResize, terminalManager.resize(input), {
-            "rpc.aggregate": "terminal",
-          }),
-        [WS_METHODS.terminalClear]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalClear, terminalManager.clear(input), {
+        [WS_METHODS.terminalClear]: () =>
+          observeRpcEffect(WS_METHODS.terminalClear, Effect.void, {
             "rpc.aggregate": "terminal",
           }),
         [WS_METHODS.terminalRestart]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalRestart, terminalManager.restart(input), {
-            "rpc.aggregate": "terminal",
-          }),
-        [WS_METHODS.terminalClose]: (input) =>
-          observeRpcEffect(WS_METHODS.terminalClose, terminalManager.close(input), {
-            "rpc.aggregate": "terminal",
-          }),
-        [WS_METHODS.subscribeTerminalEvents]: (_input) =>
-          observeRpcStream(
-            WS_METHODS.subscribeTerminalEvents,
-            Stream.callback<TerminalEvent>((queue) =>
-              Effect.acquireRelease(
-                terminalManager.subscribe((event) => Queue.offer(queue, event)),
-                (unsubscribe) => Effect.sync(unsubscribe),
-              ),
-            ),
+          observeRpcEffect(
+            WS_METHODS.terminalRestart,
+            Effect.succeed({
+              ...input,
+              status: "disabled",
+            }),
             { "rpc.aggregate": "terminal" },
           ),
+        [WS_METHODS.terminalClose]: () =>
+          observeRpcEffect(WS_METHODS.terminalClose, Effect.void, {
+            "rpc.aggregate": "terminal",
+          }),
         [WS_METHODS.subscribeServerConfig]: (_input) =>
           observeRpcStreamEffect(
             WS_METHODS.subscribeServerConfig,

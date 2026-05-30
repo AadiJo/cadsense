@@ -8,13 +8,13 @@ const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>()
 export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
     terminal: {
-      open: (input) => rpcClient.terminal.open(input as never),
-      write: (input) => rpcClient.terminal.write(input as never),
-      resize: (input) => rpcClient.terminal.resize(input as never),
-      clear: (input) => rpcClient.terminal.clear(input as never),
-      restart: (input) => rpcClient.terminal.restart(input as never),
-      close: (input) => rpcClient.terminal.close(input as never),
-      onEvent: (callback) => rpcClient.terminal.onEvent(callback),
+      open: async () => ({}),
+      write: async () => undefined,
+      resize: async () => undefined,
+      clear: async () => undefined,
+      restart: async () => ({}),
+      close: async () => undefined,
+      onEvent: () => () => undefined,
     },
     projects: {
       searchEntries: rpcClient.projects.searchEntries,

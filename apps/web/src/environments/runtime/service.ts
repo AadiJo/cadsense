@@ -7,7 +7,6 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamEvent,
   type ServerConfig,
-  type TerminalEvent,
   ThreadId,
 } from "@cadsense/contracts";
 import { type QueryClient } from "@tanstack/react-query";
@@ -1103,21 +1102,6 @@ function createEnvironmentConnectionHandlers() {
       );
       reconcileThreadDetailSubscriptionEvictionForEnvironment(environmentId);
       reconcileSnapshotDerivedState();
-    },
-    applyTerminalEvent: (event: TerminalEvent, environmentId: EnvironmentId) => {
-      const threadRef = scopeThreadRef(environmentId, ThreadId.make(event.threadId));
-      const serverThread = selectThreadByRef(useStore.getState(), threadRef);
-      const hasDraftThread =
-        useComposerDraftStore.getState().getDraftThreadByRef(threadRef) !== null;
-      if (
-        !shouldApplyTerminalEvent({
-          serverThreadArchivedAt: serverThread?.archivedAt,
-          hasDraftThread,
-        })
-      ) {
-        return;
-      }
-      useTerminalStateStore.getState().applyTerminalEvent(threadRef, event);
     },
   };
 }

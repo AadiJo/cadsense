@@ -1,11 +1,10 @@
 import { ProjectId } from "@cadsense/contracts";
-import { projectScriptRuntimeEnv, setupProjectScript } from "@cadsense/shared/projectScripts";
+import { setupProjectScript } from "@cadsense/shared/projectScripts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 
 import { ProjectionSnapshotQuery } from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
-import { TerminalManager } from "../../terminal/Services/Manager.ts";
 import {
   type ProjectSetupScriptRunnerShape,
   ProjectSetupScriptRunner,
@@ -14,7 +13,6 @@ import {
 
 const makeProjectSetupScriptRunner = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
-  const terminalManager = yield* TerminalManager;
 
   const runForThread: ProjectSetupScriptRunnerShape["runForThread"] = (input) =>
     Effect.gen(function* () {
@@ -44,32 +42,8 @@ const makeProjectSetupScriptRunner = Effect.gen(function* () {
         } as const;
       }
 
-      const terminalId = input.preferredTerminalId ?? `setup-${script.id}`;
-      const cwd = input.worktreePath;
-      const env = projectScriptRuntimeEnv({
-        project: { cwd: project.workspaceRoot },
-        worktreePath: input.worktreePath,
-      });
-
-      yield* terminalManager.open({
-        threadId: input.threadId,
-        terminalId,
-        cwd,
-        worktreePath: input.worktreePath,
-        env,
-      });
-      yield* terminalManager.write({
-        threadId: input.threadId,
-        terminalId,
-        data: `${script.command}\r`,
-      });
-
       return {
-        status: "started",
-        scriptId: script.id,
-        scriptName: script.name,
-        terminalId,
-        cwd,
+        status: "no-script",
       } as const;
     }).pipe(
       Effect.mapError((cause) => {

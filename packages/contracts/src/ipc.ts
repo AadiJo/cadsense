@@ -39,16 +39,6 @@ import type {
   ServerTraceDiagnosticsResult,
   ServerUpsertKeybindingResult,
 } from "./server.ts";
-import type {
-  TerminalClearInput,
-  TerminalCloseInput,
-  TerminalEvent,
-  TerminalOpenInput,
-  TerminalResizeInput,
-  TerminalRestartInput,
-  TerminalSessionSnapshot,
-  TerminalWriteInput,
-} from "./terminal.ts";
 import type { ServerRemoveKeybindingInput, ServerUpsertKeybindingInput } from "./server.ts";
 import * as Schema from "effect/Schema";
 import type {
@@ -104,6 +94,7 @@ import type {
   SourceControlRepositoryInfo,
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
+import type { TerminalEvent } from "./terminal.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -515,19 +506,20 @@ export interface LocalApi {
  * APIs bound to a specific backend environment connection.
  *
  * These operations must always be routed with explicit environment context.
- * They represent remote stateful capabilities such as orchestration, terminal,
- * project, VCS, and provider operations. In multi-environment mode, each environment gets
+ * They represent remote stateful capabilities such as orchestration, project,
+ * VCS, and provider operations. In multi-environment mode, each environment gets
  * its own instance of this surface, and callers should resolve it by
  * `environmentId` rather than reaching through the local desktop bridge.
  */
 export interface EnvironmentApi {
+  /** Deprecated no-op surface retained for older client-side tests and persisted drafts. */
   terminal: {
-    open: (input: typeof TerminalOpenInput.Encoded) => Promise<TerminalSessionSnapshot>;
-    write: (input: typeof TerminalWriteInput.Encoded) => Promise<void>;
-    resize: (input: typeof TerminalResizeInput.Encoded) => Promise<void>;
-    clear: (input: typeof TerminalClearInput.Encoded) => Promise<void>;
-    restart: (input: typeof TerminalRestartInput.Encoded) => Promise<TerminalSessionSnapshot>;
-    close: (input: typeof TerminalCloseInput.Encoded) => Promise<void>;
+    open: (input: unknown) => Promise<unknown>;
+    write: (input: unknown) => Promise<void>;
+    resize: (input: unknown) => Promise<void>;
+    clear: (input: unknown) => Promise<void>;
+    restart: (input: unknown) => Promise<unknown>;
+    close: (input: unknown) => Promise<void>;
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
