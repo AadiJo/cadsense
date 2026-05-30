@@ -94,10 +94,10 @@ function errorDescriptionClampClass(type: unknown, description: unknown): string
   return "line-clamp-4";
 }
 
-/** Dismiss-only: circular control overlapping the card corner (iOS notification–style). */
-const toastCornerDismissClass = "absolute z-20 -top-1.5 -right-1.5";
+/** Dismiss-only control aligned with the single-line toast title row. */
+const toastCornerDismissClass = "absolute z-20 right-3 top-1/2 -translate-y-1/2";
 const toastCornerOrbClass = cn(
-  "inline-flex size-6 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/60 bg-popover/92 text-muted-foreground shadow-sm outline-none backdrop-blur-sm",
+  "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/60 bg-popover/92 text-muted-foreground shadow-sm outline-none backdrop-blur-sm",
   "transition-[color,background-color,box-shadow] hover:bg-popover hover:text-foreground",
   "focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background",
 );
@@ -319,15 +319,12 @@ function ToastBodyContent({
     <>
       <div className={cn("flex min-w-0 gap-2", !stackedActionLayout && "flex-1")}>
         {leadingIcon ? (
-          <div
-            className="flex h-lh w-4 shrink-0 items-center justify-center"
-            data-slot="toast-icon"
-          >
+          <div className="flex h-5 w-4 shrink-0 items-center justify-center" data-slot="toast-icon">
             {leadingIcon}
           </div>
         ) : Icon ? (
           <div
-            className="[&>svg]:h-lh [&>svg]:w-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
+            className="flex h-5 w-4 shrink-0 items-center justify-center [&_svg]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0"
             data-slot="toast-icon"
           >
             <Icon className="in-data-[type=loading]:animate-spin in-data-[type=error]:text-destructive in-data-[type=info]:text-info in-data-[type=success]:text-success in-data-[type=warning]:text-warning in-data-[type=loading]:opacity-80" />
@@ -339,7 +336,10 @@ function ToastBodyContent({
             stackedActionLayout && "pr-5",
           )}
         >
-          <Toast.Title className="min-w-0 wrap-break-word font-medium" data-slot="toast-title" />
+          <Toast.Title
+            className="min-w-0 wrap-break-word font-medium leading-5"
+            data-slot="toast-title"
+          />
           <ToastDescriptionAndExpandable
             toastData={toastData}
             toastDescription={toastDescription}
@@ -634,7 +634,7 @@ function Toasts({ position = "top-right" }: { position: ToastPosition }) {
                   }
                   type="button"
                 >
-                  <XIcon className="size-3" strokeWidth={2.25} />
+                  <XIcon className="size-3 cursor-pointer" strokeWidth={2.25} />
                 </button>
               </div>
               <Toast.Content
@@ -731,7 +731,7 @@ function AnchoredToasts() {
                           }
                           type="button"
                         >
-                          <XIcon className="size-3" strokeWidth={2.25} />
+                          <XIcon className="size-3 cursor-pointer" strokeWidth={2.25} />
                         </button>
                       </div>
                       <Toast.Content

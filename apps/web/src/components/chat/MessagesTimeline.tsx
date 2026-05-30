@@ -92,6 +92,7 @@ interface TimelineRowSharedState {
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   displayCadReviewWorkLog: boolean;
   cadReviewChildActivityByReviewId: Readonly<Record<string, CadReviewChildActivitySummary>>;
+  animatedUserMessageId: MessageId | null;
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
@@ -143,6 +144,7 @@ interface MessagesTimelineProps {
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   displayCadReviewWorkLog?: boolean;
   cadReviewChildActivityByReviewId?: Readonly<Record<string, CadReviewChildActivitySummary>>;
+  animatedUserMessageId?: MessageId | null;
   onIsAtEndChange: (isAtEnd: boolean) => void;
 }
 
@@ -174,6 +176,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   skills = EMPTY_TIMELINE_SKILLS,
   displayCadReviewWorkLog = false,
   cadReviewChildActivityByReviewId = {},
+  animatedUserMessageId = null,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
   const rawRows = useMemo(
@@ -248,6 +251,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       displayCadReviewWorkLog,
       cadReviewChildActivityByReviewId,
+      animatedUserMessageId,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -262,6 +266,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       skills,
       displayCadReviewWorkLog,
       cadReviewChildActivityByReviewId,
+      animatedUserMessageId,
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
@@ -418,11 +423,17 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   const displayedUserMessage = deriveDisplayedUserMessageState(row.message.text);
   const terminalContexts = displayedUserMessage.contexts;
   const canRevertAgentWork = typeof row.revertTurnCount === "number";
+  const shouldAnimate = row.message.id === ctx.animatedUserMessageId;
 
   return (
     <div className="flex justify-end">
       <div className="group flex max-w-[80%] flex-col items-end">
-        <div className="user-message-bubble-in relative rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3">
+        <div
+          className={cn(
+            "relative rounded-2xl rounded-br-sm border border-border bg-secondary px-4 py-3",
+            shouldAnimate && "user-message-bubble-in",
+          )}
+        >
           {userImages.length > 0 && (
             <div className="mb-2 grid max-w-[420px] grid-cols-2 gap-2">
               {userImages.map((image: NonNullable<TimelineMessage["attachments"]>[number]) => (

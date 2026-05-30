@@ -816,6 +816,7 @@ export default function ChatView(props: ChatViewProps) {
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
+  const [animatedUserMessageId, setAnimatedUserMessageId] = useState<MessageId | null>(null);
   const optimisticUserMessagesRef = useRef(optimisticUserMessages);
   optimisticUserMessagesRef.current = optimisticUserMessages;
   const [localDraftErrorsByDraftId, setLocalDraftErrorsByDraftId] = useState<
@@ -891,6 +892,17 @@ export default function ChatView(props: ChatViewProps) {
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  useEffect(() => {
+    if (animatedUserMessageId === null) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setAnimatedUserMessageId((current) => (current === animatedUserMessageId ? null : current));
+    }, 240);
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [animatedUserMessageId]);
   const threadPlanCatalog = useThreadPlanCatalog(
     useMemo(() => {
       const threadIds: ThreadId[] = [];
@@ -2702,6 +2714,7 @@ export default function ChatView(props: ChatViewProps) {
         streaming: false,
       },
     ]);
+    setAnimatedUserMessageId(messageIdForSend);
 
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
@@ -3116,6 +3129,7 @@ export default function ChatView(props: ChatViewProps) {
           streaming: false,
         },
       ]);
+      setAnimatedUserMessageId(messageIdForSend);
 
       try {
         await persistThreadSettingsForNextTurn({
@@ -3674,6 +3688,7 @@ export default function ChatView(props: ChatViewProps) {
               skills={activeProviderStatus?.skills ?? EMPTY_PROVIDER_SKILLS}
               displayCadReviewWorkLog={displayCadReviewWorkLog}
               cadReviewChildActivityByReviewId={cadReviewChildActivityByReviewId}
+              animatedUserMessageId={animatedUserMessageId}
               onIsAtEndChange={onIsAtEndChange}
             />
 
