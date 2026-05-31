@@ -10,7 +10,7 @@ import { BootstrapHttpError, retryTransientBootstrap } from "./auth";
 
 import { readPrimaryEnvironmentTarget, resolvePrimaryEnvironmentHttpUrl } from "./target";
 
-const SERVER_ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/cadsense/environment";
+const SERVER_ENVIRONMENT_DESCRIPTOR_PATH = "/.well-known/Cadsense/environment";
 
 interface PrimaryEnvironmentBootstrapState {
   readonly descriptor: ExecutionEnvironmentDescriptor | null;

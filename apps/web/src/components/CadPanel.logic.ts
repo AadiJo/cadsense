@@ -26,7 +26,7 @@ export function getCadModelViewerBlocker(
   if (oversizedFile) {
     return [
       `The synced CAD preview is ${formatCadModelBytes(oversizedFile.sizeBytes ?? 0)}, above the ${formatCadModelBytes(CAD_VIEWER_MODEL_SIZE_LIMIT_BYTES)} interactive viewer limit.`,
-      "CadSense skipped importing it so the rest of the app stays responsive. Sync or export a smaller preview mesh before opening the viewer.",
+      "Cadsense skipped importing it so the rest of the app stays responsive. Sync or export a smaller preview mesh before opening the viewer.",
     ].join(" ");
   }
 
@@ -38,7 +38,7 @@ export function getCadModelViewerBlocker(
     if (totalBytes > CAD_VIEWER_MODEL_SIZE_LIMIT_BYTES) {
       return [
         `The synced CAD preview assets total ${formatCadModelBytes(totalBytes)}, above the ${formatCadModelBytes(CAD_VIEWER_MODEL_SIZE_LIMIT_BYTES)} interactive viewer limit.`,
-        "CadSense skipped importing them so the rest of the app stays responsive. Sync or export a smaller preview mesh before opening the viewer.",
+        "Cadsense skipped importing them so the rest of the app stays responsive. Sync or export a smaller preview mesh before opening the viewer.",
       ].join(" ");
     }
   }

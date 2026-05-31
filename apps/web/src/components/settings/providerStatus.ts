@@ -39,7 +39,7 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     return {
       headline: "Disabled",
       detail:
-        provider.message ?? "This provider is installed but disabled for new sessions in CadSense.",
+        provider.message ?? "This provider is installed but disabled for new sessions in Cadsense.",
     };
   }
   if (!provider.installed) {

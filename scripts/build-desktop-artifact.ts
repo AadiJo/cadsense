@@ -557,8 +557,8 @@ export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefi
 
 export function resolveDesktopProductName(version: string): string {
   return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "CadSense (Nightly)"
-    : (desktopPackageJson.productName ?? "CadSense");
+    ? "Cadsense (Nightly)"
+    : (desktopPackageJson.productName ?? "Cadsense");
 }
 
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -572,7 +572,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   const buildConfig: Record<string, unknown> = {
     appId: "com.cadsense.cadsense",
     productName: resolveDesktopProductName(version),
-    artifactName: "CadSense-${version}-${arch}.${ext}",
+    artifactName: "Cadsense-${version}-${arch}.${ext}",
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -786,8 +786,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     buildVersion: appVersion,
     cadsenseCommitHash: commitHash,
     private: true,
-    description: "CadSense desktop build",
-    author: "CadSense Tools",
+    description: "Cadsense desktop build",
+    author: "Cadsense Tools",
     main: "apps/desktop/dist-electron/main.cjs",
     build: yield* createBuildConfig(
       options.platform,
@@ -949,7 +949,7 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
     Flag.optional,
   ),
 }).pipe(
-  Command.withDescription("Build a desktop artifact for CadSense."),
+  Command.withDescription("Build a desktop artifact for Cadsense."),
   Command.withHandler((input) => Effect.flatMap(resolveBuildOptions(input), buildDesktopArtifact)),
 );
 

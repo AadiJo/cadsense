@@ -20,9 +20,9 @@ describe("branding", () => {
       value: {
         desktopBridge: {
           getAppBranding: () => ({
-            baseName: "CadSense",
+            baseName: "Cadsense",
             stageLabel: "Nightly",
-            displayName: "CadSense (Nightly)",
+            displayName: "Cadsense (Nightly)",
           }),
         },
       },
@@ -30,9 +30,9 @@ describe("branding", () => {
 
     const branding = await import("./branding");
 
-    expect(branding.APP_BASE_NAME).toBe("CadSense");
+    expect(branding.APP_BASE_NAME).toBe("Cadsense");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("CadSense (Nightly)");
+    expect(branding.APP_DISPLAY_NAME).toBe("Cadsense (Nightly)");
   });
 
   it("normalizes hosted app channel metadata", async () => {
@@ -43,7 +43,7 @@ describe("branding", () => {
     expect(branding.HOSTED_APP_CHANNEL).toBe("nightly");
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBe("Nightly");
     expect(branding.APP_STAGE_LABEL).toBe("Nightly");
-    expect(branding.APP_DISPLAY_NAME).toBe("CadSense (Nightly)");
+    expect(branding.APP_DISPLAY_NAME).toBe("Cadsense (Nightly)");
   });
 
   it("ignores unknown hosted app channels", async () => {

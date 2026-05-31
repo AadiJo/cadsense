@@ -53,7 +53,7 @@ describe("hostedPairing", () => {
     );
 
     expect(url.origin).toBe("https://app.cadsense.codes");
-    expect(url.pathname).toBe("/__cadsense/channel");
+    expect(url.pathname).toBe("/__Cadsense/channel");
     expect(url.searchParams.get("channel")).toBe("nightly");
     expect(url.searchParams.has("next")).toBe(false);
   });

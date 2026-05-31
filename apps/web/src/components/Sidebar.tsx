@@ -2180,9 +2180,9 @@ const SidebarProjectListRow = memo(function SidebarProjectListRow(props: Sidebar
   );
 });
 
-function CadSenseWordmark() {
+function CadsenseWordmark() {
   return (
-    <span className="shrink-0 text-sm font-semibold leading-none text-foreground">CadSense</span>
+    <span className="shrink-0 text-sm font-semibold leading-none text-foreground">Cadsense</span>
   );
 }
 
@@ -2354,6 +2354,7 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
 }: {
   isElectron: boolean;
 }) {
+  const runtimeLabel = isElectron ? "Desktop" : "Web";
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
@@ -2365,9 +2366,9 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
               className="ml-1 flex min-w-0 flex-1 cursor-pointer items-center gap-1 rounded-md outline-hidden ring-ring transition-colors hover:text-foreground focus-visible:ring-2"
               to="/"
             >
-              <CadSenseWordmark />
+              <CadsenseWordmark />
               <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Agent
+                {runtimeLabel}
               </span>
               <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
                 {APP_STAGE_LABEL}

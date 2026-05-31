@@ -69,9 +69,9 @@ describe("projectScripts helpers", () => {
       },
     });
 
-    expect(env.CADSENSE_PROJECT_ROOT).toBe("/custom-root");
+    expect(env.cadsense_PROJECT_ROOT).toBe("/custom-root");
     expect(env.CUSTOM_FLAG).toBe("1");
-    expect(env.CADSENSE_WORKTREE_PATH).toBeUndefined();
+    expect(env.cadsense_WORKTREE_PATH).toBeUndefined();
   });
 
   it("prefers the worktree path for script cwd resolution", () => {

@@ -54,7 +54,7 @@ function describeExhaustedToast(): string {
 }
 
 function getConnectionDisplayName(status: WsConnectionStatus): string {
-  return status.connectionLabel?.trim() || "CadSense Server";
+  return status.connectionLabel?.trim() || "Cadsense Server";
 }
 
 function buildReconnectTitle(status: WsConnectionStatus): string {

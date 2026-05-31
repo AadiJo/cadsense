@@ -1,4 +1,4 @@
-// This file mostly exists because we want dev mode to say "CadSense (Dev)" instead of "electron"
+// This file mostly exists because we want dev mode to say "Cadsense (Dev)" instead of "electron"
 
 import { spawnSync } from "node:child_process";
 import {
@@ -17,7 +17,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
-const APP_DISPLAY_NAME = isDevelopment ? "CadSense (Dev)" : "CadSense (Alpha)";
+const APP_DISPLAY_NAME = "Cadsense (Dev)";
 const APP_BUNDLE_ID = isDevelopment ? "com.cadsense.cadsense.dev" : "com.cadsense.cadsense";
 const LAUNCHER_VERSION = 2;
 

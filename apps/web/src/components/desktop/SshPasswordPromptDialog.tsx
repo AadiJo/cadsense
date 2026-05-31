@@ -159,9 +159,9 @@ export function SshPasswordPromptDialog() {
         <DialogHeader>
           <DialogTitle>SSH Password Required</DialogTitle>
           <DialogDescription>
-            CadSense needs your SSH password to connect to{" "}
+            Cadsense needs your SSH password to connect to{" "}
             {target ? <code>{target}</code> : "the remote host"}. The password is passed to the
-            local SSH process for this connection attempt and is not saved by CadSense.
+            local SSH process for this connection attempt and is not saved by Cadsense.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel className="space-y-3" scrollFade={false}>

@@ -55,7 +55,7 @@ describe("buildProviderInstanceUpdatePatch", () => {
       driver: ProviderDriverKind.make("codex"),
       enabled: true,
       config: {
-        binaryPath: "/opt/cadsense/codex",
+        binaryPath: "/opt/Cadsense/codex",
       },
     } satisfies ProviderInstanceConfig;
 

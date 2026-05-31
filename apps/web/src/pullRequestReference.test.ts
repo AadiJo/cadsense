@@ -4,15 +4,15 @@ import { parsePullRequestReference } from "./pullRequestReference";
 
 describe("parsePullRequestReference", () => {
   it("accepts GitHub pull request URLs", () => {
-    expect(parsePullRequestReference("https://github.com/pingdotgg/cadsense/pull/42")).toBe(
-      "https://github.com/pingdotgg/cadsense/pull/42",
+    expect(parsePullRequestReference("https://github.com/pingdotgg/Cadsense/pull/42")).toBe(
+      "https://github.com/pingdotgg/Cadsense/pull/42",
     );
   });
 
   it("accepts Azure DevOps pull request URLs", () => {
     expect(
-      parsePullRequestReference("https://dev.azure.com/acme/project/_git/cadsense/pullrequest/42"),
-    ).toBe("https://dev.azure.com/acme/project/_git/cadsense/pullrequest/42");
+      parsePullRequestReference("https://dev.azure.com/acme/project/_git/Cadsense/pullrequest/42"),
+    ).toBe("https://dev.azure.com/acme/project/_git/Cadsense/pullrequest/42");
   });
 
   it("accepts GitLab merge request URLs", () => {
@@ -24,9 +24,9 @@ describe("parsePullRequestReference", () => {
   it("accepts legacy Azure DevOps pull request URLs", () => {
     expect(
       parsePullRequestReference(
-        "https://acme.visualstudio.com/project/_git/cadsense/pullrequest/42",
+        "https://acme.visualstudio.com/project/_git/Cadsense/pullrequest/42",
       ),
-    ).toBe("https://acme.visualstudio.com/project/_git/cadsense/pullrequest/42");
+    ).toBe("https://acme.visualstudio.com/project/_git/Cadsense/pullrequest/42");
   });
 
   it("accepts raw numbers", () => {
@@ -47,8 +47,8 @@ describe("parsePullRequestReference", () => {
 
   it("accepts gh pr checkout commands with GitHub pull request URLs", () => {
     expect(
-      parsePullRequestReference("gh pr checkout https://github.com/pingdotgg/cadsense/pull/42"),
-    ).toBe("https://github.com/pingdotgg/cadsense/pull/42");
+      parsePullRequestReference("gh pr checkout https://github.com/pingdotgg/Cadsense/pull/42"),
+    ).toBe("https://github.com/pingdotgg/Cadsense/pull/42");
   });
 
   it("accepts glab mr checkout commands with raw numbers", () => {

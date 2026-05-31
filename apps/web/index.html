@@ -9,15 +9,15 @@
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#161616" media="(prefers-color-scheme: dark)" />
     <meta name="theme-color" content="#161616" />
-    <link rel="icon" href="/favicon-32x32.png?v=cadsense" type="image/png" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=cadsense" />
+    <link rel="icon" href="/favicon-32x32.png?v=Cadsense" type="image/png" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png?v=Cadsense" />
     <script>
       (() => {
         const LIGHT_BACKGROUND = "#ffffff";
         const DARK_BACKGROUND = "#161616";
         const themeColorMeta = document.querySelector('meta[name="theme-color"]');
         try {
-          const storedTheme = window.localStorage.getItem("cadsense:theme");
+          const storedTheme = window.localStorage.getItem("Cadsense:theme");
           const theme =
             storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
               ? storedTheme
@@ -89,13 +89,13 @@
       href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..800;1,9..40,300..800&display=swap"
       rel="stylesheet"
     />
-    <title>CadSense (Alpha)</title>
+    <title>Cadsense (Dev)</title>
   </head>
   <body>
     <div id="root">
       <div id="boot-shell">
-        <div id="boot-shell-card" aria-label="CadSense splash screen">
-          <img id="boot-shell-logo" src="/apple-touch-icon.png?v=cadsense" alt="CadSense" />
+        <div id="boot-shell-card" aria-label="Cadsense splash screen">
+          <img id="boot-shell-logo" src="/apple-touch-icon.png?v=Cadsense" alt="Cadsense" />
         </div>
       </div>
     </div>

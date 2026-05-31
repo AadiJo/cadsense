@@ -228,7 +228,7 @@ describe("serverState", () => {
       payload: {
         environment: baseEnvironment,
         cwd: "/tmp/workspace",
-        projectName: "cadsense",
+        projectName: "Cadsense",
         bootstrapProjectId: ProjectId.make("project-1"),
         bootstrapThreadId: ThreadId.make("thread-1"),
       },
@@ -237,7 +237,7 @@ describe("serverState", () => {
     expect(listener).toHaveBeenCalledWith({
       environment: baseEnvironment,
       cwd: "/tmp/workspace",
-      projectName: "cadsense",
+      projectName: "Cadsense",
       bootstrapProjectId: ProjectId.make("project-1"),
       bootstrapThreadId: ThreadId.make("thread-1"),
     });
@@ -247,7 +247,7 @@ describe("serverState", () => {
     expect(lateListener).toHaveBeenCalledWith({
       environment: baseEnvironment,
       cwd: "/tmp/workspace",
-      projectName: "cadsense",
+      projectName: "Cadsense",
       bootstrapProjectId: ProjectId.make("project-1"),
       bootstrapThreadId: ThreadId.make("thread-1"),
     });

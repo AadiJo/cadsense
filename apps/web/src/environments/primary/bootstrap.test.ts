@@ -97,7 +97,7 @@ describe("environmentBootstrap", () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock).toHaveBeenCalledWith("http://localhost/.well-known/cadsense/environment");
+    expect(fetchMock).toHaveBeenCalledWith("http://localhost/.well-known/Cadsense/environment");
   });
 
   it("uses https descriptor urls when the primary environment uses wss", async () => {
@@ -108,7 +108,7 @@ describe("environmentBootstrap", () => {
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://remote.example.com/.well-known/cadsense/environment",
+      "https://remote.example.com/.well-known/Cadsense/environment",
     );
   });
 
@@ -119,7 +119,7 @@ describe("environmentBootstrap", () => {
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://remote.example.com/.well-known/cadsense/environment",
+      "https://remote.example.com/.well-known/Cadsense/environment",
     );
     expect(getPrimaryKnownEnvironment()?.target).toEqual({
       httpBaseUrl: "https://remote.example.com/",
@@ -134,7 +134,7 @@ describe("environmentBootstrap", () => {
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://remote.example.com/.well-known/cadsense/environment",
+      "https://remote.example.com/.well-known/Cadsense/environment",
     );
     expect(getPrimaryKnownEnvironment()?.target).toEqual({
       httpBaseUrl: "https://remote.example.com/",
@@ -149,7 +149,7 @@ describe("environmentBootstrap", () => {
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://localhost:5735/.well-known/cadsense/environment",
+      "http://localhost:5735/.well-known/Cadsense/environment",
     );
   });
 
@@ -174,7 +174,7 @@ describe("environmentBootstrap", () => {
 
     await expect(resolveInitialPrimaryEnvironmentDescriptor()).resolves.toEqual(BASE_ENVIRONMENT);
     expect(fetchMock).toHaveBeenCalledWith(
-      "http://127.0.0.1:5733/.well-known/cadsense/environment",
+      "http://127.0.0.1:5733/.well-known/Cadsense/environment",
     );
   });
 });

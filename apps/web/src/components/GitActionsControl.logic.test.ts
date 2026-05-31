@@ -1094,8 +1094,8 @@ describe("resolveLiveThreadBranchUpdate", () => {
 
   it("does not regress a semantic thread ref back to a temporary worktree ref", () => {
     const update = resolveLiveThreadBranchUpdate({
-      threadBranch: "cadsense/github-query-rate-limit",
-      gitStatus: status({ refName: "cadsense/bda76797" }),
+      threadBranch: "Cadsense/github-query-rate-limit",
+      gitStatus: status({ refName: "Cadsense/bda76797" }),
     });
 
     assert.equal(update, null);

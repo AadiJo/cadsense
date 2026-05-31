@@ -118,7 +118,7 @@ export async function fetchRemoteEnvironmentDescriptor(input: {
 }): Promise<ExecutionEnvironmentDescriptor> {
   return fetchRemoteJson<ExecutionEnvironmentDescriptor>({
     httpBaseUrl: input.httpBaseUrl,
-    pathname: "/.well-known/cadsense/environment",
+    pathname: "/.well-known/Cadsense/environment",
   });
 }
 

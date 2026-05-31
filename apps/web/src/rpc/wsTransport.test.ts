@@ -222,7 +222,7 @@ describe("WsTransport", () => {
         closeCode: 1006,
         closeReason: "server unavailable",
         hasConnected: false,
-        lastError: "Unable to connect to the CadSense server WebSocket.",
+        lastError: "Unable to connect to the Cadsense server WebSocket.",
         phase: "disconnected",
       });
     });

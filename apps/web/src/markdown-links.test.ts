@@ -22,17 +22,17 @@ describe("rewriteMarkdownFileUriHref", () => {
   it("normalizes file uri hrefs for windows drive paths", () => {
     expect(
       rewriteMarkdownFileUriHref(
-        "file:///D:/Programme/cadsense/apps/web/src/components/chat/OpenInPicker.tsx#L69",
+        "file:///D:/Programme/Cadsense/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
-    ).toBe("D:/Programme/cadsense/apps/web/src/components/chat/OpenInPicker.tsx#L69");
+    ).toBe("D:/Programme/Cadsense/apps/web/src/components/chat/OpenInPicker.tsx#L69");
   });
 
   it("unwraps angle-bracketed file uri hrefs", () => {
     expect(
       rewriteMarkdownFileUriHref(
-        " <file:///D:/Programme/cadsense/apps/web/src/markdown-links.ts> ",
+        " <file:///D:/Programme/Cadsense/apps/web/src/markdown-links.ts> ",
       ),
-    ).toBe("D:/Programme/cadsense/apps/web/src/markdown-links.ts");
+    ).toBe("D:/Programme/Cadsense/apps/web/src/markdown-links.ts");
   });
 });
 
@@ -80,40 +80,40 @@ describe("resolveMarkdownFileLinkTarget", () => {
   it("formats tooltip display paths relative to the cwd when possible", () => {
     expect(
       resolveMarkdownFileLinkMeta(
-        "file:///C:/Users/mike/dev-stuff/cadsense/apps/web/src/session-logic.ts#L501",
-        "C:/Users/mike/dev-stuff/cadsense",
+        "file:///C:/Users/mike/dev-stuff/Cadsense/apps/web/src/session-logic.ts#L501",
+        "C:/Users/mike/dev-stuff/Cadsense",
       ),
     ).toMatchObject({
-      displayPath: "cadsense/apps/web/src/session-logic.ts:501",
+      displayPath: "Cadsense/apps/web/src/session-logic.ts:501",
     });
   });
 
   it("formats tooltip display paths relative to the cwd for slash-prefixed windows paths", () => {
     expect(
       resolveMarkdownFileLinkMeta(
-        "/C:/Users/mike/dev-stuff/cadsense/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
-        "C:/Users/mike/dev-stuff/cadsense",
+        "/C:/Users/mike/dev-stuff/Cadsense/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
+        "C:/Users/mike/dev-stuff/Cadsense",
       ),
     ).toMatchObject({
       displayPath:
-        "cadsense/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
+        "Cadsense/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx",
     });
   });
 
   it("normalizes slash-prefixed windows drive paths before resolving", () => {
     expect(
       resolveMarkdownFileLinkTarget(
-        "/D:/Programme/cadsense/apps/web/src/components/chat/OpenInPicker.tsx#L69",
+        "/D:/Programme/Cadsense/apps/web/src/components/chat/OpenInPicker.tsx#L69",
       ),
-    ).toBe("D:/Programme/cadsense/apps/web/src/components/chat/OpenInPicker.tsx:69");
+    ).toBe("D:/Programme/Cadsense/apps/web/src/components/chat/OpenInPicker.tsx:69");
   });
 
   it("resolves angle-bracketed windows drive paths", () => {
     expect(
       resolveMarkdownFileLinkTarget(
-        "</D:/Programme/cadsense/apps/web/src/components/ChatMarkdown.tsx:1>",
+        "</D:/Programme/Cadsense/apps/web/src/components/ChatMarkdown.tsx:1>",
       ),
-    ).toBe("D:/Programme/cadsense/apps/web/src/components/ChatMarkdown.tsx:1");
+    ).toBe("D:/Programme/Cadsense/apps/web/src/components/ChatMarkdown.tsx:1");
   });
 
   it("does not treat app routes as file links", () => {

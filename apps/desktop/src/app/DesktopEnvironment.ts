@@ -80,7 +80,7 @@ export class DesktopEnvironment extends Context.Service<
   DesktopEnvironmentShape
 >()("cadsense/desktop/Environment") {}
 
-const APP_BASE_NAME = "CadSense";
+const APP_BASE_NAME = "Cadsense";
 
 function resolveDesktopAppStageLabel(input: {
   readonly isDevelopment: boolean;
@@ -90,7 +90,7 @@ function resolveDesktopAppStageLabel(input: {
     return "Dev";
   }
 
-  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Alpha";
+  return isNightlyDesktopVersion(input.appVersion) ? "Nightly" : "Dev";
 }
 
 function resolveDesktopAppBranding(input: {
@@ -163,7 +163,7 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
   const displayName = branding.displayName;
   const stateDir = path.join(baseDir, isDevelopment ? "dev" : "userdata");
   const userDataDirName = isDevelopment ? "cadsense-dev" : "cadsense";
-  const legacyUserDataDirName = isDevelopment ? "CadSense (Dev)" : "CadSense (Alpha)";
+  const legacyUserDataDirName = isDevelopment ? "Cadsense (Dev)" : "CadSense (Alpha)";
   const resourcesPath = input.resourcesPath;
 
   return DesktopEnvironment.of({

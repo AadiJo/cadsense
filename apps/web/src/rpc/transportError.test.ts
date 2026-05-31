@@ -6,7 +6,7 @@ describe("transportError", () => {
   it("detects websocket transport failures", () => {
     expect(isTransportConnectionErrorMessage("SocketCloseError: 1006")).toBe(true);
     expect(
-      isTransportConnectionErrorMessage("Unable to connect to the CadSense server WebSocket."),
+      isTransportConnectionErrorMessage("Unable to connect to the Cadsense server WebSocket."),
     ).toBe(true);
     expect(isTransportConnectionErrorMessage("SocketOpenError: Timeout")).toBe(true);
   });

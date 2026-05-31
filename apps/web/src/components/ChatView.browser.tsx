@@ -914,7 +914,7 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
           detail: Option.none(),
           auth: {
             status: "authenticated",
-            account: Option.some("cadsense-oss"),
+            account: Option.some("Cadsense-oss"),
             host: Option.some("github.com"),
             detail: Option.none(),
           },
@@ -929,7 +929,7 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
           detail: Option.none(),
           auth: {
             status: "authenticated",
-            account: Option.some("cadsense-oss"),
+            account: Option.some("Cadsense-oss"),
             host: Option.some("gitlab.com"),
             detail: Option.none(),
           },
@@ -944,7 +944,7 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
           detail: Option.none(),
           auth: {
             status: "authenticated",
-            account: Option.some("cadsense-oss"),
+            account: Option.some("Cadsense-oss"),
             host: Option.some("bitbucket.org"),
             detail: Option.none(),
           },
@@ -959,7 +959,7 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
           detail: Option.none(),
           auth: {
             status: "authenticated",
-            account: Option.some("cadsense-oss"),
+            account: Option.some("Cadsense-oss"),
             host: Option.some("dev.azure.com"),
             detail: Option.none(),
           },
@@ -1806,7 +1806,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
               CADSENSE_PROJECT_ROOT: "/repo/project",
             },
           });
-          expect(openRequest?.env?.CADSENSE_WORKTREE_PATH).toBeUndefined();
+          expect(openRequest?.env?.cadsense_WORKTREE_PATH).toBeUndefined();
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -2288,7 +2288,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
               prepareWorktree: {
                 projectCwd: "/repo/project",
                 baseBranch: "main",
-                branch: expect.stringMatching(/^cadsense\/[0-9a-f]{8}$/),
+                branch: expect.stringMatching(/^Cadsense\/[0-9a-f]{8}$/),
               },
               runSetupScript: true,
             },
@@ -4057,9 +4057,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
         if (body._tag === WS_METHODS.sourceControlLookupRepository) {
           return {
             provider: "github",
-            nameWithOwner: "cadsense-oss/cadsense-env",
-            url: "https://github.com/cadsense-oss/cadsense-env",
-            sshUrl: "git@github.com:cadsense-oss/cadsense-env.git",
+            nameWithOwner: "Cadsense-oss/Cadsense-env",
+            url: "https://github.com/Cadsense-oss/Cadsense-env",
+            sshUrl: "git@github.com:Cadsense-oss/Cadsense-env.git",
           };
         }
 
@@ -4095,7 +4095,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
       await page
         .getByPlaceholder("Enter GitHub repository (owner/repo)")
-        .fill("cadsense-oss/cadsense-env");
+        .fill("Cadsense-oss/Cadsense-env");
       await dispatchInputKey(repositoryInput, { key: "Enter" });
 
       await vi.waitFor(
@@ -4105,9 +4105,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
           );
           expect(clonePathInput?.value).toBe("~/");
           expect(document.body.textContent).toContain("Repository");
-          expect(document.body.textContent).toContain("cadsense-oss/cadsense-env");
+          expect(document.body.textContent).toContain("Cadsense-oss/Cadsense-env");
           expect(document.body.textContent).toContain(
-            "https://github.com/cadsense-oss/cadsense-env",
+            "https://github.com/Cadsense-oss/Cadsense-env",
           );
           expect(document.body.textContent).toContain("Select where to clone");
           expect(document.body.textContent).toContain("Development");
@@ -4118,7 +4118,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await page
         .getByPlaceholder("Enter path (e.g. ~/projects/my-app)")
-        .fill("~/Development/cadsense-env");
+        .fill("~/Development/Cadsense-env");
       const clonePathInput = await waitForCommandPaletteInput(
         "Enter path (e.g. ~/projects/my-app)",
       );
@@ -4130,8 +4130,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
             (request) => request._tag === WS_METHODS.sourceControlCloneRepository,
           ) as { destinationPath?: string; remoteUrl?: string } | undefined;
           expect(cloneRequest).toMatchObject({
-            remoteUrl: "git@github.com:cadsense-oss/cadsense-env.git",
-            destinationPath: "~/Development/cadsense-env",
+            remoteUrl: "git@github.com:Cadsense-oss/Cadsense-env.git",
+            destinationPath: "~/Development/Cadsense-env",
           });
         },
         { timeout: 8_000, interval: 16 },
