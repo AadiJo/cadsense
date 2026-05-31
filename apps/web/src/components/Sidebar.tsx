@@ -41,7 +41,6 @@ import {
   type DesktopUpdateState,
   ProjectId,
   type ScopedThreadRef,
-  type SidebarProjectGroupingMode,
   type ThreadEnvMode,
   ThreadId,
 } from "@cadsense/contracts";
@@ -122,15 +121,7 @@ import {
   DialogTitle,
 } from "./ui/dialog";
 import { Input } from "./ui/input";
-import {
-  Menu,
-  MenuGroup,
-  MenuPopup,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSeparator,
-  MenuTrigger,
-} from "./ui/menu";
+import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -138,7 +129,6 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "./ui/number-field";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -182,7 +172,6 @@ import { useSettings, useUpdateSettings } from "~/hooks/useSettings";
 import { useServerKeybindings } from "../rpc/serverState";
 import {
   derivePhysicalProjectKey,
-  deriveProjectGroupingOverrideKey,
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
@@ -212,11 +201,6 @@ const SIDEBAR_LIST_ANIMATION_OPTIONS = {
   easing: "ease-out",
 } as const;
 const EMPTY_THREAD_JUMP_LABELS = new Map<string, string>();
-const PROJECT_GROUPING_MODE_LABELS: Record<SidebarProjectGroupingMode, string> = {
-  repository: "Group by repository",
-  repository_path: "Group by repository path",
-  separate: "Keep separate",
-};
 
 function clampSidebarThreadPreviewCount(value: number): SidebarThreadPreviewCount {
   return Math.min(
@@ -242,17 +226,6 @@ function getOnshapeProjectUrl(member: SidebarProjectGroupMember): string | null 
   }
 
   return member.externalContext.onshape.reference.url ?? null;
-}
-
-function projectGroupingModeDescription(mode: SidebarProjectGroupingMode): string {
-  switch (mode) {
-    case "repository":
-      return "Projects from the same repository share one sidebar row.";
-    case "repository_path":
-      return "Projects group only when both the repository and repo-relative path match.";
-    case "separate":
-      return "Every project path gets its own sidebar row.";
-  }
 }
 
 function buildThreadJumpLabelMap(input: {
@@ -968,8 +941,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const defaultThreadEnvMode = useSettings<ThreadEnvMode>(
     (settings) => settings.defaultThreadEnvMode,
   );
-  const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
-  const { updateSettings } = useUpdateSettings();
   const sidebarThreadPreviewCount = useSettings<SidebarThreadPreviewCount>(
     (settings) => settings.sidebarThreadPreviewCount,
   );
@@ -1090,11 +1061,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     null,
   );
   const [projectRenameTitle, setProjectRenameTitle] = useState("");
-  const [projectGroupingTarget, setProjectGroupingTarget] =
-    useState<SidebarProjectGroupMember | null>(null);
-  const [projectGroupingSelection, setProjectGroupingSelection] = useState<
-    SidebarProjectGroupingMode | "inherit"
-  >("inherit");
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
   const confirmArchiveButtonRefs = useRef(new Map<string, HTMLButtonElement>());
@@ -1352,17 +1318,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     setProjectRenameTitle(member.name);
   }, []);
 
-  const openProjectGroupingDialog = useCallback(
-    (member: SidebarProjectGroupMember) => {
-      const overrideKey = deriveProjectGroupingOverrideKey(member);
-      setProjectGroupingTarget(member);
-      setProjectGroupingSelection(
-        projectGroupingSettings.sidebarProjectGroupingOverrides?.[overrideKey] ?? "inherit",
-      );
-    },
-    [projectGroupingSettings.sidebarProjectGroupingOverrides],
-  );
-
   const removeProject = useCallback(
     async (member: SidebarProjectGroupMember, options: { force?: boolean } = {}): Promise<void> => {
       const memberProjectRef = scopeProjectRef(member.environmentId, member.id);
@@ -1552,9 +1507,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               case "rename":
                 openProjectRenameDialog(member);
                 return;
-              case "grouping":
-                openProjectGroupingDialog(member);
-                return;
               case "copy-path":
                 copyPathToClipboard(member.cwd, { path: member.cwd });
                 return;
@@ -1572,7 +1524,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         };
 
         const buildTargetedItem = (
-          action: "open-onshape" | "rename" | "grouping" | "copy-path" | "delete",
+          action: "open-onshape" | "rename" | "copy-path" | "delete",
           label: string,
           options?: {
             destructive?: boolean;
@@ -1631,7 +1583,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           [
             ...openOnshapeItems,
             buildTargetedItem("rename", "Rename project"),
-            buildTargetedItem("grouping", "Project grouping…"),
             buildTargetedItem("copy-path", "Copy Project Path"),
             buildTargetedItem("delete", "Remove project", {
               destructive: true,
@@ -1653,7 +1604,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     [
       copyPathToClipboard,
       handleRemoveProject,
-      openProjectGroupingDialog,
       openProjectRenameDialog,
       project.groupedProjectCount,
       project.memberProjects,
@@ -1948,37 +1898,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     }
   }, [closeProjectRenameDialog, projectRenameTarget, projectRenameTitle]);
 
-  const closeProjectGroupingDialog = useCallback(() => {
-    setProjectGroupingTarget(null);
-    setProjectGroupingSelection("inherit");
-  }, []);
-
-  const saveProjectGroupingPreference = useCallback(() => {
-    if (!projectGroupingTarget) {
-      return;
-    }
-
-    const overrideKey = deriveProjectGroupingOverrideKey(projectGroupingTarget);
-    const nextOverrides = {
-      ...projectGroupingSettings.sidebarProjectGroupingOverrides,
-    };
-    if (projectGroupingSelection === "inherit") {
-      delete nextOverrides[overrideKey];
-    } else {
-      nextOverrides[overrideKey] = projectGroupingSelection;
-    }
-    updateSettings({
-      sidebarProjectGroupingOverrides: nextOverrides,
-    });
-    closeProjectGroupingDialog();
-  }, [
-    closeProjectGroupingDialog,
-    projectGroupingSelection,
-    projectGroupingSettings.sidebarProjectGroupingOverrides,
-    projectGroupingTarget,
-    updateSettings,
-  ]);
-
   const handleThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -2220,77 +2139,6 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           </DialogFooter>
         </DialogPopup>
       </Dialog>
-
-      <Dialog
-        open={projectGroupingTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            closeProjectGroupingDialog();
-          }
-        }}
-      >
-        <DialogPopup className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Project grouping</DialogTitle>
-            <DialogDescription>
-              {projectGroupingTarget
-                ? `Choose how ${projectGroupingTarget.cwd} should be grouped in the sidebar.`
-                : "Choose how this project should be grouped in the sidebar."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel className="space-y-4">
-            <div className="grid gap-1.5">
-              <span className="text-xs font-medium text-foreground">Grouping rule</span>
-              <Select
-                value={projectGroupingSelection}
-                onValueChange={(value) => {
-                  if (
-                    value === "inherit" ||
-                    value === "repository" ||
-                    value === "repository_path" ||
-                    value === "separate"
-                  ) {
-                    setProjectGroupingSelection(value);
-                  }
-                }}
-              >
-                <SelectTrigger className="w-full" aria-label="Project grouping rule">
-                  <SelectValue>
-                    {projectGroupingSelection === "inherit"
-                      ? `Use global default (${PROJECT_GROUPING_MODE_LABELS[projectGroupingSettings.sidebarProjectGroupingMode]})`
-                      : PROJECT_GROUPING_MODE_LABELS[projectGroupingSelection]}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  <SelectItem hideIndicator value="inherit">
-                    Use global default
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository">
-                    {PROJECT_GROUPING_MODE_LABELS.repository}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="repository_path">
-                    {PROJECT_GROUPING_MODE_LABELS.repository_path}
-                  </SelectItem>
-                  <SelectItem hideIndicator value="separate">
-                    {PROJECT_GROUPING_MODE_LABELS.separate}
-                  </SelectItem>
-                </SelectPopup>
-              </Select>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              {projectGroupingSelection === "inherit"
-                ? projectGroupingModeDescription(projectGroupingSettings.sidebarProjectGroupingMode)
-                : projectGroupingModeDescription(projectGroupingSelection)}
-            </p>
-          </DialogPanel>
-          <DialogFooter>
-            <Button variant="outline" onClick={closeProjectGroupingDialog}>
-              Cancel
-            </Button>
-            <Button onClick={saveProjectGroupingPreference}>Save</Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
     </>
   );
 });
@@ -2317,20 +2165,16 @@ type SortableProjectHandleProps = Pick<
 function ProjectSortMenu({
   projectSortOrder,
   threadSortOrder,
-  projectGroupingMode,
   threadPreviewCount,
   onProjectSortOrderChange,
   onThreadSortOrderChange,
-  onProjectGroupingModeChange,
   onThreadPreviewCountChange,
 }: {
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
-  projectGroupingMode: SidebarProjectGroupingMode;
   threadPreviewCount: SidebarThreadPreviewCount;
   onProjectSortOrderChange: (sortOrder: SidebarProjectSortOrder) => void;
   onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
-  onProjectGroupingModeChange: (mode: SidebarProjectGroupingMode) => void;
   onThreadPreviewCountChange: (count: SidebarThreadPreviewCount) => void;
 }) {
   const handleThreadPreviewCountChange = useCallback(
@@ -2433,30 +2277,6 @@ function ProjectSortMenu({
               </NumberFieldGroup>
             </NumberField>
           </div>
-        </MenuGroup>
-        <MenuSeparator />
-        <MenuGroup>
-          <div className="px-2 pt-2 pb-1 font-medium text-muted-foreground sm:text-xs">
-            Group projects
-          </div>
-          <MenuRadioGroup
-            value={projectGroupingMode}
-            onValueChange={(value) => {
-              if (value === "repository" || value === "repository_path" || value === "separate") {
-                onProjectGroupingModeChange(value);
-              }
-            }}
-          >
-            {(
-              Object.entries(PROJECT_GROUPING_MODE_LABELS) as Array<
-                [SidebarProjectGroupingMode, string]
-              >
-            ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
-                {label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
         </MenuGroup>
       </MenuPopup>
     </Menu>
@@ -2580,7 +2400,6 @@ interface SidebarProjectsContentProps {
   handleDesktopUpdateButtonClick: () => void;
   projectSortOrder: SidebarProjectSortOrder;
   threadSortOrder: SidebarThreadSortOrder;
-  projectGroupingMode: SidebarProjectGroupingMode;
   threadPreviewCount: SidebarThreadPreviewCount;
   updateSettings: ReturnType<typeof useUpdateSettings>["updateSettings"];
   openAddProject: () => void;
@@ -2621,7 +2440,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     handleDesktopUpdateButtonClick,
     projectSortOrder,
     threadSortOrder,
-    projectGroupingMode,
     threadPreviewCount,
     updateSettings,
     openAddProject,
@@ -2660,12 +2478,6 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
   const handleThreadSortOrderChange = useCallback(
     (sortOrder: SidebarThreadSortOrder) => {
       updateSettings({ sidebarThreadSortOrder: sortOrder });
-    },
-    [updateSettings],
-  );
-  const handleProjectGroupingModeChange = useCallback(
-    (groupingMode: SidebarProjectGroupingMode) => {
-      updateSettings({ sidebarProjectGroupingMode: groupingMode });
     },
     [updateSettings],
   );
@@ -2733,11 +2545,9 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
             <ProjectSortMenu
               projectSortOrder={projectSortOrder}
               threadSortOrder={threadSortOrder}
-              projectGroupingMode={projectGroupingMode}
               threadPreviewCount={threadPreviewCount}
               onProjectSortOrderChange={handleProjectSortOrderChange}
               onThreadSortOrderChange={handleThreadSortOrderChange}
-              onProjectGroupingModeChange={handleProjectGroupingModeChange}
               onThreadPreviewCountChange={handleThreadPreviewCountChange}
             />
             <Tooltip>
@@ -2853,7 +2663,6 @@ export default function Sidebar() {
   const isOnSettings = pathname.startsWith("/settings");
   const sidebarThreadSortOrder = useSettings((s) => s.sidebarThreadSortOrder);
   const sidebarProjectSortOrder = useSettings((s) => s.sidebarProjectSortOrder);
-  const sidebarProjectGroupingMode = useSettings((s) => s.sidebarProjectGroupingMode);
   const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
   const sidebarThreadPreviewCount = useSettings((s) => s.sidebarThreadPreviewCount);
   const { updateSettings } = useUpdateSettings();
@@ -3484,7 +3293,6 @@ export default function Sidebar() {
             handleDesktopUpdateButtonClick={handleDesktopUpdateButtonClick}
             projectSortOrder={sidebarProjectSortOrder}
             threadSortOrder={sidebarThreadSortOrder}
-            projectGroupingMode={sidebarProjectGroupingMode}
             threadPreviewCount={sidebarThreadPreviewCount}
             updateSettings={updateSettings}
             openAddProject={openAddProjectCommandPalette}

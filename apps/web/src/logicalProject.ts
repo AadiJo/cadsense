@@ -11,10 +11,10 @@ export interface ProjectGroupingSettings {
 
 export type ProjectGroupingMode = SidebarProjectGroupingMode;
 
-export function selectProjectGroupingSettings(settings: UnifiedSettings): ProjectGroupingSettings {
+export function selectProjectGroupingSettings(_settings: UnifiedSettings): ProjectGroupingSettings {
   return {
-    sidebarProjectGroupingMode: settings.sidebarProjectGroupingMode,
-    sidebarProjectGroupingOverrides: settings.sidebarProjectGroupingOverrides,
+    sidebarProjectGroupingMode: "repository",
+    sidebarProjectGroupingOverrides: {},
   };
 }
 
@@ -103,13 +103,10 @@ export function getProjectOrderKey(project: Pick<Project, "environmentId" | "cwd
 }
 
 export function resolveProjectGroupingMode(
-  project: Pick<Project, "environmentId" | "cwd">,
-  settings: ProjectGroupingSettings,
+  _project: Pick<Project, "environmentId" | "cwd">,
+  _settings: ProjectGroupingSettings,
 ): SidebarProjectGroupingMode {
-  return (
-    settings.sidebarProjectGroupingOverrides?.[deriveProjectGroupingOverrideKey(project)] ??
-    settings.sidebarProjectGroupingMode
-  );
+  return "repository";
 }
 
 function deriveRepositoryScopedKey(

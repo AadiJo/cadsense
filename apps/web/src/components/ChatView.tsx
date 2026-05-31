@@ -2289,6 +2289,20 @@ export default function ChatView(props: ChatViewProps) {
     legendListRef.current?.scrollToEnd?.({ animated });
   }, []);
 
+  useEffect(() => {
+    const handleTimelineContentResized = () => {
+      if (!isAtEndRef.current) {
+        return;
+      }
+      void legendListRef.current?.scrollToEnd?.({ animated: false });
+    };
+
+    window.addEventListener("cadsense:timeline-content-resized", handleTimelineContentResized);
+    return () => {
+      window.removeEventListener("cadsense:timeline-content-resized", handleTimelineContentResized);
+    };
+  }, []);
+
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches.  LegendList fires scroll events with isAtEnd=false while
   // initialScrollAtEnd is settling; hiding is always immediate.

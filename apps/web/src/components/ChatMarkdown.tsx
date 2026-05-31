@@ -80,6 +80,7 @@ const MAX_MERMAID_CACHE_MEMORY_BYTES = 10 * 1024 * 1024;
 const MERMAID_MIN_ZOOM = 0.5;
 const MERMAID_MAX_ZOOM = 3;
 const MERMAID_ZOOM_STEP = 0.2;
+const TIMELINE_CONTENT_RESIZED_EVENT = "cadsense:timeline-content-resized";
 const highlightedCodeCache = new LRUCache<string>(
   MAX_HIGHLIGHT_CACHE_ENTRIES,
   MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
@@ -424,6 +425,11 @@ function MermaidCodeBlock({ code, theme, isStreaming }: MermaidCodeBlockProps) {
         if (cancelled) return;
         mermaidSvgCache.set(cacheKey, result.svg, estimateMermaidSvgSize(result.svg, code));
         setSvg(result.svg);
+        window.requestAnimationFrame(() => {
+          if (!cancelled) {
+            window.dispatchEvent(new CustomEvent(TIMELINE_CONTENT_RESIZED_EVENT));
+          }
+        });
       })
       .catch((error: unknown) => {
         if (cancelled) return;
