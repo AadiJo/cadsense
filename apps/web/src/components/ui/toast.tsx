@@ -94,8 +94,8 @@ function errorDescriptionClampClass(type: unknown, description: unknown): string
   return "line-clamp-4";
 }
 
-/** Dismiss-only control aligned with the single-line toast title row. */
-const toastCornerDismissClass = "absolute z-20 right-3 top-1/2 -translate-y-1/2";
+/** Dismiss control pinned to the toast corner so it does not compete with inline actions. */
+const toastCornerDismissClass = "absolute z-20 right-1.5 top-1.5";
 const toastCornerOrbClass = cn(
   "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-full border border-border/60 bg-popover/92 text-muted-foreground shadow-sm outline-none backdrop-blur-sm",
   "transition-[color,background-color,box-shadow] hover:bg-popover hover:text-foreground",

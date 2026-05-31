@@ -815,6 +815,7 @@ export default function ChatView(props: ChatViewProps) {
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [renderScrollToBottom, setRenderScrollToBottom] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
   const [animatedUserMessageId, setAnimatedUserMessageId] = useState<MessageId | null>(null);
@@ -2337,6 +2338,21 @@ export default function ChatView(props: ChatViewProps) {
   }, []);
 
   useEffect(() => {
+    if (showScrollToBottom) {
+      setRenderScrollToBottom(true);
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setRenderScrollToBottom(false);
+    }, 180);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [showScrollToBottom]);
+
+  useEffect(() => {
     setPullRequestDialogState(null);
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
@@ -3713,8 +3729,11 @@ export default function ChatView(props: ChatViewProps) {
             <CadReviewProgressOverlay steps={cadReviewOverlaySteps} />
 
             {/* scroll to bottom pill — shown when user has scrolled away from the bottom */}
-            {showScrollToBottom && (
-              <div className="scroll-to-bottom-control pointer-events-none absolute bottom-36 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5 sm:bottom-40">
+            {renderScrollToBottom && (
+              <div
+                className="scroll-to-bottom-control pointer-events-none absolute bottom-36 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5 sm:bottom-40"
+                data-state={showScrollToBottom ? "entering" : "exiting"}
+              >
                 <button
                   type="button"
                   onClick={() => scrollToEnd(true)}
