@@ -375,6 +375,7 @@ export interface ChatComposerHandle {
 export interface ChatComposerProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
+  enableFileMentions: boolean;
   routeKind: "server" | "draft";
   routeThreadRef: ScopedThreadRef;
   draftId: DraftId | null;
@@ -494,6 +495,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const {
     composerDraftTarget,
     environmentId,
+    enableFileMentions,
     routeKind,
     routeThreadRef,
     draftId,
@@ -787,8 +789,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [composerCursor, setComposerCursor] = useState(() =>
     collapseExpandedComposerCursor(prompt, prompt.length),
   );
+  const resolveComposerTrigger = useCallback(
+    (text: string, cursor: number): ComposerTrigger | null => {
+      const trigger = detectComposerTrigger(text, cursor);
+      return trigger?.kind === "path" && !enableFileMentions ? null : trigger;
+    },
+    [enableFileMentions],
+  );
   const [composerTrigger, setComposerTrigger] = useState<ComposerTrigger | null>(() =>
-    detectComposerTrigger(prompt, prompt.length),
+    resolveComposerTrigger(prompt, prompt.length),
   );
   const [composerHighlightedItemId, setComposerHighlightedItemId] = useState<string | null>(null);
   const [composerHighlightedSearchKey, setComposerHighlightedSearchKey] = useState<string | null>(
@@ -849,7 +858,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       environmentId,
       cwd: gitCwd,
       query: effectivePathQuery,
-      enabled: isPathTrigger,
+      enabled: isPathTrigger && enableFileMentions,
       limit: 80,
     }),
   );
@@ -877,20 +886,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: "Switch response model for this thread",
         },
         {
-          id: "slash:plan",
-          type: "slash-command",
-          command: "plan",
-          label: "/plan",
-          description: "Switch this thread into plan mode",
-        },
-        {
-          id: "slash:default",
-          type: "slash-command",
-          command: "default",
-          label: "/default",
-          description: "Switch this thread back to normal build mode",
-        },
-        {
           id: "slash:ask",
           type: "slash-command",
           command: "ask",
@@ -905,15 +900,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: "Use the next send to start a CAD review",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
-      const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).map(
-        (command) => ({
-          id: `provider-slash-command:${selectedProvider}:${command.name}`,
-          type: "provider-slash-command" as const,
-          provider: selectedProvider,
-          command,
-          label: `/${command.name}`,
-          description: command.description ?? command.input?.hint ?? "Run provider command",
-        }),
+      const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).flatMap(
+        (command) => {
+          const commandName = command.name.trim().toLowerCase();
+          if (commandName === "plan" || commandName === "build" || commandName === "default") {
+            return [];
+          }
+          return [
+            {
+              id: `provider-slash-command:${selectedProvider}:${command.name}`,
+              type: "provider-slash-command" as const,
+              provider: selectedProvider,
+              command,
+              label: `/${command.name}`,
+              description: command.description ?? command.input?.hint ?? "Run provider command",
+            },
+          ];
+        },
       );
       const query = composerTrigger.query.trim().toLowerCase();
       const slashCommandItems = [...builtInSlashCommandItems, ...providerSlashCommandItems];
@@ -1032,10 +1035,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setComposerDraftPrompt(composerDraftTarget, nextPrompt);
       const nextCursor = collapseExpandedComposerCursor(nextPrompt, nextPrompt.length);
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(nextPrompt, nextPrompt.length));
+      setComposerTrigger(resolveComposerTrigger(nextPrompt, nextPrompt.length));
       scheduleComposerFocus();
     },
-    [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
+    [
+      composerDraftTarget,
+      promptRef,
+      resolveComposerTrigger,
+      scheduleComposerFocus,
+      setComposerDraftPrompt,
+    ],
   );
 
   const providerTraitsMenuContent = renderProviderTraitsMenuContent({
@@ -1125,13 +1134,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       removeComposerDraftTerminalContext(composerDraftTarget, contextId);
       const nextCursor = collapseExpandedComposerCursor(removal.prompt, removal.cursor);
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(removal.prompt, removal.cursor));
+      setComposerTrigger(resolveComposerTrigger(removal.prompt, removal.cursor));
     },
     [
       composerDraftTarget,
       composerTerminalContexts,
       promptRef,
       removeComposerDraftTerminalContext,
+      resolveComposerTrigger,
       setPrompt,
     ],
   );
@@ -1143,6 +1153,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef.current = prompt;
     setComposerCursor((existing) => clampCollapsedComposerCursor(prompt, existing));
   }, [prompt, promptRef]);
+
+  useEffect(() => {
+    if (!enableFileMentions && composerTrigger?.kind === "path") {
+      setComposerTrigger(null);
+    }
+  }, [composerTrigger?.kind, enableFileMentions]);
 
   useEffect(() => {
     composerImagesRef.current = composerImages;
@@ -1213,7 +1229,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const nextCursor = collapseExpandedComposerCursor(nextCustomAnswer, nextCustomAnswer.length);
     setComposerCursor(nextCursor);
     setComposerTrigger(
-      detectComposerTrigger(
+      resolveComposerTrigger(
         nextCustomAnswer,
         expandCollapsedComposerCursor(nextCustomAnswer, nextCursor),
       ),
@@ -1224,6 +1240,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activePendingProgress?.activeQuestion?.id,
     activePendingUserInput?.requestId,
     promptRef,
+    resolveComposerTrigger,
   ]);
 
   // ------------------------------------------------------------------
@@ -1232,10 +1249,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   useEffect(() => {
     setComposerHighlightedItemId(null);
     setComposerCursor(collapseExpandedComposerCursor(promptRef.current, promptRef.current.length));
-    setComposerTrigger(detectComposerTrigger(promptRef.current, promptRef.current.length));
+    setComposerTrigger(resolveComposerTrigger(promptRef.current, promptRef.current.length));
     dragDepthRef.current = 0;
     setIsDragOverComposer(false);
-  }, [draftId, activeThreadId, promptRef]);
+  }, [draftId, activeThreadId, promptRef, resolveComposerTrigger]);
 
   // ------------------------------------------------------------------
   // Footer compact layout observation
@@ -1377,7 +1394,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
         setComposerCursor(nextCursor);
         setComposerTrigger(
-          cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+          cursorAdjacentToMention ? null : resolveComposerTrigger(nextPrompt, expandedCursor),
         );
         onChangeActivePendingUserInputCustomAnswer(
           activePendingProgress.activeQuestion.id,
@@ -1398,7 +1415,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
-        cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
+        cursorAdjacentToMention ? null : resolveComposerTrigger(nextPrompt, expandedCursor),
       );
     },
     [
@@ -1409,6 +1426,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       setPrompt,
       composerDraftTarget,
       composerTerminalContexts,
+      resolveComposerTrigger,
       setComposerDraftTerminalContexts,
     ],
   );
@@ -1449,7 +1467,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setPrompt(next.text);
       }
       setComposerCursor(nextCursor);
-      setComposerTrigger(detectComposerTrigger(next.text, nextExpandedCursor));
+      setComposerTrigger(resolveComposerTrigger(next.text, nextExpandedCursor));
       if (options?.focusEditorAfterReplace !== false) {
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAt(nextCursor);
@@ -1462,6 +1480,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingUserInput,
       onChangeActivePendingUserInputCustomAnswer,
       promptRef,
+      resolveComposerTrigger,
       setPrompt,
     ],
   );
@@ -1491,9 +1510,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const snapshot = readComposerSnapshot();
     return {
       snapshot,
-      trigger: detectComposerTrigger(snapshot.value, snapshot.expandedCursor),
+      trigger: resolveComposerTrigger(snapshot.value, snapshot.expandedCursor),
     };
-  }, [readComposerSnapshot]);
+  }, [readComposerSnapshot, resolveComposerTrigger]);
 
   const onSelectComposerItem = useCallback(
     (item: ComposerCommandItem) => {
@@ -1904,7 +1923,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setComposerCursor(cursor);
         setComposerTrigger(
           options?.detectTrigger
-            ? detectComposerTrigger(
+            ? resolveComposerTrigger(
                 promptForState,
                 expandCollapsedComposerCursor(promptForState, cursor),
               )
@@ -1941,7 +1960,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (!inserted) return;
         promptRef.current = insertion.prompt;
         setComposerCursor(nextCollapsedCursor);
-        setComposerTrigger(detectComposerTrigger(insertion.prompt, insertion.cursor));
+        setComposerTrigger(resolveComposerTrigger(insertion.prompt, insertion.cursor));
         window.requestAnimationFrame(() => {
           composerEditorRef.current?.focusAt(nextCollapsedCursor);
         });
@@ -1969,6 +1988,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerTerminalContextsRef,
       isComposerModelPickerOpen,
       readComposerSnapshot,
+      resolveComposerTrigger,
       selectedModel,
       selectedModelOptionsForDispatch,
       selectedModelSelection,
@@ -2331,7 +2351,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Describe what to review in the CAD, or send blank for a holistic review"
                               : phase === "disconnected"
                                 ? "Ask for follow-up changes or attach images"
-                                : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                : enableFileMentions
+                                  ? "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                  : "Ask anything, $use skills, or / for commands"
                 }
                 disabled={
                   isConnecting ||

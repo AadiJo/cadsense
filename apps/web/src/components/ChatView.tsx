@@ -926,6 +926,10 @@ export default function ChatView(props: ChatViewProps) {
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
   const isProjectlessChat = isProjectlessChatProject(activeProject);
+  const enableFileMentions =
+    !isProjectlessChat &&
+    activeProject?.externalContext?.provider !== "onshape" &&
+    activeThread?.externalContext?.provider !== "onshape";
   const cadUiStateKey =
     activeThread && threadHasStarted(activeThread)
       ? activeThread.id
@@ -3762,6 +3766,7 @@ export default function ChatView(props: ChatViewProps) {
                   composerRef={composerRef}
                   composerDraftTarget={composerDraftTarget}
                   environmentId={environmentId}
+                  enableFileMentions={enableFileMentions}
                   routeKind={routeKind}
                   routeThreadRef={routeThreadRef}
                   draftId={draftId}

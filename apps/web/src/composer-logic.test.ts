@@ -296,14 +296,6 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 });
 
 describe("parseStandaloneComposerSlashCommand", () => {
-  it("parses standalone /plan command", () => {
-    expect(parseStandaloneComposerSlashCommand(" /plan ")).toBe("plan");
-  });
-
-  it("parses standalone /default command", () => {
-    expect(parseStandaloneComposerSlashCommand("/default")).toBe("default");
-  });
-
   it("parses standalone /ask and /review commands", () => {
     expect(parseStandaloneComposerSlashCommand("/ask")).toBe("ask");
     expect(parseStandaloneComposerSlashCommand(" /review ")).toBe("review");
@@ -311,5 +303,11 @@ describe("parseStandaloneComposerSlashCommand", () => {
 
   it("ignores slash commands with extra message text", () => {
     expect(parseStandaloneComposerSlashCommand("/plan explain this")).toBeNull();
+  });
+
+  it("does not parse removed plan, build, or default mode commands", () => {
+    expect(parseStandaloneComposerSlashCommand(" /plan ")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand(" /build ")).toBeNull();
+    expect(parseStandaloneComposerSlashCommand(" /default ")).toBeNull();
   });
 });
