@@ -15,6 +15,7 @@ import {
   getProjectOrderKey,
   selectProjectGroupingSettings,
 } from "../logicalProject";
+import { isProjectlessChatProject } from "../projectlessChat";
 import { selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createThreadSelectorByRef } from "../storeSelectors";
 import { resolveThreadRouteTarget } from "../threadRoutes";
@@ -173,13 +174,17 @@ export function useHandleNewThread() {
       getId: getProjectOrderKey,
     });
   }, [projectOrder, projects]);
+  const defaultProjects = useMemo(
+    () => orderedProjects.filter((project) => !isProjectlessChatProject(project)),
+    [orderedProjects],
+  );
   const handleNewThread = useNewThreadState();
 
   return {
     activeDraftThread,
     activeThread,
-    defaultProjectRef: orderedProjects[0]
-      ? scopeProjectRef(orderedProjects[0].environmentId, orderedProjects[0].id)
+    defaultProjectRef: defaultProjects[0]
+      ? scopeProjectRef(defaultProjects[0].environmentId, defaultProjects[0].id)
       : null,
     handleNewThread,
     routeThreadRef,

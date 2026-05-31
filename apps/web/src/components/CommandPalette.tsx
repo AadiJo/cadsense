@@ -81,6 +81,8 @@ import {
   selectSidebarThreadsAcrossEnvironments,
   useStore,
 } from "../store";
+import { waitForProjectedProject } from "../projectProjection";
+import { isProjectlessChatProject } from "../projectlessChat";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { buildThreadRouteParams, resolveThreadRouteTarget } from "../threadRoutes";
 import {
@@ -285,36 +287,6 @@ function selectImportedOnshapeEntity(entities: ReadonlyArray<OnshapeEntity>): On
   );
 }
 
-async function waitForProjectedProject(input: {
-  readonly environmentId: EnvironmentId;
-  readonly projectId: ProjectId;
-  readonly timeoutMs?: number;
-}): Promise<void> {
-  const timeoutMs = input.timeoutMs ?? 2_000;
-  const hasProject = (): boolean => {
-    const environment = useStore.getState().environmentStateById[input.environmentId];
-    return environment?.projectById[input.projectId] !== undefined;
-  };
-  if (hasProject()) {
-    return;
-  }
-  const subscription = { stop: () => {} };
-  await new Promise<void>((resolve) => {
-    const timeout = window.setTimeout(() => {
-      subscription.stop();
-      resolve();
-    }, timeoutMs);
-    subscription.stop = useStore.subscribe(() => {
-      if (!hasProject()) {
-        return;
-      }
-      window.clearTimeout(timeout);
-      subscription.stop();
-      resolve();
-    });
-  });
-}
-
 function sourceProviderKind(source: AddProjectRemoteSource): AddProjectRemoteProviderKind | null {
   return source === "url" ? null : source;
 }
@@ -474,6 +446,10 @@ function OpenCommandPaletteDialog() {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useStore(useShallow(selectProjectsAcrossEnvironments));
+  const regularProjects = useMemo(
+    () => projects.filter((project) => !isProjectlessChatProject(project)),
+    [projects],
+  );
   const threads = useStore(useShallow(selectSidebarThreadsAcrossEnvironments));
   const keybindings = useServerKeybindings();
   const [viewStack, setViewStack] = useState<CommandPaletteView[]>([]);
@@ -719,7 +695,7 @@ function OpenCommandPaletteDialog() {
   const projectSearchItems = useMemo(
     () =>
       buildProjectActionItems({
-        projects,
+        projects: regularProjects,
         valuePrefix: "project",
         icon: (project) => (
           <ProjectFavicon
@@ -730,13 +706,13 @@ function OpenCommandPaletteDialog() {
         ),
         runProject: openProjectFromSearch,
       }),
-    [openProjectFromSearch, projects],
+    [openProjectFromSearch, regularProjects],
   );
 
   const projectThreadItems = useMemo(
     () =>
       buildProjectActionItems({
-        projects,
+        projects: regularProjects,
         valuePrefix: "new-thread-in",
         icon: (project) => (
           <ProjectFavicon
@@ -763,7 +739,7 @@ function OpenCommandPaletteDialog() {
       activeThread,
       defaultProjectRef,
       handleNewThread,
-      projects,
+      regularProjects,
       settings.defaultThreadEnvMode,
     ],
   );
@@ -1133,10 +1109,14 @@ function OpenCommandPaletteDialog() {
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
 
-  if (projects.length > 0) {
-    const activeProjectTitle = currentProjectId
-      ? (projectTitleById.get(currentProjectId) ?? null)
+  if (regularProjects.length > 0) {
+    const activeProject = currentProjectId
+      ? (projects.find((project) => project.id === currentProjectId) ?? null)
       : null;
+    const activeProjectTitle =
+      activeProject && !isProjectlessChatProject(activeProject)
+        ? (projectTitleById.get(activeProject.id) ?? null)
+        : null;
 
     if (activeProjectTitle) {
       actionItems.push({
@@ -1256,7 +1236,7 @@ function OpenCommandPaletteDialog() {
       if (cwd.length === 0) return;
 
       const existing = findProjectByPath(
-        projects.filter((project) => project.environmentId === browseEnvironmentId),
+        regularProjects.filter((project) => project.environmentId === browseEnvironmentId),
         cwd,
       );
       if (existing) {
@@ -1316,7 +1296,7 @@ function OpenCommandPaletteDialog() {
       currentProjectCwdForBrowse,
       handleNewThread,
       navigate,
-      projects,
+      regularProjects,
       setOpen,
       settings.defaultThreadEnvMode,
       settings.sidebarThreadSortOrder,

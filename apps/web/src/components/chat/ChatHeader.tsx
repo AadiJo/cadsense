@@ -26,6 +26,7 @@ interface ChatHeaderProps {
   draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  isProjectlessChat: boolean;
   activeProjectOnshapeContext?: OnshapeContext | null;
   isGitRepo: boolean;
   openInCwd: string | null;
@@ -50,10 +51,12 @@ interface ChatHeaderProps {
 
 export function shouldShowOpenInPicker(input: {
   readonly activeProjectName: string | undefined;
+  readonly isProjectlessChat?: boolean;
   readonly activeThreadEnvironmentId: EnvironmentId;
   readonly primaryEnvironmentId: EnvironmentId | null;
 }): boolean {
   return (
+    input.isProjectlessChat !== true &&
     Boolean(input.activeProjectName) &&
     input.primaryEnvironmentId !== null &&
     input.activeThreadEnvironmentId === input.primaryEnvironmentId
@@ -62,8 +65,9 @@ export function shouldShowOpenInPicker(input: {
 
 export function shouldShowCadPanelToggle(input: {
   readonly activeProjectName: string | undefined;
+  readonly isProjectlessChat?: boolean;
 }): boolean {
-  return Boolean(input.activeProjectName);
+  return input.isProjectlessChat !== true && Boolean(input.activeProjectName);
 }
 
 export const ChatHeader = memo(function ChatHeader({
@@ -72,6 +76,7 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   activeProjectName,
+  isProjectlessChat,
   activeProjectOnshapeContext,
   isGitRepo,
   openInCwd,
@@ -96,10 +101,12 @@ export const ChatHeader = memo(function ChatHeader({
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName,
+    isProjectlessChat,
     activeThreadEnvironmentId,
     primaryEnvironmentId,
   });
-  const showCadPanelToggle = shouldShowCadPanelToggle({ activeProjectName });
+  const showCadPanelToggle = shouldShowCadPanelToggle({ activeProjectName, isProjectlessChat });
+  const showProjectControls = Boolean(activeProjectName) && !isProjectlessChat;
 
   return (
     <div className="@container/header-actions flex w-full min-w-0 flex-1 items-center justify-between gap-2">
@@ -111,12 +118,12 @@ export const ChatHeader = memo(function ChatHeader({
         >
           {activeThreadTitle}
         </h2>
-        {activeProjectName && (
+        {showProjectControls && (
           <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
             <span className="min-w-0 truncate">{activeProjectName}</span>
           </Badge>
         )}
-        {activeProjectName && !isGitRepo && (
+        {showProjectControls && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
             No Git
           </Badge>
@@ -127,7 +134,7 @@ export const ChatHeader = memo(function ChatHeader({
           diffOpen ? "" : "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+0.5em)]"
         }`}
       >
-        {activeProjectOnshapeContext ? (
+        {showProjectControls && activeProjectOnshapeContext ? (
           <OnshapeSyncControl
             context={activeProjectOnshapeContext}
             isSyncing={onshapeSyncing}
@@ -136,7 +143,7 @@ export const ChatHeader = memo(function ChatHeader({
             onToggleExploded={onToggleCadExploded}
             onZoomToFit={onZoomCadToFit}
           />
-        ) : activeProjectScripts ? (
+        ) : showProjectControls && activeProjectScripts ? (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             keybindings={keybindings}
@@ -155,7 +162,7 @@ export const ChatHeader = memo(function ChatHeader({
             onshapeUrl={activeProjectOnshapeContext?.reference.url ?? null}
           />
         )}
-        {activeProjectName && (
+        {showProjectControls && (
           <GitActionsControl
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}

@@ -79,6 +79,9 @@ import {
   MechbaseSetupConnectionResult,
 } from "./mechbase.ts";
 import {
+  ProjectlessChatProjectError,
+  ProjectlessChatProjectInput,
+  ProjectlessChatProjectResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -132,6 +135,7 @@ export const WS_METHODS = {
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
+  projectsEnsureProjectlessChat: "projects.ensureProjectlessChat",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
 
@@ -387,6 +391,15 @@ export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntr
   error: ProjectSearchEntriesError,
 });
 
+export const WsProjectsEnsureProjectlessChatRpc = Rpc.make(
+  WS_METHODS.projectsEnsureProjectlessChat,
+  {
+    payload: ProjectlessChatProjectInput,
+    success: ProjectlessChatProjectResult,
+    error: ProjectlessChatProjectError,
+  },
+);
+
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
@@ -635,6 +648,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsCadSetViewRpc,
   WsCadScreenshotUploadRpc,
   WsCadHierarchyUploadRpc,
+  WsProjectsEnsureProjectlessChatRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,

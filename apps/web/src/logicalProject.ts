@@ -37,6 +37,10 @@ export function resolveProjectDisplayName(
     }
   }
 
+  if (project.externalContext?.provider === "chat") {
+    return "Chats";
+  }
+
   return project.name;
 }
 
@@ -140,6 +144,9 @@ export function deriveLogicalProjectKey(
 ): string {
   if (project.externalContext?.provider === "onshape") {
     return `${project.environmentId}:onshape:${project.externalContext.onshape.connectionId}:${project.externalContext.onshape.entityId}`;
+  }
+  if (project.externalContext?.provider === "chat") {
+    return `${project.environmentId}:projectless-chat`;
   }
   const groupingMode = options?.groupingMode ?? "repository";
   if (groupingMode === "separate") {

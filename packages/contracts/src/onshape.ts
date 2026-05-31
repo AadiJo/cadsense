@@ -71,10 +71,19 @@ export const OnshapeContext = Schema.Struct({
 });
 export type OnshapeContext = typeof OnshapeContext.Type;
 
-export const ExternalProjectContext = Schema.Struct({
+export const OnshapeExternalProjectContext = Schema.Struct({
   provider: Schema.Literal("onshape"),
   onshape: OnshapeContext,
 });
+
+export const ProjectlessChatExternalProjectContext = Schema.Struct({
+  provider: Schema.Literal("chat"),
+});
+
+export const ExternalProjectContext = Schema.Union([
+  OnshapeExternalProjectContext,
+  ProjectlessChatExternalProjectContext,
+]);
 export type ExternalProjectContext = typeof ExternalProjectContext.Type;
 
 export const ExternalThreadContext = Schema.Struct({

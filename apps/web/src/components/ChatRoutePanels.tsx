@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@cadsense/client-runtime";
+import { scopeProjectRef, scopeThreadRef } from "@cadsense/client-runtime";
 import type { EnvironmentId, ThreadId } from "@cadsense/contracts";
 import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
 import { useMatch, useNavigate } from "@tanstack/react-router";
@@ -12,13 +12,19 @@ import {
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
 import { stripDiffSearchParams } from "../diffRouteSearch";
-import { selectEnvironmentState, selectThreadExistsByRef, useStore } from "../store";
+import {
+  selectEnvironmentState,
+  selectProjectByRef,
+  selectThreadExistsByRef,
+  useStore,
+} from "../store";
 import {
   createThreadSelectorAcrossEnvironments,
   createThreadSelectorByRef,
 } from "../storeSelectors";
 import { threadHasProviderWorkStarted, threadHasStarted } from "../threadLifecycle";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { isProjectlessChatProject } from "../projectlessChat";
 
 const THREAD_ROUTE_ID = "/_chat/$environmentId/$threadId" as const;
 const DRAFT_ROUTE_ID = "/_chat/draft/$draftId" as const;
@@ -63,6 +69,18 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).bootstrapComplete,
   );
   const serverThread = useStore(useMemo(() => createThreadSelectorByRef(threadRef), [threadRef]));
+  const serverThreadProject = useStore(
+    useMemo(
+      () => (store: import("../store").AppState) =>
+        serverThread
+          ? selectProjectByRef(
+              store,
+              scopeProjectRef(serverThread.environmentId, serverThread.projectId),
+            )
+          : undefined,
+      [serverThread],
+    ),
+  );
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
   const environmentHasServerThreads = useStore(
     (store) => selectEnvironmentState(store, threadRef?.environmentId ?? null).threadIds.length > 0,
@@ -84,6 +102,18 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
 
   const draftSession = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : null,
+  );
+  const draftProject = useStore(
+    useMemo(
+      () => (store: import("../store").AppState) =>
+        draftSession
+          ? selectProjectByRef(
+              store,
+              scopeProjectRef(draftSession.environmentId, draftSession.projectId),
+            )
+          : undefined,
+      [draftSession],
+    ),
   );
   const serverThreadForDraft = useStore(
     useMemo(
@@ -192,6 +222,8 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
 
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const showRightPanels = isThreadRoute || isDraftRouteWithPanels;
+  const renderCadPanel =
+    !isProjectlessChatProject(serverThreadProject) && !isProjectlessChatProject(draftProject);
 
   if (!showRightPanels) {
     return (
@@ -210,7 +242,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
           onCloseDiff={closeDiff}
           onOpenDiff={openDiff}
           renderDiffContent={diffOpen}
-          renderCadPanel
+          renderCadPanel={renderCadPanel}
         />
       </ChatRoutePanelsContext.Provider>
     );
@@ -223,7 +255,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
         diffOpen={diffOpen}
         onCloseDiff={closeDiff}
         shouldRenderDiffContent={diffOpen}
-        renderCadPanel
+        renderCadPanel={renderCadPanel}
       />
     </ChatRoutePanelsContext.Provider>
   );

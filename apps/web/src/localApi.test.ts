@@ -50,6 +50,7 @@ const rpcClientMock = {
     ),
   },
   projects: {
+    ensureProjectlessChat: vi.fn(),
     searchEntries: vi.fn(),
     writeFile: vi.fn(),
   },

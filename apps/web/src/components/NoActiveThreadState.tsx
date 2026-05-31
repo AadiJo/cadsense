@@ -7,6 +7,7 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   FolderIcon,
+  MessageSquareIcon,
 } from "lucide-react";
 import { SidebarInset, SidebarTrigger } from "./ui/sidebar";
 import { isElectron } from "../env";
@@ -22,9 +23,9 @@ import {
 } from "../store";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { cn } from "~/lib/utils";
+import { isProjectlessChatProject } from "../projectlessChat";
 
 const RECENT_THREAD_LIMIT = 6;
-const INSIGHT_LIMIT = 3;
 
 type ConnectorStatus = "checking" | "connected" | "not-configured" | "unavailable";
 
@@ -64,6 +65,10 @@ function ProjectIcon(props: {
     return <img src="/onshape.svg" alt="" className="size-4 shrink-0 rounded-sm object-contain" />;
   }
 
+  if (isProjectlessChatProject(props.project)) {
+    return <MessageSquareIcon className="size-4 text-muted-foreground/65" />;
+  }
+
   return (
     <ProjectFavicon
       environmentId={props.project.environmentId}
@@ -78,20 +83,36 @@ export function NoActiveThreadState() {
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const appState = useStore((state) => state);
   const projects = useMemo(() => selectProjectsAcrossEnvironments(appState), [appState]);
-  const onshapeProjectCount = useMemo(
-    () => projects.filter((project) => project.externalContext?.provider === "onshape").length,
+  const regularProjects = useMemo(
+    () => projects.filter((project) => !isProjectlessChatProject(project)),
     [projects],
   );
-  const recentThreads = useMemo(
+  const projectByKey = useMemo(() => {
+    const entries = projects.map(
+      (project) => [`${project.environmentId}:${project.id}`, project] as const,
+    );
+    return new Map<string, (typeof projects)[number]>(entries);
+  }, [projects]);
+  const allRecentThreads = useMemo(
     () =>
       sortThreads(
         selectSidebarThreadsAcrossEnvironments(appState).filter(
           (thread) => thread.archivedAt === null,
         ),
         "updated_at",
-      ).slice(0, RECENT_THREAD_LIMIT),
+      ),
     [appState],
   );
+  const chatThreads = useMemo(
+    () =>
+      allRecentThreads.filter((thread) =>
+        isProjectlessChatProject(projectByKey.get(`${thread.environmentId}:${thread.projectId}`)),
+      ),
+    [allRecentThreads, projectByKey],
+  );
+  const chatCount = chatThreads.length;
+  const recentChats = chatThreads.slice(0, RECENT_THREAD_LIMIT);
+  const recentThreads = allRecentThreads.slice(0, RECENT_THREAD_LIMIT);
   const lastActiveThread = recentThreads[0] ?? null;
   const recentThreadsExcludingActive = useMemo(
     () =>
@@ -105,59 +126,11 @@ export function NoActiveThreadState() {
     [lastActiveThread, recentThreads],
   );
   const lastActiveProject = lastActiveThread
-    ? (projectByThreadKey(projects).get(
-        `${lastActiveThread.environmentId}:${lastActiveThread.projectId}`,
-      ) ?? null)
+    ? (projectByKey.get(`${lastActiveThread.environmentId}:${lastActiveThread.projectId}`) ?? null)
     : null;
-  const projectByKey = useMemo(() => {
-    const entries = projects.map(
-      (project) => [`${project.environmentId}:${project.id}`, project] as const,
-    );
-    return new Map<string, (typeof projects)[number]>(entries);
-  }, [projects]);
-  const reviewedThreadKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const [environmentId, environmentState] of Object.entries(appState.environmentStateById)) {
-      for (const [threadId, reviewIds] of Object.entries(
-        environmentState.reviewIdsByThreadId ?? {},
-      )) {
-        if (reviewIds.length > 0) {
-          keys.add(`${environmentId}:${threadId}`);
-        }
-      }
-    }
-    for (const thread of recentThreads) {
-      if (thread.hasActiveReview) {
-        keys.add(`${thread.environmentId}:${thread.id}`);
-      }
-    }
-    return keys;
-  }, [appState.environmentStateById, recentThreads]);
-  const insights = useMemo(() => {
-    const rows: string[] = [];
-    for (const thread of recentThreads) {
-      if (thread.hasActiveReview) {
-        rows.push(`Active CAD review: ${thread.title}`);
-      } else if (reviewedThreadKeys.has(`${thread.environmentId}:${thread.id}`)) {
-        rows.push(`Review notes: ${thread.title}`);
-      } else if (thread.hasPendingApprovals) {
-        rows.push(`Waiting on approval: ${thread.title}`);
-      } else if (thread.hasActionableProposedPlan) {
-        rows.push(`Plan ready: ${thread.title}`);
-      }
-      if (rows.length >= INSIGHT_LIMIT) break;
-    }
-    if (rows.length > 0) return rows;
-    return [
-      projects.length > 0
-        ? `${projects.length} CAD ${projects.length === 1 ? "project" : "projects"} indexed`
-        : "Add a CAD workspace to start building review context",
-      onshapeProjectCount > 0
-        ? `${onshapeProjectCount} Onshape ${onshapeProjectCount === 1 ? "workspace" : "workspaces"} ready for sync`
-        : "Connect Onshape to import cloud CAD context",
-      "Recent review findings will collect here as work completes",
-    ];
-  }, [onshapeProjectCount, projects.length, recentThreads, reviewedThreadKeys]);
+  const lastActiveProjectLabel = isProjectlessChatProject(lastActiveProject)
+    ? "Chat"
+    : (lastActiveProject?.name ?? "Recent workspace");
   const [onshapeStatus, setOnshapeStatus] = useState<ConnectorSummary>(defaultConnectorSummary);
   const [mechbaseStatus, setMechbaseStatus] = useState<ConnectorSummary>(defaultConnectorSummary);
 
@@ -259,7 +232,7 @@ export function NoActiveThreadState() {
                       </span>
                       <span className="min-w-0">
                         <span className="block truncate text-sm font-semibold text-foreground">
-                          {lastActiveProject?.name ?? "Recent workspace"}
+                          {lastActiveProjectLabel}
                         </span>
                         <span className="mt-0.5 block truncate text-xs text-muted-foreground/70">
                           {lastActiveThread.title} -{" "}
@@ -274,23 +247,48 @@ export function NoActiveThreadState() {
                     </button>
                   ) : (
                     <p className="border-l border-border/80 py-1 pl-3 text-sm text-muted-foreground/72">
-                      Start a project thread and your latest CAD work will appear here.
+                      Start a chat or project thread and your latest work will appear here.
                     </p>
                   )}
                 </section>
 
                 <section className="space-y-3">
-                  <SectionLabel>Recent insights</SectionLabel>
+                  <SectionLabel>Recent chats</SectionLabel>
                   <div className="space-y-2.5">
-                    {insights.map((insight) => (
-                      <div
-                        key={insight}
-                        className="grid grid-cols-[auto_1fr] gap-3 text-sm leading-relaxed text-muted-foreground/82"
-                      >
-                        <span className="mt-2 h-px w-3 bg-muted-foreground/35" />
-                        <span className="min-w-0">{insight}</span>
-                      </div>
-                    ))}
+                    {recentChats.length > 0 ? (
+                      recentChats.slice(0, 4).map((thread) => (
+                        <button
+                          key={`${thread.environmentId}:${thread.id}`}
+                          type="button"
+                          className="group grid w-full min-w-0 grid-cols-[auto_1fr_auto] items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent/35 focus-visible:bg-accent/35 focus-visible:outline-none"
+                          onClick={() =>
+                            void navigate({
+                              to: "/$environmentId/$threadId",
+                              params: buildThreadRouteParams(
+                                scopeThreadRef(thread.environmentId, thread.id),
+                              ),
+                            })
+                          }
+                        >
+                          <MessageSquareIcon className="size-4 text-muted-foreground/65" />
+                          <span className="min-w-0">
+                            <span className="block truncate text-sm text-foreground">
+                              {thread.title}
+                            </span>
+                            <span className="block truncate text-xs text-muted-foreground/62">
+                              {formatRelativeTimeLabel(
+                                thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
+                              )}
+                            </span>
+                          </span>
+                          <ChevronRightIcon className="size-4 text-muted-foreground/35 group-hover:text-muted-foreground/70" />
+                        </button>
+                      ))
+                    ) : (
+                      <p className="border-l border-border/80 py-1 pl-3 text-sm text-muted-foreground/72">
+                        Chats will appear here after your first conversation.
+                      </p>
+                    )}
                   </div>
                 </section>
               </div>
@@ -312,8 +310,8 @@ export function NoActiveThreadState() {
                   />
                 </div>
                 <div className="mt-5 grid grid-cols-2 gap-6 border-t border-border/60 pt-5">
-                  <Metric label="Projects" value={String(projects.length)} />
-                  <Metric label="Onshape" value={String(onshapeProjectCount)} />
+                  <Metric label="Projects" value={String(regularProjects.length)} />
+                  <Metric label="Chats" value={String(chatCount)} />
                 </div>
               </section>
 
@@ -344,7 +342,9 @@ export function NoActiveThreadState() {
                               {thread.title}
                             </span>
                             <span className="block truncate text-xs text-muted-foreground/62">
-                              {project?.name ?? "Unknown project"}
+                              {isProjectlessChatProject(project)
+                                ? "Chat"
+                                : (project?.name ?? "Unknown project")}
                             </span>
                           </span>
                           <ChevronRightIcon className="size-4 text-muted-foreground/35 group-hover:text-muted-foreground/70" />
@@ -364,10 +364,6 @@ export function NoActiveThreadState() {
       </div>
     </SidebarInset>
   );
-}
-
-function projectByThreadKey(projects: ReturnType<typeof selectProjectsAcrossEnvironments>) {
-  return new Map(projects.map((project) => [`${project.environmentId}:${project.id}`, project]));
 }
 
 function SectionLabel({ children }: { readonly children: string }) {

@@ -195,6 +195,7 @@ function createClient() {
       onEvent: vi.fn(() => () => undefined),
     },
     projects: {
+      ensureProjectlessChat: vi.fn(async () => undefined),
       searchEntries: vi.fn(async () => []),
       writeFile: vi.fn(async () => undefined),
     },

@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as NodeOS from "node:os";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -27,6 +28,8 @@ import {
   OrchestrationGetSnapshotError,
   OrchestrationGetTurnDiffError,
   ORCHESTRATION_WS_METHODS,
+  DEFAULT_MODEL,
+  ProjectlessChatProjectError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
   OrchestrationReplayEventsError,
@@ -35,6 +38,7 @@ import {
   MechbaseRpcError,
   type OnshapeListSyncedCadFilesResult,
   type OnshapeSyncedCadFile,
+  ProviderInstanceId,
   ThreadId,
   WS_METHODS,
   WsRpcGroup,
@@ -1724,6 +1728,70 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
               ),
             ),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsEnsureProjectlessChat]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsEnsureProjectlessChat,
+            Effect.gen(function* () {
+              const pathService = yield* Path.Path;
+              const fileSystem = yield* FileSystem.FileSystem;
+              const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+              const existingProject = snapshot.projects.find(
+                (project) => project.externalContext?.provider === "chat",
+              );
+
+              if (existingProject) {
+                yield* fileSystem.makeDirectory(existingProject.workspaceRoot, {
+                  recursive: true,
+                });
+                return {
+                  projectId: existingProject.id,
+                  workspaceRoot: existingProject.workspaceRoot,
+                };
+              }
+
+              const workspaceRoot = pathService.resolve(
+                NodeOS.tmpdir(),
+                "cadsense-projectless-chats",
+                input.projectId,
+              );
+              const createdAt = yield* nowIso;
+              const normalizedCommand = yield* normalizeDispatchCommand({
+                type: "project.create",
+                commandId: serverCommandId("projectless-chat-project-create"),
+                projectId: input.projectId,
+                title: "Chats",
+                workspaceRoot,
+                createWorkspaceRootIfMissing: true,
+                externalContext: { provider: "chat" },
+                defaultModelSelection: {
+                  instanceId: ProviderInstanceId.make("codex"),
+                  model: DEFAULT_MODEL,
+                },
+                createdAt,
+              });
+              yield* dispatchNormalizedCommand(normalizedCommand);
+
+              return {
+                projectId: input.projectId,
+                workspaceRoot:
+                  normalizedCommand.type === "project.create"
+                    ? normalizedCommand.workspaceRoot
+                    : workspaceRoot,
+              };
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProjectlessChatProjectError({
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Failed to prepare a projectless chat workspace.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "project" },
           ),
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(

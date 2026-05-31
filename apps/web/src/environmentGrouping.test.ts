@@ -14,7 +14,6 @@ import {
   deriveLogicalProjectKey,
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
-  resolveProjectGroupingMode,
 } from "./logicalProject";
 import type { Project, SidebarThreadSummary } from "./types";
 import { DEFAULT_INTERACTION_MODE } from "./types";
@@ -423,7 +422,7 @@ describe("environment grouping", () => {
       expect(deriveLogicalProjectKey(local)).not.toBe(deriveLogicalProjectKey(remote));
     });
 
-    it("uses per-project overrides from settings", () => {
+    it("uses repository grouping from settings", () => {
       const project = makeProject({
         id: sharedProjectPrimaryId,
         environmentId: primaryEnvId,
@@ -438,15 +437,9 @@ describe("environment grouping", () => {
         },
       });
 
-      expect(resolveProjectGroupingMode(project, DEFAULT_GROUPING_SETTINGS)).toBe("repository");
-      expect(
-        deriveLogicalProjectKeyFromSettings(project, {
-          ...DEFAULT_GROUPING_SETTINGS,
-          sidebarProjectGroupingOverrides: {
-            [derivePhysicalProjectKey(project)]: "separate",
-          },
-        }),
-      ).toBe(derivePhysicalProjectKey(project));
+      expect(deriveLogicalProjectKeyFromSettings(project, DEFAULT_GROUPING_SETTINGS)).toBe(
+        SHARED_REPO_CANONICAL_KEY,
+      );
     });
   });
 

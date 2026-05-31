@@ -24,6 +24,7 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
     terminal: environmentTerminalApi(rpcClient),
     projects: {
+      ensureProjectlessChat: rpcClient.projects.ensureProjectlessChat,
       searchEntries: rpcClient.projects.searchEntries,
       writeFile: rpcClient.projects.writeFile,
     },

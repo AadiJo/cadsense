@@ -125,6 +125,7 @@ import {
   deriveLogicalProjectKeyFromSettings,
   selectProjectGroupingSettings,
 } from "../logicalProject";
+import { isProjectlessChatProject } from "../projectlessChat";
 import {
   reconnectSavedEnvironment,
   useSavedEnvironmentRegistryStore,
@@ -923,6 +924,7 @@ export default function ChatView(props: ChatViewProps) {
   const activeProject = useStore(
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
+  const isProjectlessChat = isProjectlessChatProject(activeProject);
   const cadUiStateKey =
     activeThread && threadHasStarted(activeThread)
       ? activeThread.id
@@ -3500,6 +3502,7 @@ export default function ChatView(props: ChatViewProps) {
   }
 
   const canGenerateCadReview = Boolean(
+    !isProjectlessChat &&
     activeThread &&
     (activeThread.externalContext?.provider === "onshape" ||
       activeProject?.externalContext?.provider === "onshape" ||
@@ -3633,6 +3636,7 @@ export default function ChatView(props: ChatViewProps) {
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          isProjectlessChat={isProjectlessChat}
           activeProjectOnshapeContext={
             activeProject?.externalContext?.provider === "onshape"
               ? activeProject.externalContext.onshape

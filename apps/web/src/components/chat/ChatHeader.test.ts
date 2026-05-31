@@ -10,6 +10,7 @@ describe("shouldShowOpenInPicker", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
+        isProjectlessChat: false,
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
       }),
@@ -20,6 +21,7 @@ describe("shouldShowOpenInPicker", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
+        isProjectlessChat: false,
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId: null,
       }),
@@ -30,6 +32,7 @@ describe("shouldShowOpenInPicker", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: "codething-mvp",
+        isProjectlessChat: false,
         activeThreadEnvironmentId: EnvironmentId.make("environment-remote"),
         primaryEnvironmentId,
       }),
@@ -40,6 +43,18 @@ describe("shouldShowOpenInPicker", () => {
     expect(
       shouldShowOpenInPicker({
         activeProjectName: undefined,
+        isProjectlessChat: false,
+        activeThreadEnvironmentId: primaryEnvironmentId,
+        primaryEnvironmentId,
+      }),
+    ).toBe(false);
+  });
+
+  it("hides the picker for projectless chats", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "Chats",
+        isProjectlessChat: true,
         activeThreadEnvironmentId: primaryEnvironmentId,
         primaryEnvironmentId,
       }),
@@ -49,10 +64,20 @@ describe("shouldShowOpenInPicker", () => {
 
 describe("shouldShowCadPanelToggle", () => {
   it("shows the toggle for active projects", () => {
-    expect(shouldShowCadPanelToggle({ activeProjectName: "Bracket" })).toBe(true);
+    expect(
+      shouldShowCadPanelToggle({ activeProjectName: "Bracket", isProjectlessChat: false }),
+    ).toBe(true);
   });
 
   it("hides the toggle when there is no active project", () => {
-    expect(shouldShowCadPanelToggle({ activeProjectName: undefined })).toBe(false);
+    expect(
+      shouldShowCadPanelToggle({ activeProjectName: undefined, isProjectlessChat: false }),
+    ).toBe(false);
+  });
+
+  it("hides the toggle for projectless chats", () => {
+    expect(shouldShowCadPanelToggle({ activeProjectName: "Chats", isProjectlessChat: true })).toBe(
+      false,
+    );
   });
 });

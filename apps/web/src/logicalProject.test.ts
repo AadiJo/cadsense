@@ -33,6 +33,10 @@ describe("resolveProjectDisplayName", () => {
   });
 
   it("falls back to breadcrumb and entity name when the project title is empty", () => {
+    const onshapeContext = makeOnshapeProject().externalContext;
+    if (onshapeContext?.provider !== "onshape") {
+      throw new Error("Expected Onshape test fixture.");
+    }
     expect(resolveProjectDisplayName(makeOnshapeProject({ name: "   " }))).toBe(
       "doc-123 > elem-456 > Bracket",
     );
@@ -43,13 +47,22 @@ describe("resolveProjectDisplayName", () => {
           externalContext: {
             provider: "onshape",
             onshape: {
-              ...makeOnshapeProject().externalContext!.onshape,
+              ...onshapeContext.onshape,
               breadcrumb: [],
             },
           },
         }),
       ),
     ).toBe("Bracket");
+  });
+
+  it("labels hidden projectless chat projects as chats", () => {
+    expect(
+      resolveProjectDisplayName({
+        name: "",
+        externalContext: { provider: "chat" },
+      }),
+    ).toBe("Chats");
   });
 });
 
