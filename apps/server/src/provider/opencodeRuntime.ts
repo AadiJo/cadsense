@@ -216,6 +216,14 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
+  if (runtimeMode === "read-only") {
+    return [
+      { permission: "edit", pattern: "*", action: "deny" },
+      { permission: "*", pattern: "*", action: "ask" },
+      { permission: "question", pattern: "*", action: "allow" },
+    ];
+  }
+
   return [
     { permission: "*", pattern: "*", action: "ask" },
     { permission: "bash", pattern: "*", action: "ask" },

@@ -223,7 +223,7 @@ function resolveRequestedModeId(input: {
     return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
   }
 
-  if (input.runtimeMode === "approval-required") {
+  if (input.runtimeMode === "read-only" || input.runtimeMode === "approval-required") {
     return (
       findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
       findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??

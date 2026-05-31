@@ -18,6 +18,7 @@ const clientSettings: ClientSettings = {
   dismissedProviderUpdateNotificationKeys: [],
   displayCadReviewWorkLog: false,
   displayGitUi: true,
+  defaultRuntimeMode: "full-access",
   diffIgnoreWhitespace: true,
   diffWordWrap: true,
   favorites: [],

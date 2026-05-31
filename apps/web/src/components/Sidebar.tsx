@@ -736,6 +736,7 @@ interface SidebarProjectThreadListProps {
   renderedThreads: readonly SidebarThreadSummary[];
   showEmptyThreadState: boolean;
   emptyThreadLabel: string;
+  emptyThreadStateVariant?: "sublist" | "section";
   shouldShowThreadPanel: boolean;
   isThreadListExpanded: boolean;
   projectCwd: string;
@@ -787,6 +788,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     renderedThreads,
     showEmptyThreadState,
     emptyThreadLabel,
+    emptyThreadStateVariant = "sublist",
     shouldShowThreadPanel,
     isThreadListExpanded,
     projectCwd,
@@ -830,7 +832,11 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div
             data-thread-selection-safe
-            className="flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
+            className={
+              emptyThreadStateVariant === "section"
+                ? "w-full px-2 pt-4 text-center text-xs text-muted-foreground/60"
+                : "flex h-6 w-full translate-x-0 items-center px-2 text-left text-[10px] text-muted-foreground/60"
+            }
           >
             <span>{emptyThreadLabel}</span>
           </div>
@@ -2092,6 +2098,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         renderedThreads={renderedThreads}
         showEmptyThreadState={showEmptyThreadState}
         emptyThreadLabel={projectHeaderMode === "hidden" ? "No chats yet" : "No threads yet"}
+        emptyThreadStateVariant={projectHeaderMode === "hidden" ? "section" : "sublist"}
         shouldShowThreadPanel={shouldShowThreadPanel}
         isThreadListExpanded={isThreadListExpanded}
         projectCwd={project.cwd}

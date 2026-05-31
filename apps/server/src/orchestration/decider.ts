@@ -1,7 +1,10 @@
 import type {
   OrchestrationCommand,
   OrchestrationEvent,
+  OrchestrationProject,
   OrchestrationReadModel,
+  OrchestrationThread,
+  RuntimeMode,
 } from "@cadsense/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,6 +22,32 @@ import {
 import { projectEvent } from "./projector.ts";
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+function projectRequiresReadOnlyRuntime(
+  project: Pick<OrchestrationProject, "externalContext"> | null | undefined,
+): boolean {
+  return (
+    project?.externalContext?.provider === "onshape" ||
+    project?.externalContext?.provider === "chat"
+  );
+}
+
+function threadRequiresReadOnlyRuntime(
+  thread: Pick<OrchestrationThread, "externalContext"> | null | undefined,
+): boolean {
+  return thread?.externalContext?.provider === "onshape";
+}
+
+function resolveEffectiveRuntimeMode(input: {
+  readonly project: Pick<OrchestrationProject, "externalContext"> | null | undefined;
+  readonly thread: Pick<OrchestrationThread, "externalContext"> | null | undefined;
+  readonly requestedRuntimeMode: RuntimeMode;
+}): RuntimeMode {
+  return projectRequiresReadOnlyRuntime(input.project) ||
+    threadRequiresReadOnlyRuntime(input.thread)
+    ? "read-only"
+    : input.requestedRuntimeMode;
+}
 
 function withEventBase(
   input: Pick<OrchestrationCommand, "commandId"> & {
@@ -207,6 +236,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const project = yield* requireProject({
+        readModel,
+        command,
+        projectId: command.projectId,
+      });
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -223,7 +257,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { externalContext: command.externalContext }
             : {}),
           modelSelection: command.modelSelection,
-          runtimeMode: command.runtimeMode,
+          runtimeMode: resolveEffectiveRuntimeMode({
+            project,
+            thread: command,
+            requestedRuntimeMode: command.runtimeMode,
+          }),
           interactionMode: command.interactionMode,
           branch: command.branch,
           worktreePath: command.worktreePath,
@@ -337,6 +375,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const thread = readModel.threads.find((entry) => entry.id === command.threadId);
+      const project = thread
+        ? readModel.projects.find((entry) => entry.id === thread.projectId)
+        : undefined;
       const occurredAt = yield* nowIso;
       return {
         ...withEventBase({
@@ -348,7 +390,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.runtime-mode-set",
         payload: {
           threadId: command.threadId,
-          runtimeMode: command.runtimeMode,
+          runtimeMode: resolveEffectiveRuntimeMode({
+            project,
+            thread,
+            requestedRuntimeMode: command.runtimeMode,
+          }),
           updatedAt: occurredAt,
         },
       };
@@ -443,7 +489,11 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             ? { modelSelection: command.modelSelection }
             : {}),
           ...(command.titleSeed !== undefined ? { titleSeed: command.titleSeed } : {}),
-          runtimeMode: targetThread.runtimeMode,
+          runtimeMode: resolveEffectiveRuntimeMode({
+            project: readModel.projects.find((entry) => entry.id === targetThread.projectId),
+            thread: targetThread,
+            requestedRuntimeMode: targetThread.runtimeMode,
+          }),
           interactionMode: targetThread.interactionMode,
           ...(sourceProposedPlan !== undefined ? { sourceProposedPlan } : {}),
           createdAt: command.createdAt,

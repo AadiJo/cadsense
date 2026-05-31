@@ -119,7 +119,7 @@ import {
   newThreadId,
 } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
-import { useSettings } from "../hooks/useSettings";
+import { useSettings, useUpdateSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import {
   deriveLogicalProjectKeyFromSettings,
@@ -763,6 +763,7 @@ export default function ChatView(props: ChatViewProps) {
     routeKind === "server" ? store.threadLastVisitedAtById[routeThreadKey] : undefined,
   );
   const settings = useSettings();
+  const { updateSettings } = useUpdateSettings();
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
   );
@@ -887,7 +888,6 @@ export default function ChatView(props: ChatViewProps) {
   );
   const isServerThread = routeKind === "server" && serverThread !== undefined;
   const activeThread = isServerThread ? serverThread : localDraftThread;
-  const runtimeMode = DEFAULT_RUNTIME_MODE;
   const interactionMode = DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
   const canCheckoutPullRequestIntoThread = isLocalDraftThread;
@@ -926,6 +926,12 @@ export default function ChatView(props: ChatViewProps) {
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
   const isProjectlessChat = isProjectlessChatProject(activeProject);
+  const forceReadOnlyRuntime =
+    isProjectlessChat ||
+    activeProject?.externalContext?.provider === "onshape" ||
+    activeThread?.externalContext?.provider === "onshape";
+  const runtimeMode = forceReadOnlyRuntime ? "read-only" : settings.defaultRuntimeMode;
+  const showRuntimeModeControl = !forceReadOnlyRuntime;
   const enableFileMentions =
     !isProjectlessChat &&
     activeProject?.externalContext?.provider !== "onshape" &&
@@ -2176,19 +2182,20 @@ export default function ChatView(props: ChatViewProps) {
   const handleRuntimeModeChange = useCallback(
     (mode: RuntimeMode) => {
       if (mode === runtimeMode) return;
+      if (mode === "read-only") return;
+      updateSettings({ defaultRuntimeMode: mode });
       setComposerDraftRuntimeMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
         setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
       }
-      scheduleComposerFocus();
     },
     [
       isLocalDraftThread,
       runtimeMode,
-      scheduleComposerFocus,
       composerDraftTarget,
       setComposerDraftRuntimeMode,
       setDraftThreadContext,
+      updateSettings,
     ],
   );
 
@@ -2621,6 +2628,7 @@ export default function ChatView(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      scheduleComposerFocus();
       await onSubmitPlanFollowUp({
         text: followUp.text,
         interactionMode: followUp.interactionMode,
@@ -2640,6 +2648,7 @@ export default function ChatView(props: ChatViewProps) {
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
       composerRef.current?.resetCursorState();
+      scheduleComposerFocus();
       return;
     }
     if (composerSubmitMode === "review") {
@@ -2660,6 +2669,7 @@ export default function ChatView(props: ChatViewProps) {
         promptRef.current = "";
         clearComposerDraftContent(composerDraftTarget);
         composerRef.current?.resetCursorState();
+        scheduleComposerFocus();
       }
       return;
     }
@@ -2769,6 +2779,7 @@ export default function ChatView(props: ChatViewProps) {
     promptRef.current = "";
     clearComposerDraftContent(composerDraftTarget);
     composerRef.current?.resetCursorState();
+    scheduleComposerFocus();
 
     let turnStartSucceeded = false;
     await (async () => {
@@ -2900,6 +2911,7 @@ export default function ChatView(props: ChatViewProps) {
           prompt: promptForSend,
           detectTrigger: true,
         });
+        scheduleComposerFocus();
       }
       setThreadError(
         threadIdForSend,
@@ -3797,6 +3809,7 @@ export default function ChatView(props: ChatViewProps) {
                   planSidebarLabel={planSidebarLabel}
                   planSidebarOpen={planSidebarOpen}
                   runtimeMode={runtimeMode}
+                  showRuntimeModeControl={showRuntimeModeControl}
                   interactionMode={interactionMode}
                   submitMode={composerSubmitMode}
                   canGenerateCadReview={canGenerateCadReview}

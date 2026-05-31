@@ -2758,6 +2758,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
 
         const runtimeMode = input.runtimeMode ?? "full-access";
+        const requestType = classifyRequestType(toolName);
+        if (
+          runtimeMode === "read-only" &&
+          (requestType === "file_change_approval" || requestType === "command_execution_approval")
+        ) {
+          return {
+            behavior: "deny",
+            message: "This chat is running in read-only mode, so file edits are disabled.",
+          } satisfies PermissionResult;
+        }
         if (runtimeMode === "full-access") {
           return {
             behavior: "allow",
@@ -2766,7 +2776,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
 
         const requestId = ApprovalRequestId.make(yield* Random.nextUUIDv4);
-        const requestType = classifyRequestType(toolName);
         const detail = summarizeToolRequest(toolName, toolInput);
         const decisionDeferred = yield* Deferred.make<ProviderApprovalDecision>();
         const pendingApproval: PendingApproval = {

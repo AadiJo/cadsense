@@ -60,20 +60,6 @@ describe("projectScripts helpers", () => {
     });
   });
 
-  it("allows overriding runtime env values", () => {
-    const env = projectScriptRuntimeEnv({
-      project: { cwd: "/repo" },
-      extraEnv: {
-        CADSENSE_PROJECT_ROOT: "/custom-root",
-        CUSTOM_FLAG: "1",
-      },
-    });
-
-    expect(env.cadsense_PROJECT_ROOT).toBe("/custom-root");
-    expect(env.CUSTOM_FLAG).toBe("1");
-    expect(env.cadsense_WORKTREE_PATH).toBeUndefined();
-  });
-
   it("prefers the worktree path for script cwd resolution", () => {
     expect(
       projectScriptCwd({

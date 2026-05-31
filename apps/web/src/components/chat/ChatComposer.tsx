@@ -85,7 +85,7 @@ import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { ChevronDownIcon, CircleAlertIcon, ListTodoIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, CircleAlertIcon, ListTodoIcon, ShieldIcon, XIcon } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
@@ -152,6 +152,7 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   showInteractionModeToggle: boolean;
   interactionMode: ProviderInteractionMode;
   runtimeMode: RuntimeMode;
+  showRuntimeModeControl: boolean;
   submitMode: ComposerSubmitMode;
   canGenerateCadReview: boolean;
   showSubmitModeToggle: boolean;
@@ -174,6 +175,12 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
           submitMode={props.submitMode}
           canGenerateCadReview={props.canGenerateCadReview}
           onSubmitModeChange={props.onSubmitModeChange}
+        />
+      ) : null}
+      {props.showRuntimeModeControl ? (
+        <ComposerRuntimeModePicker
+          runtimeMode={props.runtimeMode}
+          onRuntimeModeChange={props.onRuntimeModeChange}
         />
       ) : null}
       {props.showPlanToggle ? (
@@ -205,13 +212,68 @@ const ComposerFooterModeControls = memo(function ComposerFooterModeControls(prop
   );
 });
 
+const RUNTIME_MODE_OPTIONS: ReadonlyArray<{
+  readonly value: RuntimeMode;
+  readonly label: string;
+  readonly shortLabel: string;
+}> = [
+  { value: "approval-required", label: "Ask before edits", shortLabel: "Ask" },
+  { value: "auto-accept-edits", label: "Auto-accept edits", shortLabel: "Auto" },
+  { value: "full-access", label: "Full access", shortLabel: "Full" },
+];
+
+const ComposerRuntimeModePicker = memo(function ComposerRuntimeModePicker(props: {
+  runtimeMode: RuntimeMode;
+  onRuntimeModeChange: (mode: RuntimeMode) => void;
+}) {
+  const activeOption =
+    RUNTIME_MODE_OPTIONS.find((option) => option.value === props.runtimeMode) ??
+    RUNTIME_MODE_OPTIONS[0]!;
+
+  return (
+    <>
+      <Separator orientation="vertical" className="mx-0.5 hidden h-4 sm:block" />
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              className="shrink-0 whitespace-nowrap px-2 text-muted-foreground/70 hover:text-foreground/80 sm:px-3"
+              size="sm"
+              type="button"
+              title="Agent file access"
+              aria-label="Agent file access"
+            />
+          }
+        >
+          <ShieldIcon />
+          <span className="sr-only sm:not-sr-only">{activeOption.shortLabel}</span>
+          <ChevronDownIcon className="size-3 opacity-60" />
+        </MenuTrigger>
+        <MenuPopup align="start">
+          <MenuRadioGroup
+            value={activeOption.value}
+            onValueChange={(value) => props.onRuntimeModeChange(value as RuntimeMode)}
+          >
+            {RUNTIME_MODE_OPTIONS.map((option) => (
+              <MenuRadioItem key={option.value} value={option.value}>
+                {option.label}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+        </MenuPopup>
+      </Menu>
+    </>
+  );
+});
+
 const ComposerSubmitModeToggle = memo(function ComposerSubmitModeToggle(props: {
   submitMode: ComposerSubmitMode;
   canGenerateCadReview: boolean;
   onSubmitModeChange: (mode: ComposerSubmitMode) => void;
 }) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const triggerLabel = props.submitMode === "review" ? "Review" : "Ask";
+  const triggerLabel = props.submitMode === "review" ? "Review" : "Prompt";
 
   return (
     <>
@@ -228,7 +290,7 @@ const ComposerSubmitModeToggle = memo(function ComposerSubmitModeToggle(props: {
               size="sm"
               variant="ghost"
               className={cn(
-                "w-[5.75rem] shrink-0 justify-center whitespace-nowrap px-2 sm:px-2",
+                "min-w-[3.25rem] shrink-0 justify-center whitespace-nowrap px-2 sm:px-2",
                 props.submitMode === "review"
                   ? "text-blue-400 hover:text-blue-300"
                   : "text-muted-foreground/70 hover:text-foreground/80",
@@ -251,7 +313,7 @@ const ComposerSubmitModeToggle = memo(function ComposerSubmitModeToggle(props: {
               }
             }}
           >
-            <MenuRadioItem value="ask">Ask</MenuRadioItem>
+            <MenuRadioItem value="ask">Prompt</MenuRadioItem>
             {props.canGenerateCadReview ? (
               <MenuRadioItem value="review">Review</MenuRadioItem>
             ) : (
@@ -425,6 +487,7 @@ export interface ChatComposerProps {
 
   // Mode
   runtimeMode: RuntimeMode;
+  showRuntimeModeControl: boolean;
   interactionMode: ProviderInteractionMode;
   submitMode: ComposerSubmitMode;
   canGenerateCadReview: boolean;
@@ -526,6 +589,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     planSidebarLabel,
     planSidebarOpen,
     runtimeMode,
+    showRuntimeModeControl,
     interactionMode,
     submitMode,
     canGenerateCadReview,
@@ -2436,7 +2500,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       activePlan={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
+                      runtimeMode={runtimeMode}
+                      showRuntimeModeControl={showRuntimeModeControl}
                       traitsMenuContent={providerTraitsMenuContent}
+                      onRuntimeModeChange={handleRuntimeModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}
                     />
                     <ComposerSubmitModeToggle
@@ -2457,6 +2524,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
                       interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
+                      showRuntimeModeControl={showRuntimeModeControl}
                       submitMode={submitMode}
                       showSubmitModeToggle
                       canGenerateCadReview={canGenerateCadReview}

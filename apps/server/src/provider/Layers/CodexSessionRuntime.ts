@@ -331,6 +331,7 @@ function runtimeModeToThreadConfig(input: RuntimeMode): {
   readonly sandbox: EffectCodexSchema.V2ThreadStartParams__SandboxMode;
 } {
   switch (input) {
+    case "read-only":
     case "approval-required":
       return {
         approvalPolicy: "untrusted",
@@ -372,6 +373,7 @@ function runtimeModeToTurnSandboxPolicy(
   input: RuntimeMode,
 ): EffectCodexSchema.V2TurnStartParams__SandboxPolicy {
   switch (input) {
+    case "read-only":
     case "approval-required":
       return {
         type: "readOnly",

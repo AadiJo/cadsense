@@ -1,5 +1,6 @@
 import { memo, type ReactNode } from "react";
-import { EllipsisIcon, ListTodoIcon } from "lucide-react";
+import { EllipsisIcon, ListTodoIcon, ShieldIcon } from "lucide-react";
+import type { RuntimeMode } from "@cadsense/contracts";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator as MenuDivider, MenuTrigger } from "../ui/menu";
 
@@ -9,13 +10,14 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   planSidebarLabel: string;
   planSidebarOpen: boolean;
   runtimeMode?: unknown;
+  showRuntimeModeControl?: boolean;
   showInteractionModeToggle?: unknown;
   traitsMenuContent?: ReactNode;
   onToggleInteractionMode?: () => void;
   onTogglePlanSidebar: () => void;
-  onRuntimeModeChange?: (mode: unknown) => void;
+  onRuntimeModeChange?: (mode: RuntimeMode) => void;
 }) {
-  if (!props.traitsMenuContent && !props.activePlan) {
+  if (!props.traitsMenuContent && !props.activePlan && !props.showRuntimeModeControl) {
     return null;
   }
 
@@ -37,6 +39,29 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         {props.traitsMenuContent ? (
           <>
             {props.traitsMenuContent}
+            <MenuDivider />
+          </>
+        ) : null}
+        {props.showRuntimeModeControl ? (
+          <>
+            <MenuItem
+              onClick={() => props.onRuntimeModeChange?.("approval-required" satisfies RuntimeMode)}
+            >
+              <ShieldIcon className="size-4 shrink-0" />
+              Ask before edits
+            </MenuItem>
+            <MenuItem
+              onClick={() => props.onRuntimeModeChange?.("auto-accept-edits" satisfies RuntimeMode)}
+            >
+              <ShieldIcon className="size-4 shrink-0" />
+              Auto-accept edits
+            </MenuItem>
+            <MenuItem
+              onClick={() => props.onRuntimeModeChange?.("full-access" satisfies RuntimeMode)}
+            >
+              <ShieldIcon className="size-4 shrink-0" />
+              Full access
+            </MenuItem>
             <MenuDivider />
           </>
         ) : null}
