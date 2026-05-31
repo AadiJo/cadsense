@@ -119,9 +119,12 @@ export const ChatHeader = memo(function ChatHeader({
           {activeThreadTitle}
         </h2>
         {showProjectControls && (
-          <Badge variant="outline" className="min-w-0 shrink overflow-hidden">
-            <span className="min-w-0 truncate">{activeProjectName}</span>
-          </Badge>
+          <span
+            className="min-w-0 shrink truncate text-xs font-medium text-muted-foreground"
+            title={activeProjectName}
+          >
+            {activeProjectName}
+          </span>
         )}
         {showProjectControls && !isGitRepo && (
           <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
