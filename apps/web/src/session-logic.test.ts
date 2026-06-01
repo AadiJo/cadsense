@@ -1547,4 +1547,19 @@ describe("deriveActiveWorkStartedAt", () => {
       ),
     ).toBe("2026-02-27T21:09:58.000Z");
   });
+
+  it("keeps the local send start while the session is connecting", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        null,
+        {
+          orchestrationStatus: "starting",
+          activeTurnId: undefined,
+          createdAt: "2026-02-27T21:10:02.000Z",
+          updatedAt: "2026-02-27T21:10:03.000Z",
+        },
+        "2026-02-27T21:10:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:10:00.000Z");
+  });
 });

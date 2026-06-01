@@ -240,8 +240,9 @@ export function deriveLockedProvider(input: {
   thread: Thread | null | undefined;
   selectedProvider: string | null;
   threadProvider: string | null;
+  locallyStarted?: boolean;
 }): ProviderDriverKind | null {
-  if (!threadHasStarted(input.thread)) {
+  if (!input.locallyStarted && !threadHasStarted(input.thread)) {
     return null;
   }
   const sessionProvider = input.thread?.session?.provider ?? null;

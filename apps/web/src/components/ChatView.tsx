@@ -938,6 +938,9 @@ export default function ChatView(props: ChatViewProps) {
   const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
+  const activeThreadStartedForUi = Boolean(
+    activeThread && (threadHasStarted(activeThread) || optimisticUserMessages.length > 0),
+  );
   useEffect(() => {
     if (animatedUserMessageId === null) {
       return;
@@ -983,9 +986,7 @@ export default function ChatView(props: ChatViewProps) {
     activeProject?.externalContext?.provider !== "onshape" &&
     activeThread?.externalContext?.provider !== "onshape";
   const cadUiStateKey =
-    activeThread && threadHasStarted(activeThread)
-      ? activeThread.id
-      : (activeThread?.projectId ?? null);
+    activeThread && activeThreadStartedForUi ? activeThread.id : (activeThread?.projectId ?? null);
   const cadExploded = useUiStateStore((store) =>
     cadUiStateKey ? (store.cadExplodedByThreadId[cadUiStateKey] ?? false) : false,
   );
@@ -1287,6 +1288,7 @@ export default function ChatView(props: ChatViewProps) {
     thread: activeThread,
     selectedProvider: selectedProviderByThreadId,
     threadProvider,
+    locallyStarted: activeThreadStartedForUi,
   });
   const primaryServerConfig = useServerConfig();
   const activeEnvRuntimeState = useSavedEnvironmentRuntimeStore((s) =>
@@ -1536,13 +1538,11 @@ export default function ChatView(props: ChatViewProps) {
     isSendBusy ||
     isRevertingCheckpoint ||
     pendingTurnStartedAt !== null;
-  const activeWorkStartedAt =
-    pendingTurnStartedAt ??
-    deriveActiveWorkStartedAt(
-      activeLatestTurn,
-      activeThread?.session ?? null,
-      localDispatchStartedAt,
-    );
+  const activeWorkStartedAt = deriveActiveWorkStartedAt(
+    activeLatestTurn,
+    activeThread?.session ?? null,
+    localDispatchStartedAt ?? pendingTurnStartedAt,
+  );
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -1889,6 +1889,7 @@ export default function ChatView(props: ChatViewProps) {
   const envLocked = Boolean(
     activeThread &&
     (activeThread.messages.length > 0 ||
+      optimisticUserMessages.length > 0 ||
       (activeThread.session !== null && activeThread.session.status !== "closed")),
   );
 
@@ -2500,6 +2501,7 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread &&
     activeThread &&
     activeThread.messages.length === 0 &&
+    optimisticUserMessages.length === 0 &&
     activeThread.worktreePath === null &&
     !envLocked,
   );
@@ -3714,9 +3716,7 @@ export default function ChatView(props: ChatViewProps) {
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={
-            isProjectlessChat && activeThread.messages.length === 0
-              ? "New chat"
-              : activeThread.title
+            isProjectlessChat && !activeThreadStartedForUi ? "New chat" : activeThread.title
           }
           activeProjectName={activeProject?.name}
           isProjectlessChat={isProjectlessChat}

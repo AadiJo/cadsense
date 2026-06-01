@@ -187,18 +187,36 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   if (isWorking) {
     const nextStartedAt = activeTurnStartedAt ?? new Date().toISOString();
     const previous = workingStartedAtRef.current;
-    const shouldReplace =
-      previous === null ||
-      (activeTurnId !== null && activeTurnId !== undefined && previous.turnId !== activeTurnId) ||
-      (activeTurnStartedAt !== null &&
-        activeTurnStartedAt !== previous.startedAt &&
-        Date.parse(activeTurnStartedAt) > Date.parse(previous.startedAt));
-    if (shouldReplace) {
+    const nextTurnId = activeTurnId ?? null;
+    const previousStartedAtMs = previous ? Date.parse(previous.startedAt) : Number.NaN;
+    const nextStartedAtMs = Date.parse(nextStartedAt);
+    if (previous === null) {
       workingStartedAtRef.current = {
-        turnId: activeTurnId ?? null,
+        turnId: nextTurnId,
+        startedAt: nextStartedAt,
+      };
+    } else if (previous.turnId === null && nextTurnId !== null) {
+      workingStartedAtRef.current = {
+        turnId: nextTurnId,
+        startedAt:
+          Number.isNaN(previousStartedAtMs) ||
+          (!Number.isNaN(nextStartedAtMs) && nextStartedAtMs < previousStartedAtMs)
+            ? nextStartedAt
+            : previous.startedAt,
+      };
+    } else if (previous.turnId !== null && nextTurnId !== null && previous.turnId !== nextTurnId) {
+      workingStartedAtRef.current = {
+        turnId: nextTurnId,
+        startedAt: nextStartedAt,
+      };
+    } else if (!Number.isNaN(nextStartedAtMs) && nextStartedAtMs < previousStartedAtMs) {
+      workingStartedAtRef.current = {
+        turnId: previous.turnId,
         startedAt: nextStartedAt,
       };
     }
+  } else {
+    workingStartedAtRef.current = null;
   }
   const effectiveActiveTurnStartedAt = isWorking
     ? (workingStartedAtRef.current?.startedAt ?? activeTurnStartedAt)
@@ -1560,7 +1578,7 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
 // does not create a React commit every second while a response is streaming.
 // ---------------------------------------------------------------------------
 
-/** Live "Working for Xs" label. */
+/** Live elapsed stage label. */
 function WorkingTimer({ createdAt }: { createdAt: string }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const initialText = formatWorkingTimerNow(createdAt);

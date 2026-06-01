@@ -196,12 +196,12 @@ export function deriveActiveWorkStartedAt(
     session?.orchestrationStatus === "running" ? (session.activeTurnId ?? null) : null;
   if (runningTurnId !== null) {
     if (latestTurn?.turnId === runningTurnId) {
-      return earliestIsoTimestamp(latestTurn.startedAt, sendStartedAt, sessionStartedAt);
+      return earliestIsoTimestamp(sendStartedAt, latestTurn.startedAt, sessionStartedAt);
     }
     return sendStartedAt ?? sessionStartedAt;
   }
   if (!isLatestTurnSettled(latestTurn, session)) {
-    return latestTurn?.startedAt ?? sendStartedAt;
+    return earliestIsoTimestamp(sendStartedAt, latestTurn?.startedAt);
   }
   return sendStartedAt;
 }

@@ -16,6 +16,7 @@ import {
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
+  deriveLockedProvider,
   hasServerAcknowledgedLocalDispatch,
   reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
@@ -210,6 +211,29 @@ describe("shouldWriteThreadErrorToCurrentServerThread", () => {
         targetThreadId: threadId,
       }),
     ).toBe(false);
+  });
+});
+
+describe("deriveLockedProvider", () => {
+  it("locks the provider for a locally started thread before server projection catches up", () => {
+    const thread = makeThread();
+
+    expect(
+      deriveLockedProvider({
+        thread,
+        selectedProvider: null,
+        threadProvider: "codex",
+      }),
+    ).toBeNull();
+
+    expect(
+      deriveLockedProvider({
+        thread,
+        selectedProvider: null,
+        threadProvider: "codex",
+        locallyStarted: true,
+      }),
+    ).toBe(ProviderDriverKind.make("codex"));
   });
 });
 
