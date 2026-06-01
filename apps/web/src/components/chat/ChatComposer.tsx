@@ -2269,7 +2269,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <button
                 type="button"
                 className={cn(
-                  "group flex size-8 shrink-0 items-center justify-center rounded-md bg-transparent transition-[background-color,box-shadow,opacity] duration-180 ease-[var(--motion-ease-out)] enabled:hover:bg-white/8 disabled:opacity-30",
+                  "group/send flex size-8 shrink-0 items-center justify-center rounded-md bg-transparent transition-[background-color,box-shadow,opacity] duration-180 ease-[var(--motion-ease-out)] enabled:hover:bg-white/8 disabled:opacity-30",
                   isComposerRunning
                     ? "cursor-pointer bg-rose-500/90 text-white hover:bg-rose-500"
                     : null,
@@ -2297,7 +2297,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <rect x="2" y="2" width="8" height="8" rx="1.5" />
                   </svg>
                 ) : (
-                  <CornerDownLeftIcon className="size-4 text-muted-foreground/65 transition-colors duration-180 group-enabled:group-hover:text-white group-enabled:group-active:text-white" />
+                  <CornerDownLeftIcon className="size-4 text-muted-foreground/65 transition-colors duration-180 group-enabled/send:group-hover/send:text-white group-enabled/send:group-active/send:text-white" />
                 )}
               </button>
             </div>

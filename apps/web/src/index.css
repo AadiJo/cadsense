@@ -396,24 +396,26 @@ code {
 }
 
 .chat-composer-shell:focus-within .chat-composer-surface {
-  background-color: color-mix(in srgb, var(--card) 34%, transparent);
-  box-shadow: none;
+  background-color: color-mix(in srgb, var(--card) 24%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-neutral-500) 22%, transparent);
   opacity: 1;
 }
 
 .dark .chat-composer-shell:focus-within .chat-composer-surface {
-  background-color: color-mix(in srgb, var(--color-white) 3.5%, transparent);
-  box-shadow: none;
+  background-color: color-mix(in srgb, var(--color-white) 2%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-neutral-400) 24%, transparent);
   opacity: 1;
 }
 
 .chat-composer-shell:hover:focus-within .chat-composer-surface {
-  background-color: color-mix(in srgb, var(--card) 48%, transparent);
+  background-color: color-mix(in srgb, var(--card) 34%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-neutral-500) 22%, transparent);
   opacity: 1;
 }
 
 .dark .chat-composer-shell:hover:focus-within .chat-composer-surface {
-  background-color: color-mix(in srgb, var(--color-white) 5.5%, transparent);
+  background-color: color-mix(in srgb, var(--color-white) 3.5%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--color-neutral-400) 24%, transparent);
   opacity: 1;
 }
 

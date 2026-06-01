@@ -198,7 +198,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   return (
     <button
       type="submit"
-      className="group flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-md bg-transparent transition-[background-color,opacity,transform] duration-150 hover:bg-white/8 hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 dark:hover:bg-white/8 sm:h-8 sm:w-8"
+      className="group/send flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-md bg-transparent transition-[background-color,opacity,transform] duration-150 hover:bg-white/8 hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 dark:hover:bg-white/8 sm:h-8 sm:w-8"
       {...pointerFocusProps}
       disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || !hasSendableContent}
       aria-label={
@@ -236,7 +236,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           />
         </svg>
       ) : (
-        <CornerDownLeftIcon className="size-4 text-muted-foreground/65 transition-colors duration-150 group-enabled:group-hover:text-white group-enabled:group-active:text-white" />
+        <CornerDownLeftIcon className="size-4 text-muted-foreground/65 transition-colors duration-150 group-enabled/send:group-hover/send:text-white group-enabled/send:group-active/send:text-white" />
       )}
     </button>
   );
