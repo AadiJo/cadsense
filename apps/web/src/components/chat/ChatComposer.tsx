@@ -85,7 +85,14 @@ import { Button } from "../ui/button";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
-import { ChevronDownIcon, CircleAlertIcon, ListTodoIcon, ShieldIcon, XIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  CircleAlertIcon,
+  CornerDownLeftIcon,
+  ListTodoIcon,
+  ShieldIcon,
+  XIcon,
+} from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
 import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
@@ -2109,7 +2116,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           ref={composerSurfaceRef}
           data-chat-composer-mobile-collapsed={isComposerCollapsedMobile ? "true" : "false"}
           className={cn(
-            "chat-composer-surface border transition-[border-color,box-shadow,background-color] duration-220 ease-[var(--motion-ease-out)] has-focus-visible:border-ring/45",
+            "chat-composer-surface border transition-[border-color,box-shadow,background-color,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[background-color]",
             isDragOverComposer
               ? "border-primary/70 shadow-[0_0_0_1px_rgb(99_102_241/0.22),0_18px_54px_rgb(99_102_241/0.18)]"
               : "border-border/70",
@@ -2262,10 +2269,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               <button
                 type="button"
                 className={cn(
-                  "flex size-8 shrink-0 items-center justify-center rounded-md text-primary-foreground shadow-sm transition-[background-color,box-shadow,opacity] duration-180 ease-[var(--motion-ease-out)] disabled:opacity-30",
+                  "group flex size-8 shrink-0 items-center justify-center rounded-md bg-transparent transition-[background-color,box-shadow,opacity] duration-180 ease-[var(--motion-ease-out)] enabled:hover:bg-white/8 disabled:opacity-30",
                   isComposerRunning
                     ? "cursor-pointer bg-rose-500/90 text-white hover:bg-rose-500"
-                    : "bg-primary/90 hover:bg-primary",
+                    : null,
                 )}
                 disabled={collapsedComposerPrimaryActionDisabled}
                 aria-label={collapsedComposerPrimaryActionLabel}
@@ -2290,15 +2297,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     <rect x="2" y="2" width="8" height="8" rx="1.5" />
                   </svg>
                 ) : (
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path
-                      d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  <CornerDownLeftIcon className="size-4 text-muted-foreground/65 transition-colors duration-180 group-enabled:group-hover:text-white group-enabled:group-active:text-white" />
                 )}
               </button>
             </div>

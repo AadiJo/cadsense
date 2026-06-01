@@ -1,5 +1,5 @@
 import { memo, type PointerEventHandler } from "react";
-import { ChevronDownIcon, ChevronLeftIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronLeftIcon, CornerDownLeftIcon } from "lucide-react";
 import type { ComposerSubmitMode } from "../../composerDraftStore";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
@@ -198,7 +198,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   return (
     <button
       type="submit"
-      className="flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-md bg-primary/90 text-primary-foreground transition-all duration-150 hover:bg-primary hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 sm:h-8 sm:w-8"
+      className="group flex h-9 w-9 enabled:cursor-pointer items-center justify-center rounded-md bg-transparent transition-[background-color,opacity,transform] duration-150 hover:bg-white/8 hover:scale-105 disabled:pointer-events-none disabled:opacity-30 disabled:hover:scale-100 dark:hover:bg-white/8 sm:h-8 sm:w-8"
       {...pointerFocusProps}
       disabled={isSendBusy || isConnecting || isEnvironmentUnavailable || !hasSendableContent}
       aria-label={
@@ -236,15 +236,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
           />
         </svg>
       ) : (
-        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
-          <path
-            d="M7 11.5V2.5M7 2.5L3 6.5M7 2.5L11 6.5"
-            stroke="currentColor"
-            strokeWidth="1.8"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
+        <CornerDownLeftIcon className="size-4 text-muted-foreground/65 transition-colors duration-150 group-enabled:group-hover:text-white group-enabled:group-active:text-white" />
       )}
     </button>
   );

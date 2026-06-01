@@ -3760,7 +3760,7 @@ export default function ChatView(props: ChatViewProps) {
                 <button
                   type="button"
                   onClick={() => scrollToEnd(true)}
-                  className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-border/80 bg-background/86 px-3 py-1 text-muted-foreground text-xs shadow-[0_12px_30px_-16px_rgb(0_0_0/0.85),0_1px_0_rgb(255_255_255/0.08)_inset] backdrop-blur-md backdrop-saturate-150 transition-[background-color,border-color,color,transform,box-shadow] duration-180 ease-[var(--motion-ease-out)] hover:-translate-y-px hover:border-border hover:bg-background/95 hover:text-foreground hover:cursor-pointer active:translate-y-0 dark:bg-background/82 dark:shadow-[0_12px_32px_-14px_rgb(0_0_0/0.95),0_1px_0_rgb(255_255_255/0.05)_inset]"
+                  className="pointer-events-auto flex items-center gap-1.5 rounded-md border border-white/8 bg-[#1d1d1d] px-3 py-1 text-xs text-white/70 opacity-100 shadow-[0_12px_30px_-16px_rgb(0_0_0/0.9),0_1px_0_rgb(255_255_255/0.06)_inset] transition-[border-color,color,transform,box-shadow] duration-180 ease-[var(--motion-ease-out)] hover:-translate-y-px hover:border-white/14 hover:text-white hover:cursor-pointer active:translate-y-0"
                 >
                   <ChevronDownIcon className="size-3.5" />
                   Scroll to bottom
