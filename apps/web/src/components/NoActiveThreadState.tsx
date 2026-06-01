@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@cadsense/client-runtime";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowRightIcon,
@@ -297,7 +297,11 @@ export function NoActiveThreadState() {
             <aside className="space-y-8 border-border/70 lg:border-l lg:pl-8">
               <section>
                 <SectionLabel>System status</SectionLabel>
-                <div className="mt-4 space-y-4">
+                <Link
+                  to="/settings/connections"
+                  className="mt-2 -mx-2 block space-y-4 rounded-md px-2 py-2 transition-colors hover:bg-accent/25 focus-visible:bg-accent/25 focus-visible:outline-none"
+                  aria-label="Open connection settings"
+                >
                   <ConnectorRow
                     icon={<img src="/onshape.svg" alt="" className="size-4 rounded-sm" />}
                     name="Onshape"
@@ -308,7 +312,7 @@ export function NoActiveThreadState() {
                     name="Mechbase"
                     summary={mechbaseStatus}
                   />
-                </div>
+                </Link>
                 <div className="mt-5 grid grid-cols-2 gap-6 border-t border-border/60 pt-5">
                   <Metric label="Projects" value={String(regularProjects.length)} />
                   <Metric label="Chats" value={String(chatCount)} />

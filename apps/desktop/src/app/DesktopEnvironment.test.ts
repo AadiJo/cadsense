@@ -101,6 +101,8 @@ describe("DesktopEnvironment", () => {
       assert.equal(np(environment.stateDir), "/tmp/cadsense/userdata");
       assert.equal(np(environment.logDir), "/tmp/cadsense/userdata/logs");
       assert.equal(np(environment.serverSettingsPath), "/tmp/cadsense/userdata/settings.json");
+      assert.equal(environment.branding.stageLabel, null);
+      assert.equal(environment.branding.displayName, "Cadsense");
     }),
   );
 

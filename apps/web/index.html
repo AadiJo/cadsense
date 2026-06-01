@@ -17,6 +17,10 @@
         const DARK_BACKGROUND = "#161616";
         const themeColorMeta = document.querySelector('meta[name="theme-color"]');
         try {
+          document.documentElement.classList.toggle(
+            "cad-viewer-frame",
+            window.location.pathname === "/cad-viewer-frame",
+          );
           const storedTheme = window.localStorage.getItem("Cadsense:theme");
           const theme =
             storedTheme === "light" || storedTheme === "dark" || storedTheme === "system"
@@ -81,6 +85,10 @@
         width: 64px;
         height: 64px;
         object-fit: contain;
+      }
+
+      html.cad-viewer-frame #boot-shell {
+        display: none;
       }
     </style>
     <link rel="preconnect" href="https://fonts.googleapis.com" />

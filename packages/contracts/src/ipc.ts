@@ -158,13 +158,13 @@ export const DesktopAppStageLabelSchema = Schema.Literals(["Dev", "Nightly"]);
 
 export interface DesktopAppBranding {
   baseName: string;
-  stageLabel: DesktopAppStageLabel;
+  stageLabel: DesktopAppStageLabel | null;
   displayName: string;
 }
 
 export const DesktopAppBrandingSchema = Schema.Struct({
   baseName: Schema.String,
-  stageLabel: DesktopAppStageLabelSchema,
+  stageLabel: Schema.NullOr(DesktopAppStageLabelSchema),
   displayName: Schema.String,
 });
 

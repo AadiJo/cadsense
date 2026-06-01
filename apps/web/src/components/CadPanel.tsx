@@ -83,6 +83,29 @@ function CadPanelEmptyState(props: { title: string; detail: string; icon?: "erro
   );
 }
 
+function CadPanelLoadingState() {
+  return (
+    <div
+      className="flex size-full min-h-0 flex-1 items-center justify-center bg-background/94 text-sm text-muted-foreground"
+      role="status"
+      aria-live="polite"
+      aria-label="Loading CAD viewer"
+    >
+      <div className="grid min-w-56 gap-3 rounded-md border border-border/70 bg-background px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-3">
+          <div className="cad-loading-orbit size-6 rounded-md border border-primary/35" />
+          <div>
+            <div className="text-sm font-medium text-foreground">Loading CAD model</div>
+            <div className="text-xs text-muted-foreground">
+              Parsing geometry and preparing the scene
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function LocalCadOpenState(props: {
   error: string | null;
   onSelectFiles: (files: ReadonlyArray<File>) => void;
@@ -1287,14 +1310,7 @@ export default function CadPanel({
   if (filesQuery.isLoading) {
     return (
       <DiffPanelShell mode={mode} {...cadShellProps}>
-        <div
-          className="flex min-h-0 flex-1 items-center justify-center text-sm text-muted-foreground"
-          role="status"
-          aria-live="polite"
-          aria-label="Loading CAD files"
-        >
-          Loading CAD files…
-        </div>
+        <CadPanelLoadingState />
       </DiffPanelShell>
     );
   }
@@ -1476,22 +1492,14 @@ export default function CadPanel({
             </div>
           ) : null}
           {loadState === "loading" && (
-            <div className="absolute inset-0 z-10 flex items-center justify-center bg-background/94 text-sm text-muted-foreground backdrop-blur-sm">
+            <div className="absolute inset-0 z-10">
               <div
                 className={cn(
-                  "cad-loading-card app-glass-surface grid min-w-56 gap-3 rounded-md px-4 py-3 transition-[opacity,transform] duration-220 ease-[var(--motion-ease-out)]",
+                  "size-full transition-[opacity,transform] duration-220 ease-[var(--motion-ease-out)]",
                   showLoadingText ? "translate-y-0 opacity-100" : "translate-y-1 opacity-0",
                 )}
               >
-                <div className="flex items-center gap-3">
-                  <div className="cad-loading-orbit size-6 rounded-md border border-primary/35" />
-                  <div>
-                    <div className="text-sm font-medium text-foreground">Loading CAD model</div>
-                    <div className="text-xs text-muted-foreground">
-                      Parsing geometry and preparing the scene
-                    </div>
-                  </div>
-                </div>
+                <CadPanelLoadingState />
               </div>
             </div>
           )}

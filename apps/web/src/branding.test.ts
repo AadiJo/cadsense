@@ -53,5 +53,7 @@ describe("branding", () => {
 
     expect(branding.HOSTED_APP_CHANNEL).toBeNull();
     expect(branding.HOSTED_APP_CHANNEL_LABEL).toBeNull();
+    expect(branding.APP_STAGE_LABEL).toBeNull();
+    expect(branding.APP_DISPLAY_NAME).toBe("Cadsense");
   });
 });

@@ -55,4 +55,31 @@ describe("cadThreeMfFastParser", () => {
     expect(mesh.geometry.getIndex()?.count).toBe(3);
     expect(mesh.material.color.r).toBeCloseTo(1);
   });
+
+  it("preserves translucent 3MF material alpha", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02" unit="meter">
+  <resources>
+    <m:colorgroup id="1"><m:color color="#33669980"/></m:colorgroup>
+    <object id="1" name="window" type="model" pid="1" pindex="0">
+      <mesh>
+        <vertices>
+          <vertex x="0" y="0" z="0" />
+          <vertex x="1" y="0" z="0" />
+          <vertex x="0" y="1" z="0" />
+        </vertices>
+        <triangles><triangle v1="0" v2="1" v3="2" /></triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build><item objectid="1"/></build>
+</model>`);
+
+    const group = parseThreeMfFast({ three: THREE, unzipped });
+    const mesh = group.children[0] as THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhongMaterial>;
+
+    expect(mesh.material.transparent).toBe(true);
+    expect(mesh.material.depthWrite).toBe(false);
+    expect(mesh.material.opacity).toBeCloseTo(128 / 255);
+  });
 });

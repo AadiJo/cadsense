@@ -10,6 +10,7 @@ export interface ParsedColor {
   readonly r: number;
   readonly g: number;
   readonly b: number;
+  readonly a: number;
 }
 
 export interface CadThreeMfParsedMesh {
@@ -55,7 +56,7 @@ const MODEL_ENTRY_PATTERN = /^3D\/[^/]*\.model$/u;
 const OBJECT_PATTERN = /<object\b([^>]*)>([\s\S]*?)<\/object>/giu;
 const COMPONENT_PATTERN = /<component\b([^>]*)\/?>/giu;
 const ITEM_PATTERN = /<item\b([^>]*)\/?>/giu;
-const COLOR_PATTERN = /<m:color\b[^>]*\bcolor="(#[0-9a-f]{6})(?:[0-9a-f]{2})?"[^>]*\/?>/giu;
+const COLOR_PATTERN = /<m:color\b[^>]*\bcolor="(#[0-9a-f]{6}(?:[0-9a-f]{2})?)"[^>]*\/?>/giu;
 const VERTEX_PATTERN =
   /<vertex\b[^>]*\bx="([^"]+)"[^>]*\by="([^"]+)"[^>]*\bz="([^"]+)"[^>]*\/?>/giu;
 const TRIANGLE_PATTERN =
@@ -79,7 +80,8 @@ function parseColor(value: string): ParsedColor {
   const r = Number.parseInt(hex.slice(0, 2), 16) / 255;
   const g = Number.parseInt(hex.slice(2, 4), 16) / 255;
   const b = Number.parseInt(hex.slice(4, 6), 16) / 255;
-  return { r, g, b };
+  const a = hex.length >= 8 ? Number.parseInt(hex.slice(6, 8), 16) / 255 : 1;
+  return { r, g, b, a };
 }
 
 function parseTransform(value: string | null): readonly number[] | null {
@@ -267,6 +269,9 @@ function materialForParsedMesh(
   const color = mesh.color;
   return new three.MeshPhongMaterial({
     color: color ? new three.Color(color.r, color.g, color.b) : new three.Color(0x8f969d),
+    opacity: color?.a ?? 1,
+    transparent: color !== null && color.a < 1,
+    depthWrite: color === null || color.a >= 1,
     side: three.DoubleSide,
   });
 }

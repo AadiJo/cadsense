@@ -1279,22 +1279,15 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (useThreadSelectionStore.getState().hasSelection()) {
         clearSelection();
       }
-      if (visibleProjectThreads.length === 0 && project.memberProjects.length === 1) {
-        createThreadForProjectMember(project.memberProjects[0]!);
-        return;
-      }
       toggleProject(project.projectKey);
     },
     [
       clearSelection,
-      createThreadForProjectMember,
       dragInProgressRef,
-      project.memberProjects,
       project.projectKey,
       suppressProjectClickAfterDragRef,
       suppressProjectClickForContextMenuRef,
       toggleProject,
-      visibleProjectThreads.length,
     ],
   );
 
@@ -1305,20 +1298,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (dragInProgressRef.current) {
         return;
       }
-      if (visibleProjectThreads.length === 0 && project.memberProjects.length === 1) {
-        createThreadForProjectMember(project.memberProjects[0]!);
-        return;
-      }
       toggleProject(project.projectKey);
     },
-    [
-      createThreadForProjectMember,
-      dragInProgressRef,
-      project.memberProjects,
-      project.projectKey,
-      toggleProject,
-      visibleProjectThreads.length,
-    ],
+    [dragInProgressRef, project.projectKey, toggleProject],
   );
 
   const handleProjectButtonPointerDownCapture = useCallback(
@@ -2377,9 +2359,11 @@ const SidebarChromeHeader = memo(function SidebarChromeHeader({
               <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
                 {runtimeLabel}
               </span>
-              <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
-                {APP_STAGE_LABEL}
-              </span>
+              {APP_STAGE_LABEL ? (
+                <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
+                  {APP_STAGE_LABEL}
+                </span>
+              ) : null}
             </Link>
           }
         />

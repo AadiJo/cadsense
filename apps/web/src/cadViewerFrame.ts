@@ -98,10 +98,10 @@ let explodedAnimationFrame = 0;
 let zoomToFitAnimationFrame = 0;
 const threeModelCache = new Map<string, CachedThreeModel>();
 const THREE_MODEL_CACHE_LIMIT = 3;
-const MATERIAL_DARKEN_FACTOR_DARK = 0.42;
+const MATERIAL_DARKEN_FACTOR_DARK = 0.56;
 const MATERIAL_DARKEN_FACTOR_LIGHT = 0.68;
 const MATERIAL_SATURATION_FACTOR = 1.25;
-const CANVAS_COLOR_GRADE_FILTER_DARK = "brightness(0.76) contrast(1.28) saturate(1.45)";
+const CANVAS_COLOR_GRADE_FILTER_DARK = "brightness(0.84) contrast(1.24) saturate(1.38)";
 const CANVAS_COLOR_GRADE_FILTER_LIGHT = "brightness(0.92) contrast(1.12) saturate(1.3)";
 const EXPLODED_DISTANCE_FACTOR = 0.18;
 const EXPLODED_ANIMATION_MS = 260;
@@ -694,16 +694,18 @@ function tuneThreeMaterial(material: ThreeNamespace.Material, darkTheme: boolean
   const maybeColor = material as ThreeNamespace.Material & {
     color?: ThreeNamespace.Color;
     emissive?: ThreeNamespace.Color;
+    opacity?: number;
     shininess?: number;
     roughness?: number;
     metalness?: number;
     userData: Record<string, unknown>;
   };
+  const isTransparentMaterial = typeof maybeColor.opacity === "number" && maybeColor.opacity < 1;
   if (maybeColor.userData.cadSenseTuned === true) {
     return;
   }
   maybeColor.userData.cadSenseTuned = true;
-  if (maybeColor.color) {
+  if (maybeColor.color && !isTransparentMaterial) {
     tuneMaterialColor(maybeColor.color, darkTheme);
   }
   if (maybeColor.emissive) {
@@ -717,6 +719,10 @@ function tuneThreeMaterial(material: ThreeNamespace.Material, darkTheme: boolean
   }
   if (typeof maybeColor.metalness === "number") {
     maybeColor.metalness = Math.min(maybeColor.metalness, 0.08);
+  }
+  if (isTransparentMaterial) {
+    material.transparent = true;
+    material.depthWrite = false;
   }
   material.needsUpdate = true;
 }
@@ -732,7 +738,8 @@ function tuneThreeModelMaterials(group: ThreeObject3D, three: ThreeModule): void
     const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const mat of materials) {
       if (isThreeMaterial(mat)) {
-        mat.side = three.DoubleSide;
+        const opacity = (mat as ThreeNamespace.Material & { opacity?: number }).opacity;
+        mat.side = typeof opacity === "number" && opacity < 1 ? three.FrontSide : three.DoubleSide;
         tuneThreeMaterial(mat, darkTheme);
       }
     }
@@ -830,7 +837,17 @@ function applyExplodedView(state: ThreeViewerState, enabled: boolean): void {
   step();
 }
 
+function updateThreeCameraClipping(state: ThreeViewerState): void {
+  const { camera, controls, boundingSphere } = state;
+  const radius = Math.max(1, boundingSphere.radius);
+  const distance = Math.max(0.001, camera.position.distanceTo(controls.target));
+  camera.near = Math.max(0.001, Math.min(radius / 1_000, distance / 100));
+  camera.far = Math.max(1_000, distance + radius * 8);
+  camera.updateProjectionMatrix();
+}
+
 function renderThreeViewer(state: ThreeViewerState): void {
+  updateThreeCameraClipping(state);
   state.renderer.render(state.scene, state.camera);
 }
 
@@ -973,10 +990,7 @@ function applyThreeCadCamera(
 
   camera.position.copy(boundingSphere.center).addScaledVector(normalizedDirection, distance);
   camera.up.set(cameraUp[0], cameraUp[1], cameraUp[2]).normalize();
-  camera.near = Math.max(0.01, distance - boundingSphere.radius * 4);
-  camera.far = Math.max(distance + boundingSphere.radius * 4, 1_000);
   camera.lookAt(boundingSphere.center);
-  camera.updateProjectionMatrix();
   controls.target.copy(boundingSphere.center);
   controls.update();
   renderThreeViewer(state);
@@ -1019,10 +1033,7 @@ function zoomThreeViewerToFit(state: ThreeViewerState): void {
 
     camera.position.lerpVectors(startPosition, targetPosition, eased);
     controls.target.lerpVectors(startTarget, targetTarget, eased);
-    camera.near = Math.max(0.01, fitDistance - boundingSphere.radius * 4);
-    camera.far = Math.max(fitDistance + boundingSphere.radius * 4, 1_000);
     camera.lookAt(controls.target);
-    camera.updateProjectionMatrix();
     controls.update();
     renderThreeViewer(state);
 

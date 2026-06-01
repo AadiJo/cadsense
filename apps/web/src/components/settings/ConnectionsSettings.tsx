@@ -3030,7 +3030,7 @@ export function ConnectionsSettings() {
         <div className={ITEM_ROW_CLASSNAME}>
           <p className="flex items-center gap-2 text-xs text-muted-foreground">
             <Spinner className="size-3.5" />
-            Loading Mechbase connectionâ€¦
+            Loading Mechbase connection...
           </p>
         </div>
       ) : null}
