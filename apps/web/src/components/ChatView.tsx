@@ -681,6 +681,10 @@ function useLocalDispatchState(input: {
   threadError: string | null | undefined;
 }) {
   const [localDispatch, setLocalDispatch] = useState<LocalDispatchSnapshot | null>(null);
+  const [acknowledgedDispatch, setAcknowledgedDispatch] = useState<{
+    readonly turnId: TurnId | null;
+    readonly startedAt: string;
+  } | null>(null);
 
   const beginLocalDispatch = useCallback(
     (options?: { preparingWorktree?: boolean }) => {
@@ -727,13 +731,53 @@ function useLocalDispatchState(input: {
     if (!serverAcknowledgedLocalDispatch) {
       return;
     }
+    if (localDispatch?.startedAt) {
+      setAcknowledgedDispatch({
+        turnId: input.activeLatestTurn?.turnId ?? null,
+        startedAt: localDispatch.startedAt,
+      });
+    }
     resetLocalDispatch();
-  }, [resetLocalDispatch, serverAcknowledgedLocalDispatch]);
+  }, [input.activeLatestTurn, localDispatch, resetLocalDispatch, serverAcknowledgedLocalDispatch]);
+
+  useEffect(() => {
+    const currentAcknowledgedDispatch = acknowledgedDispatch;
+    if (!currentAcknowledgedDispatch) {
+      return;
+    }
+    if (isLatestTurnSettled(input.activeLatestTurn, input.activeThread?.session ?? null)) {
+      setAcknowledgedDispatch(null);
+      return;
+    }
+    const activeTurnId = input.activeLatestTurn?.turnId ?? null;
+    if (currentAcknowledgedDispatch.turnId === null && activeTurnId !== null) {
+      setAcknowledgedDispatch({
+        ...currentAcknowledgedDispatch,
+        turnId: activeTurnId,
+      });
+      return;
+    }
+    if (
+      currentAcknowledgedDispatch.turnId !== null &&
+      activeTurnId !== null &&
+      activeTurnId !== currentAcknowledgedDispatch.turnId
+    ) {
+      setAcknowledgedDispatch(null);
+    }
+  }, [acknowledgedDispatch, input.activeLatestTurn, input.activeThread?.session]);
+
+  const currentAcknowledgedDispatch = acknowledgedDispatch;
+  const activeAcknowledgedDispatchStartedAt =
+    currentAcknowledgedDispatch !== null &&
+    (currentAcknowledgedDispatch.turnId === null ||
+      input.activeLatestTurn?.turnId === currentAcknowledgedDispatch.turnId)
+      ? currentAcknowledgedDispatch.startedAt
+      : null;
 
   return {
     beginLocalDispatch,
     resetLocalDispatch,
-    localDispatchStartedAt: localDispatch?.startedAt ?? null,
+    localDispatchStartedAt: localDispatch?.startedAt ?? activeAcknowledgedDispatchStartedAt,
     isPreparingWorktree: localDispatch?.preparingWorktree ?? false,
     isSendBusy: localDispatch !== null && !serverAcknowledgedLocalDispatch,
   };

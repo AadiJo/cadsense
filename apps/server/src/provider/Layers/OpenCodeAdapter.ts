@@ -16,6 +16,7 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
@@ -25,8 +26,15 @@ import type { OpencodeClient, Part, PermissionRequest, QuestionRequest } from "@
 import { getModelSelectionStringOptionValue } from "@cadsense/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { makeCadViewMcpStdioServer } from "../../cad/CadViewMcp.ts";
+import { makeCadViewOpenCodeMcpServerConfig } from "../../cad/CadViewMcp.ts";
 import { ServerConfig } from "../../config.ts";
+import { MECHBASE_API_KEY_SECRET_NAME } from "../../mechbase/MechbaseApi.ts";
+import { getCachedValidatedMechbaseApiKey } from "../../mechbase/MechbaseConnection.ts";
+import { makeMechbaseOpenCodeMcpServerConfig } from "../../mechbase/MechbaseMcp.ts";
+import {
+  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+} from "../CodexDeveloperInstructions.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -72,6 +80,7 @@ interface OpenCodeSessionContext {
   readonly directory: string;
   readonly openCodeSessionId: string;
   readonly pendingPermissions: Map<string, PermissionRequest>;
+  readonly autoApprovedPermissionIds: Set<string>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
   readonly partById: Map<string, Part>;
@@ -101,11 +110,24 @@ interface OpenCodeSessionContext {
 export interface OpenCodeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  readonly cadViewMcpExportRoot?: string;
   readonly nativeEventLogPath?: string;
   readonly nativeEventLogger?: EventNdjsonLogger;
 }
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+
+function makeMechbaseApiKeySecretPath(secretsDir: string): string {
+  return `${secretsDir.replace(/[\\/]+$/, "")}/${MECHBASE_API_KEY_SECRET_NAME}.bin`;
+}
+
+function openCodeDeveloperInstructionsForMode(
+  interactionMode: "default" | "plan" | undefined,
+): string {
+  return interactionMode === "plan"
+    ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+    : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+}
 
 /**
  * Map a tagged OpenCodeRuntimeError produced by {@link runOpenCodeSdk} into
@@ -186,7 +208,11 @@ function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
   if (normalized.includes("web")) {
     return "web_search";
   }
-  if (normalized.includes("mcp")) {
+  if (
+    normalized.includes("mcp") ||
+    normalized.startsWith("cadsense-") ||
+    normalized.startsWith("cadsense_")
+  ) {
     return "mcp_tool_call";
   }
   if (normalized.includes("image")) {
@@ -200,6 +226,35 @@ function toToolLifecycleItemType(toolName: string): ToolLifecycleItemType {
     return "collab_agent_tool_call";
   }
   return "dynamic_tool_call";
+}
+
+function humanizeMcpIdentifier(value: string): string {
+  const withoutLocalPrefix = value
+    .replace(/^cadsense[-_]/i, "")
+    .replace(/^mcp[-_]/i, "")
+    .replace(/[-_]?mcp$/i, "");
+  return withoutLocalPrefix
+    .replace(/[-_.]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function resolveOpenCodeToolTitle(part: Extract<Part, { type: "tool" }>): string {
+  const runningTitle = part.state.status === "running" ? part.state.title : undefined;
+  const displayTarget = runningTitle?.trim() || part.tool;
+  if (toToolLifecycleItemType(part.tool) !== "mcp_tool_call") {
+    return displayTarget;
+  }
+
+  const normalizedTool = part.tool.toLowerCase();
+  if (normalizedTool.includes("mechbase")) {
+    return "Queried Mechbase";
+  }
+
+  const displayName = humanizeMcpIdentifier(displayTarget);
+  return displayName ? `Used ${displayName}` : displayTarget;
 }
 
 function mapPermissionToRequestType(
@@ -227,6 +282,33 @@ function mapPermissionDecision(reply: "once" | "always" | "reject"): string {
     default:
       return "decline";
   }
+}
+
+function unknownContainsMcpIdentifier(value: unknown): boolean {
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase();
+    return (
+      normalized.includes("mcp") ||
+      normalized.includes("cadsense-") ||
+      normalized.includes("cadsense_") ||
+      normalized.includes("mechbase")
+    );
+  }
+  if (Array.isArray(value)) {
+    return value.some(unknownContainsMcpIdentifier);
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value).some(unknownContainsMcpIdentifier);
+  }
+  return false;
+}
+
+function isOpenCodeMcpPermissionRequest(request: PermissionRequest): boolean {
+  return (
+    unknownContainsMcpIdentifier(request.permission) ||
+    unknownContainsMcpIdentifier(request.patterns) ||
+    unknownContainsMcpIdentifier(request.metadata)
+  );
 }
 
 function resolveTurnSnapshot(
@@ -457,6 +539,7 @@ export function makeOpenCodeAdapter(
   return Effect.gen(function* () {
     const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("opencode");
     const serverConfig = yield* ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
     const openCodeRuntime = yield* OpenCodeRuntime;
     const nativeEventLogger =
       options?.nativeEventLogger ??
@@ -731,8 +814,7 @@ export function makeOpenCodeAdapter(
 
           if (part.type === "tool") {
             const itemType = toToolLifecycleItemType(part.tool);
-            const title =
-              part.state.status === "running" ? (part.state.title ?? part.tool) : part.tool;
+            const title = resolveOpenCodeToolTitle(part);
             const detail = detailFromToolPart(part);
             const payload = {
               itemType,
@@ -771,6 +853,19 @@ export function makeOpenCodeAdapter(
         }
 
         case "permission.asked": {
+          if (isOpenCodeMcpPermissionRequest(event.properties)) {
+            if (context.autoApprovedPermissionIds.has(event.properties.id)) {
+              break;
+            }
+            context.autoApprovedPermissionIds.add(event.properties.id);
+            yield* runOpenCodeSdk("permission.reply", () =>
+              context.client.permission.reply({
+                requestID: event.properties.id,
+                reply: "once",
+              }),
+            ).pipe(Effect.ignore({ log: true }));
+            break;
+          }
           context.pendingPermissions.set(event.properties.id, event.properties);
           yield* emit({
             ...(yield* buildEventBase({
@@ -1045,22 +1140,36 @@ export function makeOpenCodeAdapter(
                 directory,
                 ...(server.external && serverPassword ? { serverPassword } : {}),
               });
-              const cadMcpServer = makeCadViewMcpStdioServer(serverConfig, input.threadId);
+              const cadMcpServer = makeCadViewOpenCodeMcpServerConfig(
+                serverConfig,
+                input.threadId,
+                options?.cadViewMcpExportRoot,
+              );
               yield* runOpenCodeSdk("mcp.add", () =>
                 client.mcp.add({
                   directory,
                   name: cadMcpServer.name,
-                  config: {
-                    type: "local",
-                    command: [cadMcpServer.command, ...cadMcpServer.args],
-                    environment: Object.fromEntries(
-                      cadMcpServer.env.map(({ name, value }) => [name, value]),
-                    ),
-                    enabled: true,
-                    timeout: 5000,
-                  },
+                  config: cadMcpServer.config,
                 }),
               ).pipe(Effect.ignore({ log: true }));
+              const validatedMechbase = yield* fileSystem
+                .readFile(makeMechbaseApiKeySecretPath(serverConfig.secretsDir))
+                .pipe(
+                  Effect.flatMap((storedApiKey) => getCachedValidatedMechbaseApiKey(storedApiKey)),
+                  Effect.catch(() => Effect.succeed(null)),
+                );
+              if (validatedMechbase) {
+                const mechbaseMcpServer = makeMechbaseOpenCodeMcpServerConfig(
+                  validatedMechbase.apiKey,
+                );
+                yield* runOpenCodeSdk("mcp.add", () =>
+                  client.mcp.add({
+                    directory,
+                    name: mechbaseMcpServer.name,
+                    config: mechbaseMcpServer.config,
+                  }),
+                ).pipe(Effect.ignore({ log: true }));
+              }
               const openCodeSession = yield* runOpenCodeSdk("session.create", () =>
                 client.session.create({
                   title: `CadSense ${input.threadId}`,
@@ -1123,6 +1232,7 @@ export function makeOpenCodeAdapter(
           directory,
           openCodeSessionId: started.openCodeSession.id,
           pendingPermissions: new Map(),
+          autoApprovedPermissionIds: new Set(),
           pendingQuestions: new Map(),
           partById: new Map(),
           emittedTextByPartId: new Map(),
@@ -1229,6 +1339,7 @@ export function makeOpenCodeAdapter(
           model: parsedModel,
           ...(context.activeAgent ? { agent: context.activeAgent } : {}),
           ...(context.activeVariant ? { variant: context.activeVariant } : {}),
+          system: openCodeDeveloperInstructionsForMode(input.interactionMode),
           parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
         }),
       ).pipe(

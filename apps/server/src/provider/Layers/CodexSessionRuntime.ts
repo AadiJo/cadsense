@@ -75,6 +75,13 @@ const CodexUserInputAnswerObject = Schema.Struct({
 const isCodexResumeCursorSchema = Schema.is(CodexResumeCursorSchema);
 const isCodexUserInputAnswerObject = Schema.is(CodexUserInputAnswerObject);
 
+export function makeMcpElicitationAutoAcceptResponse(): EffectCodexSchema.McpServerElicitationRequestResponse {
+  return {
+    action: "accept",
+    content: {},
+  };
+}
+
 // TODO: Verify `packages/effect-codex-app-server/scripts/generate.ts` so the generated
 // `V2TurnStartParams` schema includes `collaborationMode` directly.
 const CodexTurnStartParamsWithCollaborationMode = EffectCodexSchema.V2TurnStartParams.pipe(
@@ -1296,6 +1303,10 @@ export const makeCodexSessionRuntime = (
           ),
         } satisfies EffectCodexSchema.ToolRequestUserInputResponse;
       }),
+    );
+
+    yield* client.handleServerRequest("mcpServer/elicitation/request", () =>
+      Effect.succeed(makeMcpElicitationAutoAcceptResponse()),
     );
 
     yield* client.handleUnknownServerRequest((method) =>

@@ -18,9 +18,11 @@ import {
   MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME,
   MECHBASE_MCP_SEARCH_TOOL_NAME,
   MECHBASE_MCP_SERVER_NAME,
+  MECHBASE_MCP_TIMEOUT_MS,
   handleMechbaseMcpRequest,
   makeMechbaseCodexMcpConfig,
   makeMechbaseMcpStdioServer,
+  makeMechbaseOpenCodeMcpServerConfig,
 } from "./MechbaseMcp.ts";
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
@@ -239,6 +241,19 @@ describe("MechbaseMcp", () => {
           args: expect.arrayContaining(["mcp", "mechbase"]),
           env: { [MECHBASE_API_KEY_ENV]: "secret" },
         },
+      },
+    });
+  });
+
+  it("projects OpenCode local MCP config", () => {
+    expect(makeMechbaseOpenCodeMcpServerConfig("secret")).toMatchObject({
+      name: MECHBASE_MCP_SERVER_NAME,
+      config: {
+        type: "local",
+        command: expect.arrayContaining(["mcp", "mechbase"]),
+        environment: { [MECHBASE_API_KEY_ENV]: "secret" },
+        enabled: true,
+        timeout: MECHBASE_MCP_TIMEOUT_MS,
       },
     });
   });

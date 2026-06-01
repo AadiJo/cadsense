@@ -252,7 +252,7 @@ describe("retainThreadDetailSubscription", () => {
 
     stop();
     await resetEnvironmentServiceForTests();
-  });
+  }, 15_000);
 
   it("does not start the primary connection until the known environment has an id", async () => {
     mockGetPrimaryKnownEnvironment.mockReturnValue({

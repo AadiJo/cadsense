@@ -17,6 +17,7 @@ import {
 export const MECHBASE_MCP_SERVER_NAME = "cadsense-mechbase";
 export const MECHBASE_MCP_SEARCH_TOOL_NAME = "search_mechbase";
 export const MECHBASE_MCP_FETCH_ARTIFACT_TOOL_NAME = "fetch_mechbase_artifact";
+export const MECHBASE_MCP_TIMEOUT_MS = 60_000;
 
 interface JsonRpcRequest {
   readonly jsonrpc?: string;
@@ -170,6 +171,29 @@ export function makeMechbaseCodexMcpConfig(apiKey: string): Record<string, unkno
         args: server.args,
         env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])),
       },
+    },
+  };
+}
+
+export function makeMechbaseOpenCodeMcpServerConfig(apiKey: string): {
+  readonly name: string;
+  readonly config: {
+    readonly type: "local";
+    readonly command: string[];
+    readonly environment: Record<string, string>;
+    readonly enabled: true;
+    readonly timeout: number;
+  };
+} {
+  const server = makeMechbaseMcpStdioServer(apiKey);
+  return {
+    name: server.name,
+    config: {
+      type: "local",
+      command: [server.command, ...server.args],
+      environment: Object.fromEntries(server.env.map(({ name, value }) => [name, value])),
+      enabled: true,
+      timeout: MECHBASE_MCP_TIMEOUT_MS,
     },
   };
 }

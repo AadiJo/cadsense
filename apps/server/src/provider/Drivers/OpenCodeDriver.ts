@@ -111,9 +111,16 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const serverConfig = yield* ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const eventLoggers = yield* ProviderEventLoggers;
+      const path = yield* Path.Path;
+      const cadViewMcpExportRoot = path.join(
+        serverConfig.stateDir,
+        "opencode",
+        String(instanceId),
+        "cadsense-cad-screenshots",
+      );
       const processEnv = {
         ...mergeProviderInstanceEnvironment(environment),
-        ...makeCadViewMcpEnv(serverConfig),
+        ...makeCadViewMcpEnv(serverConfig, undefined, cadViewMcpExportRoot),
       };
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -134,6 +141,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const adapter = yield* makeOpenCodeAdapter(effectiveConfig, {
         instanceId,
         environment: processEnv,
+        cadViewMcpExportRoot,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       });
       const textGeneration = yield* makeOpenCodeTextGeneration(effectiveConfig, processEnv);

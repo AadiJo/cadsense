@@ -154,6 +154,23 @@ type LatestTurnTiming = Pick<OrchestrationLatestTurn, "turnId" | "startedAt" | "
 type SessionActivityState = Pick<ThreadSession, "orchestrationStatus" | "activeTurnId"> &
   Partial<Pick<ThreadSession, "createdAt" | "updatedAt">>;
 
+function earliestIsoTimestamp(...timestamps: Array<string | null | undefined>): string | null {
+  let earliest: { iso: string; time: number } | null = null;
+  for (const iso of timestamps) {
+    if (!iso) {
+      continue;
+    }
+    const time = Date.parse(iso);
+    if (Number.isNaN(time)) {
+      continue;
+    }
+    if (!earliest || time < earliest.time) {
+      earliest = { iso, time };
+    }
+  }
+  return earliest?.iso ?? null;
+}
+
 export function isLatestTurnSettled(
   latestTurn: LatestTurnTiming | null,
   session: SessionActivityState | null,
@@ -172,14 +189,14 @@ export function deriveActiveWorkStartedAt(
 ): string | null {
   const sessionStartedAt = session?.createdAt ?? session?.updatedAt ?? null;
   if (session?.orchestrationStatus === "starting") {
-    return latestTurn?.startedAt ?? sendStartedAt ?? sessionStartedAt;
+    return earliestIsoTimestamp(latestTurn?.startedAt, sendStartedAt, sessionStartedAt);
   }
 
   const runningTurnId =
     session?.orchestrationStatus === "running" ? (session.activeTurnId ?? null) : null;
   if (runningTurnId !== null) {
     if (latestTurn?.turnId === runningTurnId) {
-      return latestTurn.startedAt ?? sendStartedAt ?? sessionStartedAt;
+      return earliestIsoTimestamp(latestTurn.startedAt, sendStartedAt, sessionStartedAt);
     }
     return sendStartedAt ?? sessionStartedAt;
   }

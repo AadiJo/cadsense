@@ -679,7 +679,8 @@ describe("CadPanel browser behavior", () => {
       );
       expect(releasedButton).toBeTruthy();
       const releasedRect = releasedButton!.getBoundingClientRect();
-      expect(releasedRect.top).toBeGreaterThanOrEqual(48);
+      expect(releasedRect.top).toBeLessThanOrEqual(9);
+      expect(releasedRect.right).toBeGreaterThanOrEqual(window.innerWidth - 9);
     });
 
     await page.getByRole("button", { name: "Exit fullscreen CAD view" }).click();

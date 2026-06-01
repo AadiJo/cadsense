@@ -1347,8 +1347,8 @@ export default function CadPanel({
     : ({
         position: "absolute",
         zIndex: 70,
-        right: fullscreenMounted ? 16 : 8,
-        top: fullscreenMounted ? 56 : 8,
+        right: 8,
+        top: 8,
       } as const);
   const fullscreenControl = (
     <Tooltip>

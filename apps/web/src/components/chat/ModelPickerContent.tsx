@@ -94,6 +94,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const listRegionRef = useRef<HTMLDivElement>(null);
   const highlightedModelKeyRef = useRef<string | null>(null);
   const favorites = useSettings((s) => s.favorites ?? []);
+  const [isModelListReady, setIsModelListReady] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | "favorites">(
     () => {
       if (props.lockedProvider !== null) {
@@ -109,6 +110,16 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [providedKeybindings],
   );
   const { updateSettings } = useUpdateSettings();
+
+  useEffect(() => {
+    setIsModelListReady(false);
+    const frame = window.requestAnimationFrame(() => {
+      setIsModelListReady(true);
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [instanceEntries, modelOptionsByInstance]);
 
   const focusSearchInput = useCallback(() => {
     searchInputRef.current?.focus({ preventScroll: true });
@@ -181,6 +192,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   // so the list row can render the right icon and display name without
   // another lookup.
   const flatModels = useMemo(() => {
+    if (!isModelListReady) {
+      return [];
+    }
     const out: ModelPickerItem[] = [];
     for (const [instanceId, models] of modelOptionsByInstance) {
       const entry = entryByInstanceId.get(instanceId);
@@ -209,7 +223,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       }
     }
     return out;
-  }, [modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
+  }, [isModelListReady, modelOptionsByInstance, entryByInstanceId, readyInstanceSet]);
 
   const isLocked = props.lockedProvider !== null;
   const isSearching = searchQuery.trim().length > 0;
@@ -611,7 +625,17 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               ref={listRegionRef}
               className="relative min-h-0 flex-1 before:pointer-events-none before:absolute before:inset-0 before:bg-muted/40"
             >
-              <ComboboxList className="model-picker-list size-full divide-y px-2 py-1">
+              {!isModelListReady ? (
+                <div className="flex h-full items-center justify-center px-4 text-xs text-muted-foreground">
+                  Loading models...
+                </div>
+              ) : null}
+              <ComboboxList
+                className={cn(
+                  "model-picker-list size-full divide-y px-2 py-1 transition-opacity duration-150",
+                  isModelListReady ? "opacity-100" : "pointer-events-none opacity-0",
+                )}
+              >
                 {filteredModelKeys.map((modelKey, index) => {
                   const model = filteredModelByKey.get(modelKey);
                   if (!model) {
@@ -638,9 +662,11 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 })}
               </ComboboxList>
             </div>
-            <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
-              No models found
-            </ComboboxEmpty>
+            {isModelListReady ? (
+              <ComboboxEmpty className="not-empty:py-6 empty:h-0 text-xs font-normal leading-snug">
+                No models found
+              </ComboboxEmpty>
+            ) : null}
           </div>
         </Combobox>
       </div>

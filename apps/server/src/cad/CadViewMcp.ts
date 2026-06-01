@@ -33,6 +33,7 @@ export const CAD_VIEW_MCP_TOKEN = randomUUID();
 export const CAD_VIEW_EXPORT_ROOT_ENV = "CADSENSE_CAD_VIEW_EXPORT_ROOT";
 export const CAD_HIERARCHY_HTTP_TIMEOUT_MS = 15_000;
 export const CAD_SCREENSHOT_HTTP_TIMEOUT_MS = 135_000;
+export const CAD_VIEW_MCP_TIMEOUT_MS = CAD_SCREENSHOT_HTTP_TIMEOUT_MS + 15_000;
 
 const CAD_VIEW_VALUES = [
   "top",
@@ -251,6 +252,33 @@ export function makeCadViewCodexMcpConfig(
         args: server.args,
         env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])),
       },
+    },
+  };
+}
+
+export function makeCadViewOpenCodeMcpServerConfig(
+  config: Pick<ServerConfigShape, "host" | "port">,
+  threadId?: string,
+  exportRoot?: string,
+): {
+  readonly name: string;
+  readonly config: {
+    readonly type: "local";
+    readonly command: string[];
+    readonly environment: Record<string, string>;
+    readonly enabled: true;
+    readonly timeout: number;
+  };
+} {
+  const server = makeCadViewMcpStdioServer(config, threadId, exportRoot);
+  return {
+    name: server.name,
+    config: {
+      type: "local",
+      command: [server.command, ...server.args],
+      environment: Object.fromEntries(server.env.map(({ name, value }) => [name, value])),
+      enabled: true,
+      timeout: CAD_VIEW_MCP_TIMEOUT_MS,
     },
   };
 }

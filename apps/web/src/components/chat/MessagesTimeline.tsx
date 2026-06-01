@@ -180,14 +180,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   animatedUserMessageId = null,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
-  const workingStartedAtRef = useRef<string | null>(null);
-  if (isWorking && workingStartedAtRef.current === null) {
-    workingStartedAtRef.current = activeTurnStartedAt ?? new Date().toISOString();
-  } else if (!isWorking) {
-    workingStartedAtRef.current = null;
+  const workingStartedAtRef = useRef<{
+    readonly turnId: TurnId | null;
+    readonly startedAt: string;
+  } | null>(null);
+  if (isWorking) {
+    const nextStartedAt = activeTurnStartedAt ?? new Date().toISOString();
+    const previous = workingStartedAtRef.current;
+    const shouldReplace =
+      previous === null ||
+      (activeTurnId !== null && activeTurnId !== undefined && previous.turnId !== activeTurnId) ||
+      (activeTurnStartedAt !== null &&
+        activeTurnStartedAt !== previous.startedAt &&
+        Date.parse(activeTurnStartedAt) > Date.parse(previous.startedAt));
+    if (shouldReplace) {
+      workingStartedAtRef.current = {
+        turnId: activeTurnId ?? null,
+        startedAt: nextStartedAt,
+      };
+    }
   }
   const effectiveActiveTurnStartedAt = isWorking
-    ? (workingStartedAtRef.current ?? activeTurnStartedAt)
+    ? (workingStartedAtRef.current?.startedAt ?? activeTurnStartedAt)
     : null;
   const rawRows = useMemo(
     () =>

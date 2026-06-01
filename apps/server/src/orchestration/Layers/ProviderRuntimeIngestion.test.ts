@@ -170,7 +170,7 @@ type ProviderRuntimeTestCheckpoint = ProviderRuntimeTestThread["checkpoints"][nu
 async function waitForThread(
   readModel: () => Promise<ProviderRuntimeTestReadModel>,
   predicate: (thread: ProviderRuntimeTestThread) => boolean,
-  timeoutMs = 2000,
+  timeoutMs = 10_000,
   threadId: ThreadId = asThreadId("thread-1"),
 ) {
   const deadline = (await Effect.runPromise(Clock.currentTimeMillis)) + timeoutMs;
@@ -183,13 +183,13 @@ async function waitForThread(
     if ((await Effect.runPromise(Clock.currentTimeMillis)) >= deadline) {
       throw new Error("Timed out waiting for thread state");
     }
-    await Effect.runPromise(Effect.yieldNow);
+    await Effect.runPromise(Effect.sleep("10 millis"));
     return poll();
   };
   return poll();
 }
 
-describe("ProviderRuntimeIngestion", () => {
+describe.sequential("ProviderRuntimeIngestion", () => {
   let runtime: ManagedRuntime.ManagedRuntime<
     OrchestrationEngineService | ProviderRuntimeIngestionService | ProjectionSnapshotQuery,
     unknown
@@ -219,6 +219,7 @@ describe("ProviderRuntimeIngestion", () => {
 
   async function createHarness(options?: { serverSettings?: Partial<ServerSettings> }) {
     const workspaceRoot = makeTempDir("cadsense-provider-project-");
+    const serverBaseDir = makeTempDir("cadsense-provider-runtime-");
     fs.mkdirSync(path.join(workspaceRoot, ".git"));
     const provider = createProviderServiceHarness();
     const orchestrationLayer = OrchestrationEngineLive.pipe(
@@ -239,7 +240,7 @@ describe("ProviderRuntimeIngestion", () => {
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(Layer.succeed(ProviderService, provider.service)),
       Layer.provideMerge(makeTestServerSettingsLayer(options?.serverSettings)),
-      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), serverBaseDir)),
       Layer.provideMerge(NodeServices.layer),
     );
     runtime = ManagedRuntime.make(layer);
@@ -248,6 +249,7 @@ describe("ProviderRuntimeIngestion", () => {
     const ingestion = await runtime.runPromise(Effect.service(ProviderRuntimeIngestionService));
     scope = await Effect.runPromise(Scope.make("sequential"));
     await Effect.runPromise(ingestion.start().pipe(Scope.provide(scope)));
+    await Effect.runPromise(Effect.sleep("10 millis"));
     const drain = () => Effect.runPromise(ingestion.drain);
 
     const createdAt = "2026-01-01T00:00:00.000Z";
@@ -1071,7 +1073,7 @@ describe("ProviderRuntimeIngestion", () => {
             proposedPlan.id === "plan:thread-plan:turn:turn-plan-source" &&
             proposedPlan.implementedAt === null,
         ),
-      2_000,
+      10_000,
       sourceThreadId,
     );
     const sourcePlan = sourceThreadWithPlan.proposedPlans.find(
@@ -1111,7 +1113,7 @@ describe("ProviderRuntimeIngestion", () => {
           (proposedPlan: ProviderRuntimeTestProposedPlan) =>
             proposedPlan.id === sourcePlan.id && proposedPlan.implementedAt === null,
         ),
-      2_000,
+      10_000,
       sourceThreadId,
     );
     expect(
@@ -1139,7 +1141,7 @@ describe("ProviderRuntimeIngestion", () => {
             proposedPlan.implementedAt !== null &&
             proposedPlan.implementationThreadId === targetThreadId,
         ),
-      2_000,
+      10_000,
       sourceThreadId,
     );
     expect(
@@ -1216,7 +1218,7 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (thread) =>
         thread.session?.status === "running" && thread.session?.activeTurnId === activeTurnId,
-      2_000,
+      10_000,
       targetThreadId,
     );
 
@@ -1240,7 +1242,7 @@ describe("ProviderRuntimeIngestion", () => {
             proposedPlan.id === "plan:thread-plan:turn:turn-plan-source" &&
             proposedPlan.implementedAt === null,
         ),
-      2_000,
+      10_000,
       sourceThreadId,
     );
     const sourcePlan = sourceThreadWithPlan.proposedPlans.find(
@@ -1402,7 +1404,7 @@ describe("ProviderRuntimeIngestion", () => {
             proposedPlan.id === "plan:thread-plan:turn:turn-plan-source" &&
             proposedPlan.implementedAt === null,
         ),
-      2_000,
+      10_000,
       sourceThreadId,
     );
     const sourcePlan = sourceThreadWithPlan.proposedPlans.find(

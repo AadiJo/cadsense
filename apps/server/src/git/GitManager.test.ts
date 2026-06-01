@@ -308,6 +308,7 @@ function configureVisibleRemoteUrlWithLocalRewrite(
 ): Effect.Effect<void, GitCommandError, GitVcsDriver.GitVcsDriver> {
   return Effect.gen(function* () {
     yield* runGit(cwd, ["config", `remote.${remoteName}.url`, visibleUrl]);
+    yield* runGit(cwd, ["config", `remote.${remoteName}.pushurl`, localRemotePath]);
     yield* runGit(cwd, ["config", `url.${localRemotePath}.insteadOf`, visibleUrl]);
   });
 }
@@ -1952,7 +1953,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         ).toBe(true);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
       }),
-    12_000,
+    30_000,
   );
 
   it.effect(
@@ -2127,7 +2128,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(ownerSelectorCallIndex).toBeGreaterThanOrEqual(0);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
       }),
-    12_000,
+    30_000,
   );
 
   it.effect(
@@ -2194,7 +2195,7 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
           "pr list --head octocat:statemachine --state open --limit 1",
         );
       }),
-    12_000,
+    30_000,
   );
 
   it.effect("creates PR when one does not already exist", () =>

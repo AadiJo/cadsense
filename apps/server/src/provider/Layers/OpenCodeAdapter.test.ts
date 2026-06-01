@@ -21,12 +21,18 @@ import {
 } from "@cadsense/contracts";
 import { createModelSelection } from "@cadsense/shared/model";
 import { ServerConfig } from "../../config.ts";
+import { CAD_VIEW_EXPORT_ROOT_ENV, CAD_VIEW_MCP_SERVER_NAME } from "../../cad/CadViewMcp.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
+import {
+  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+} from "../CodexDeveloperInstructions.ts";
 import type { OpenCodeAdapterShape } from "../Services/OpenCodeAdapter.ts";
 import {
   OpenCodeRuntime,
   OpenCodeRuntimeError,
+  buildOpenCodePermissionRules,
   type OpenCodeRuntimeShape,
 } from "../opencodeRuntime.ts";
 import {
@@ -57,6 +63,8 @@ const runtimeMock = {
     authHeaders: [] as Array<string | null>,
     abortCalls: [] as string[],
     closeCalls: [] as string[],
+    mcpAddCalls: [] as Array<unknown>,
+    permissionReplyCalls: [] as Array<unknown>,
     revertCalls: [] as Array<{ sessionID: string; messageID?: string }>,
     promptCalls: [] as Array<unknown>,
     promptAsyncError: null as Error | null,
@@ -70,6 +78,8 @@ const runtimeMock = {
     this.state.authHeaders.length = 0;
     this.state.abortCalls.length = 0;
     this.state.closeCalls.length = 0;
+    this.state.mcpAddCalls.length = 0;
+    this.state.permissionReplyCalls.length = 0;
     this.state.revertCalls.length = 0;
     this.state.promptCalls.length = 0;
     this.state.promptAsyncError = null;
@@ -167,6 +177,18 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
           })(),
         }),
       },
+      mcp: {
+        add: async (input: unknown) => {
+          runtimeMock.state.mcpAddCalls.push(input);
+          return { data: {} };
+        },
+      },
+      permission: {
+        reply: async (input: unknown) => {
+          runtimeMock.state.permissionReplyCalls.push(input);
+          return { data: {} };
+        },
+      },
     }) as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>,
   loadOpenCodeInventory: () =>
     Effect.fail(
@@ -247,6 +269,54 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       ]);
     }),
   );
+
+  it.effect("registers the CadSense CAD MCP server with a screenshot export root", () => {
+    const adapterLayer = Layer.effect(
+      OpenCodeAdapter,
+      makeOpenCodeAdapter(openCodeAdapterTestSettings, {
+        cadViewMcpExportRoot: "C:/tmp/cadsense-opencode-cad-screenshots",
+      }),
+    ).pipe(
+      Layer.provideMerge(Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble)),
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    return Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId: asThreadId("thread-opencode-cad-mcp"),
+        runtimeMode: "full-access",
+      });
+
+      const cadMcp = runtimeMock.state.mcpAddCalls.find(
+        (call) =>
+          typeof call === "object" &&
+          call !== null &&
+          "name" in call &&
+          call.name === CAD_VIEW_MCP_SERVER_NAME,
+      ) as
+        | {
+            readonly name: string;
+            readonly config: {
+              readonly type: string;
+              readonly command: string[];
+              readonly environment?: Record<string, string>;
+            };
+          }
+        | undefined;
+
+      assert.equal(cadMcp?.config.type, "local");
+      assert.deepEqual(cadMcp?.config.command.slice(-2), ["mcp", "cad-view"]);
+      assert.equal(
+        cadMcp?.config.environment?.[CAD_VIEW_EXPORT_ROOT_ENV],
+        "C:/tmp/cadsense-opencode-cad-screenshots",
+      );
+    }).pipe(Effect.provide(adapterLayer));
+  });
 
   it.effect("stops a configured-server session without trying to own server lifecycle", () =>
     Effect.gen(function* () {
@@ -437,10 +507,175 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
         },
         agent: "github-copilot",
         variant: "high",
+        system: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
         parts: [{ type: "text", text: "Fix it" }],
       });
     }).pipe(Effect.provide(adapterLayer));
   });
+
+  it.effect("sends plan-mode CadSense developer instructions through OpenCode system prompt", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-plan-instructions");
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Plan the change",
+        interactionMode: "plan",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "github-copilot/claude-sonnet-4.5",
+        ),
+      });
+
+      const prompt = runtimeMock.state.promptCalls.at(-1) as { readonly system?: string };
+      assert.equal(prompt.system, CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS);
+    }),
+  );
+
+  it.effect("allows OpenCode MCP permissions without prompting in restricted modes", () =>
+    Effect.sync(() => {
+      assert.deepEqual(buildOpenCodePermissionRules("approval-required").slice(0, 4), [
+        { permission: "mcp", pattern: "*", action: "allow" },
+        { permission: "cadsense-*", pattern: "*", action: "allow" },
+        { permission: "cadsense_*", pattern: "*", action: "allow" },
+        { permission: "question", pattern: "*", action: "allow" },
+      ]);
+      assert.deepEqual(buildOpenCodePermissionRules("read-only").slice(0, 4), [
+        { permission: "mcp", pattern: "*", action: "allow" },
+        { permission: "cadsense-*", pattern: "*", action: "allow" },
+        { permission: "cadsense_*", pattern: "*", action: "allow" },
+        { permission: "question", pattern: "*", action: "allow" },
+      ]);
+    }),
+  );
+
+  it.effect("auto-approves OpenCode MCP permission events without surfacing approvals", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-mcp-permission");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "permission-mcp-1",
+            sessionID: "http://127.0.0.1:9999/session",
+            permission: "tool",
+            patterns: ["Cadsense-mechbase_search_mechbase"],
+            metadata: {
+              tool: "Cadsense-mechbase_search_mechbase",
+            },
+            always: [],
+            tool: {
+              messageID: "msg-mcp-permission",
+              callID: "call-mcp-permission",
+            },
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+      yield* advanceTestClock(10);
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      assert.deepEqual(
+        events.map((event) => event.type),
+        ["session.started", "thread.started"],
+      );
+      assert.deepEqual(
+        [
+          ...new Map(
+            runtimeMock.state.permissionReplyCalls.map((call) => {
+              const reply = call as { readonly requestID: string; readonly reply: string };
+              return [reply.requestID, reply] as const;
+            }),
+          ).values(),
+        ],
+        [
+          {
+            requestID: "permission-mcp-1",
+            reply: "once",
+          },
+        ],
+      );
+    }),
+  );
+
+  it.effect("humanizes OpenCode MCP tool labels to match Codex work-log titles", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-opencode-mcp-tool-label");
+      runtimeMock.state.subscribedEvents = [
+        {
+          type: "message.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            info: {
+              id: "msg-mcp-tool",
+              role: "assistant",
+            },
+          },
+        },
+        {
+          type: "message.part.updated",
+          properties: {
+            sessionID: "http://127.0.0.1:9999/session",
+            part: {
+              id: "part-mcp-tool",
+              sessionID: "http://127.0.0.1:9999/session",
+              messageID: "msg-mcp-tool",
+              type: "tool",
+              tool: "Cadsense-mechbase_search_mechbase",
+              callID: "call-mcp-tool",
+              state: {
+                status: "completed",
+                output: "result",
+                time: { start: 1, end: 2 },
+              },
+            },
+            time: 2,
+          },
+        },
+      ];
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId),
+        Stream.take(3),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "approval-required",
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber).pipe(Effect.timeout("1 second")));
+      const completed = events.find((event) => event.type === "item.completed");
+      assert.equal(completed?.type, "item.completed");
+      if (completed?.type === "item.completed") {
+        assert.equal(completed.payload.itemType, "mcp_tool_call");
+        assert.equal(completed.payload.title, "Queried Mechbase");
+        const data = completed.payload.data as { readonly tool?: string } | undefined;
+        assert.equal(data?.tool, "Cadsense-mechbase_search_mechbase");
+      }
+    }),
+  );
 
   it.effect("uses the bound custom instance id for fallback sendTurn model selection", () => {
     const instanceId = ProviderInstanceId.make("opencode_zen");
@@ -479,6 +714,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
           providerID: "anthropic",
           modelID: "claude-sonnet-4-5",
         },
+        system: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
         parts: [{ type: "text", text: "Fix it" }],
       });
     }).pipe(Effect.provide(adapterLayer));

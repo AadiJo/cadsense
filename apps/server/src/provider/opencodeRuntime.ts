@@ -216,16 +216,23 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     return [{ permission: "*", pattern: "*", action: "allow" }];
   }
 
+  const nonEditingAllowRules = [
+    { permission: "mcp", pattern: "*", action: "allow" },
+    { permission: "cadsense-*", pattern: "*", action: "allow" },
+    { permission: "cadsense_*", pattern: "*", action: "allow" },
+    { permission: "question", pattern: "*", action: "allow" },
+  ] satisfies PermissionRuleset;
+
   if (runtimeMode === "read-only") {
     return [
+      ...nonEditingAllowRules,
       { permission: "edit", pattern: "*", action: "deny" },
       { permission: "*", pattern: "*", action: "ask" },
-      { permission: "question", pattern: "*", action: "allow" },
     ];
   }
 
   return [
-    { permission: "*", pattern: "*", action: "ask" },
+    ...nonEditingAllowRules,
     { permission: "bash", pattern: "*", action: "ask" },
     { permission: "edit", pattern: "*", action: "ask" },
     { permission: "webfetch", pattern: "*", action: "ask" },
@@ -233,7 +240,7 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     { permission: "codesearch", pattern: "*", action: "ask" },
     { permission: "external_directory", pattern: "*", action: "ask" },
     { permission: "doom_loop", pattern: "*", action: "ask" },
-    { permission: "question", pattern: "*", action: "allow" },
+    { permission: "*", pattern: "*", action: "ask" },
   ];
 }
 

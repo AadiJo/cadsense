@@ -14,6 +14,7 @@ import {
 import {
   buildTurnStartParams,
   isRecoverableThreadResumeError,
+  makeMcpElicitationAutoAcceptResponse,
   openCodexThread,
   parseCodexRolloutTurnAbortedLine,
 } from "./CodexSessionRuntime.ts";
@@ -194,6 +195,15 @@ describe("isRecoverableThreadResumeError", () => {
       ),
       false,
     );
+  });
+});
+
+describe("makeMcpElicitationAutoAcceptResponse", () => {
+  it("accepts MCP elicitations without user approval", () => {
+    assert.deepStrictEqual(makeMcpElicitationAutoAcceptResponse(), {
+      action: "accept",
+      content: {},
+    });
   });
 });
 

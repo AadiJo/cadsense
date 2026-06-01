@@ -34,6 +34,16 @@ export interface CadThreeMfParsedModel {
   readonly roots: readonly CadThreeMfParsedNode[];
 }
 
+export interface CadThreeMfParsedOutlineMesh {
+  readonly id: string;
+  readonly name: string | null;
+  readonly edgePositions: Float32Array;
+}
+
+export interface CadThreeMfParsedOutlineModel {
+  readonly meshes: readonly CadThreeMfParsedOutlineMesh[];
+}
+
 interface ParsedComponent {
   readonly objectId: string;
   readonly transform: readonly number[] | null;
@@ -383,6 +393,128 @@ export function parseThreeMfFastModel(input: {
   }
 
   return { meshes: Array.from(parsedMeshes.values()), roots: rootNodes };
+}
+
+type EdgeRecord = {
+  readonly key: string;
+  readonly a: number;
+  readonly b: number;
+  readonly normal: readonly [number, number, number];
+  visible: boolean;
+};
+
+function edgeKey(left: number, right: number): string {
+  return left < right ? `${left}:${right}` : `${right}:${left}`;
+}
+
+function vertexAt(positions: Float32Array, index: number): readonly [number, number, number] {
+  const offset = index * 3;
+  return [positions[offset] ?? 0, positions[offset + 1] ?? 0, positions[offset + 2] ?? 0];
+}
+
+function triangleNormal(
+  positions: Float32Array,
+  aIndex: number,
+  bIndex: number,
+  cIndex: number,
+): readonly [number, number, number] {
+  const a = vertexAt(positions, aIndex);
+  const b = vertexAt(positions, bIndex);
+  const c = vertexAt(positions, cIndex);
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const abz = b[2] - a[2];
+  const acx = c[0] - a[0];
+  const acy = c[1] - a[1];
+  const acz = c[2] - a[2];
+  const nx = aby * acz - abz * acy;
+  const ny = abz * acx - abx * acz;
+  const nz = abx * acy - aby * acx;
+  const length = Math.hypot(nx, ny, nz);
+  return length > 0 ? [nx / length, ny / length, nz / length] : [0, 0, 0];
+}
+
+function normalDot(
+  left: readonly [number, number, number],
+  right: readonly [number, number, number],
+): number {
+  return left[0] * right[0] + left[1] * right[1] + left[2] * right[2];
+}
+
+function markOutlineEdge(
+  edges: Map<string, EdgeRecord>,
+  a: number,
+  b: number,
+  normal: readonly [number, number, number],
+  sharpEdgeCosine: number,
+): void {
+  const key = edgeKey(a, b);
+  const existing = edges.get(key);
+  if (!existing) {
+    edges.set(key, { key, a, b, normal, visible: true });
+    return;
+  }
+  existing.visible = normalDot(existing.normal, normal) <= sharpEdgeCosine;
+}
+
+function buildOutlineMesh(input: {
+  readonly mesh: CadThreeMfParsedMesh;
+  readonly edgeThresholdDegrees: number;
+  readonly maxSegments: number;
+  readonly maxTriangles: number;
+}): CadThreeMfParsedOutlineMesh {
+  const edges = new Map<string, EdgeRecord>();
+  const triangleCount = Math.min(
+    Math.floor(input.mesh.indices.length / 3),
+    Math.max(0, input.maxTriangles),
+  );
+  const edgeThresholdRadians = (Math.max(0, input.edgeThresholdDegrees) * Math.PI) / 180;
+  const sharpEdgeCosine = Math.cos(edgeThresholdRadians);
+
+  for (let triangleIndex = 0; triangleIndex < triangleCount; triangleIndex += 1) {
+    const offset = triangleIndex * 3;
+    const a = input.mesh.indices[offset] ?? 0;
+    const b = input.mesh.indices[offset + 1] ?? 0;
+    const c = input.mesh.indices[offset + 2] ?? 0;
+    const normal = triangleNormal(input.mesh.positions, a, b, c);
+    markOutlineEdge(edges, a, b, normal, sharpEdgeCosine);
+    markOutlineEdge(edges, b, c, normal, sharpEdgeCosine);
+    markOutlineEdge(edges, c, a, normal, sharpEdgeCosine);
+  }
+
+  const visibleEdges = Array.from(edges.values())
+    .filter((edge) => edge.visible)
+    .slice(0, Math.max(0, input.maxSegments));
+  const edgePositions = new Float32Array(visibleEdges.length * 6);
+  visibleEdges.forEach((edge, edgeIndex) => {
+    const a = vertexAt(input.mesh.positions, edge.a);
+    const b = vertexAt(input.mesh.positions, edge.b);
+    edgePositions.set([...a, ...b], edgeIndex * 6);
+  });
+  return {
+    id: input.mesh.id,
+    name: input.mesh.name,
+    edgePositions,
+  };
+}
+
+export function parseThreeMfOutlineModel(input: {
+  readonly unzipped: Record<string, Uint8Array>;
+  readonly edgeThresholdDegrees: number;
+  readonly maxSegments: number;
+  readonly maxTriangles: number;
+}): CadThreeMfParsedOutlineModel {
+  const model = parseThreeMfFastModel({ unzipped: input.unzipped });
+  return {
+    meshes: model.meshes.map((mesh) =>
+      buildOutlineMesh({
+        mesh,
+        edgeThresholdDegrees: input.edgeThresholdDegrees,
+        maxSegments: input.maxSegments,
+        maxTriangles: input.maxTriangles,
+      }),
+    ),
+  };
 }
 
 export function buildThreeMfFastGroup(input: {

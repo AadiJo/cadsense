@@ -3,10 +3,12 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CAD_SCREENSHOT_HTTP_TIMEOUT_MS,
   CAD_VIEW_EXPORT_ROOT_ENV,
+  CAD_VIEW_MCP_TIMEOUT_MS,
   CAD_VIEW_MCP_SERVER_NAME,
   CAD_VIEW_MCP_TOOL_NAME,
   handleCadViewMcpRequest,
   makeCadViewCodexMcpConfig,
+  makeCadViewOpenCodeMcpServerConfig,
   makeCadViewMcpOrigin,
   makeCadViewMcpStdioServer,
   postCadScreenshotCapture,
@@ -84,6 +86,21 @@ describe("CadViewMcp", () => {
             CADSENSE_CAD_VIEW_ORIGIN: "http://127.0.0.1:3900",
           },
         },
+      },
+    });
+  });
+
+  it("projects OpenCode local MCP config with enough timeout for screenshots", () => {
+    expect(makeCadViewOpenCodeMcpServerConfig({ host: undefined, port: 3900 })).toMatchObject({
+      name: CAD_VIEW_MCP_SERVER_NAME,
+      config: {
+        type: "local",
+        command: expect.arrayContaining(["mcp", "cad-view"]),
+        environment: {
+          CADSENSE_CAD_VIEW_ORIGIN: "http://127.0.0.1:3900",
+        },
+        enabled: true,
+        timeout: CAD_VIEW_MCP_TIMEOUT_MS,
       },
     });
   });

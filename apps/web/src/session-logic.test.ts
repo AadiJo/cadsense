@@ -1476,6 +1476,23 @@ describe("deriveActiveWorkStartedAt", () => {
     ).toBe("2026-02-27T21:10:00.000Z");
   });
 
+  it("keeps the local send start when the active turn is acknowledged later", () => {
+    expect(
+      deriveActiveWorkStartedAt(
+        {
+          turnId: TurnId.make("turn-1"),
+          startedAt: "2026-02-27T21:10:03.000Z",
+          completedAt: null,
+        },
+        {
+          orchestrationStatus: "running",
+          activeTurnId: TurnId.make("turn-1"),
+        },
+        "2026-02-27T21:10:00.000Z",
+      ),
+    ).toBe("2026-02-27T21:10:00.000Z");
+  });
+
   it("uses the new send start while the session is running a different turn", () => {
     expect(
       deriveActiveWorkStartedAt(
