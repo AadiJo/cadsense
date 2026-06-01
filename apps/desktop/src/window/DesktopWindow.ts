@@ -81,6 +81,12 @@ function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
 ): { icon: string } | Record<string, never> {
   if (process.platform === "darwin") return {}; // macOS uses .icns from app bundle
+  if (process.platform === "win32") {
+    return Option.match(iconPaths.ico, {
+      onNone: () => ({}),
+      onSome: (icon) => ({ icon }),
+    });
+  }
   return Option.match(iconPaths.png, {
     onNone: () => ({}),
     onSome: (icon) => ({ icon }),
