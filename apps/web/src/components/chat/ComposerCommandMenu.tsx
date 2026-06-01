@@ -35,6 +35,8 @@ export type ComposerCommandItem =
       command: ComposerSlashCommand;
       label: string;
       description: string;
+      disabled?: boolean;
+      disabledReason?: string;
     }
   | {
       id: string;
@@ -207,22 +209,29 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
 }) {
   const skillSourceLabel =
     props.item.type === "skill" ? formatProviderSkillInstallSource(props.item.skill) : null;
+  const isDisabled = props.item.type === "slash-command" && props.item.disabled === true;
+  const disabledReason =
+    props.item.type === "slash-command" ? props.item.disabledReason : undefined;
 
   return (
     <CommandItem
       value={props.item.id}
       data-composer-item-id={props.item.id}
+      aria-disabled={isDisabled}
+      title={isDisabled ? disabledReason : undefined}
       className={cn(
-        "cursor-pointer select-none gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit",
-        props.isActive && "bg-accent! text-accent-foreground!",
+        "select-none gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit",
+        isDisabled ? "cursor-not-allowed opacity-45" : "cursor-pointer",
+        props.isActive && !isDisabled && "bg-accent! text-accent-foreground!",
       )}
       onMouseMove={() => {
-        if (!props.isActive) props.onHighlight(props.item.id);
+        if (!isDisabled && !props.isActive) props.onHighlight(props.item.id);
       }}
       onMouseDown={(event) => {
         event.preventDefault();
       }}
       onClick={() => {
+        if (isDisabled) return;
         props.onSelect(props.item);
       }}
     >
@@ -249,7 +258,7 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <span className="shrink-0">{props.item.label}</span>
         <span className="min-w-0 flex-1 truncate text-muted-foreground/70 text-xs">
-          {props.item.description}
+          {isDisabled ? (disabledReason ?? props.item.description) : props.item.description}
         </span>
       </span>
       {skillSourceLabel ? (

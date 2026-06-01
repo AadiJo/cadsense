@@ -491,6 +491,7 @@ export interface ChatComposerProps {
   interactionMode: ProviderInteractionMode;
   submitMode: ComposerSubmitMode;
   canGenerateCadReview: boolean;
+  showSubmitModeToggle: boolean;
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
@@ -593,6 +594,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     interactionMode,
     submitMode,
     canGenerateCadReview,
+    showSubmitModeToggle,
     lockedProvider,
     providerStatuses,
     activeProjectDefaultModelSelection,
@@ -847,6 +849,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [activeThreadActivities],
   );
 
+  useEffect(() => {
+    if (!showSubmitModeToggle && submitMode === "review") {
+      handleSubmitModeChange("ask");
+    }
+  }, [handleSubmitModeChange, showSubmitModeToggle, submitMode]);
+
   // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
@@ -950,11 +958,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           description: "Switch response model for this thread",
         },
         {
-          id: "slash:ask",
+          id: "slash:prompt",
           type: "slash-command",
-          command: "ask",
-          label: "/ask",
+          command: "prompt",
+          label: "/prompt",
           description: "Send normal chat messages from the composer",
+          disabled: !showSubmitModeToggle,
+          disabledReason: "Prompt mode is unavailable in chats",
         },
         {
           id: "slash:review",
@@ -962,6 +972,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           command: "review",
           label: "/review",
           description: "Use the next send to start a CAD review",
+          disabled: !showSubmitModeToggle || !canGenerateCadReview,
+          disabledReason: !showSubmitModeToggle
+            ? "Review mode is unavailable in chats"
+            : "Select a CAD file before starting a review",
         },
       ] satisfies ReadonlyArray<Extract<ComposerCommandItem, { type: "slash-command" }>>;
       const providerSlashCommandItems = (selectedProviderStatus?.slashCommands ?? []).flatMap(
@@ -1005,7 +1019,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
     }
     return [];
-  }, [composerTrigger, selectedProvider, selectedProviderStatus, workspaceEntries]);
+  }, [
+    canGenerateCadReview,
+    composerTrigger,
+    selectedProvider,
+    selectedProviderStatus,
+    showSubmitModeToggle,
+    workspaceEntries,
+  ]);
 
   const composerMenuOpen = Boolean(composerTrigger);
   const composerMenuSearchKey = composerTrigger
@@ -1606,6 +1627,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return;
       }
       if (item.type === "slash-command") {
+        if (item.disabled) {
+          return;
+        }
         if (item.command === "model") {
           const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
             expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -1617,8 +1641,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           }
           return;
         }
-        if (item.command === "ask" || item.command === "review") {
-          handleSubmitModeChange(item.command);
+        if (item.command === "prompt" || item.command === "review") {
+          handleSubmitModeChange(item.command === "prompt" ? "ask" : "review");
         } else {
           void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         }
@@ -2506,11 +2530,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onRuntimeModeChange={handleRuntimeModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}
                     />
-                    <ComposerSubmitModeToggle
-                      submitMode={submitMode}
-                      canGenerateCadReview={canGenerateCadReview}
-                      onSubmitModeChange={handleSubmitModeChange}
-                    />
+                    {showSubmitModeToggle ? (
+                      <ComposerSubmitModeToggle
+                        submitMode={submitMode}
+                        canGenerateCadReview={canGenerateCadReview}
+                        onSubmitModeChange={handleSubmitModeChange}
+                      />
+                    ) : null}
                   </>
                 ) : (
                   <>
@@ -2526,7 +2552,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       runtimeMode={runtimeMode}
                       showRuntimeModeControl={showRuntimeModeControl}
                       submitMode={submitMode}
-                      showSubmitModeToggle
+                      showSubmitModeToggle={showSubmitModeToggle}
                       canGenerateCadReview={canGenerateCadReview}
                       showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}

@@ -296,8 +296,8 @@ describe("isCollapsedCursorAdjacentToInlineToken", () => {
 });
 
 describe("parseStandaloneComposerSlashCommand", () => {
-  it("parses standalone /ask and /review commands", () => {
-    expect(parseStandaloneComposerSlashCommand("/ask")).toBe("ask");
+  it("parses standalone /prompt and /review commands", () => {
+    expect(parseStandaloneComposerSlashCommand("/prompt")).toBe("ask");
     expect(parseStandaloneComposerSlashCommand(" /review ")).toBe("review");
   });
 

@@ -2030,17 +2030,17 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
               <span className="truncate text-xs font-medium text-foreground/90">
                 {project.displayName}
               </span>
+              <ChevronRightIcon
+                className={`size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-all duration-150 group-hover/project-header:opacity-100 ${
+                  projectExpanded ? "rotate-90" : ""
+                }`}
+              />
               {project.groupedProjectCount > 1 ? (
                 <span className="shrink-0 text-[10px] text-muted-foreground/60">
                   {project.groupedProjectCount} projects
                 </span>
               ) : null}
             </span>
-            <ChevronRightIcon
-              className={`size-3.5 shrink-0 text-muted-foreground/70 opacity-0 transition-all duration-150 group-hover/project-header:opacity-100 group-focus-within/project-header:opacity-100 ${
-                projectExpanded ? "rotate-90" : ""
-              }`}
-            />
           </SidebarMenuButton>
           {/* Environment badge – visible by default, crossfades with the
             "new thread" button on hover using the same pointer-events +
@@ -3383,32 +3383,38 @@ export default function Sidebar() {
         return;
       }
 
-      const api = readEnvironmentApi(environmentId);
-      if (!api) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Unable to start chat",
-            description: "Environment API is not available.",
-          }),
-        );
-        return;
-      }
-
       setSidebarSectionExpansion((current) => ({
         chats: true,
         projects: current.projects,
       }));
-      const result = await api.projects.ensureProjectlessChat({ projectId: newProjectId() });
-      await waitForProjectedProject({
-        environmentId,
-        projectId: result.projectId,
-      });
       if (isMobile) {
         setOpenMobile(false);
       }
-      await handleNewThread(scopeProjectRef(environmentId, result.projectId), {
+
+      const existingProject = chatProjects.find(
+        (project) => project.environmentId === environmentId,
+      );
+      if (existingProject) {
+        await handleNewThread(scopeProjectRef(environmentId, existingProject.id), {
+          envMode: "local",
+        });
+        return;
+      }
+
+      const projectId = newProjectId();
+      await handleNewThread(scopeProjectRef(environmentId, projectId), {
         envMode: "local",
+      });
+
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        throw new Error("Environment API is not available.");
+      }
+
+      const result = await api.projects.ensureProjectlessChat({ projectId });
+      await waitForProjectedProject({
+        environmentId,
+        projectId: result.projectId,
       });
     })().catch((error) => {
       toastManager.add(
@@ -3421,6 +3427,7 @@ export default function Sidebar() {
     });
   }, [
     handleNewThread,
+    chatProjects,
     isMobile,
     orderedProjects,
     primaryEnvironmentId,

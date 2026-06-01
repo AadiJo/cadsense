@@ -17,6 +17,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import { LegendList, type LegendListRef } from "@legendapp/list/react";
@@ -179,6 +180,15 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   animatedUserMessageId = null,
   onIsAtEndChange,
 }: MessagesTimelineProps) {
+  const workingStartedAtRef = useRef<string | null>(null);
+  if (isWorking && workingStartedAtRef.current === null) {
+    workingStartedAtRef.current = activeTurnStartedAt ?? new Date().toISOString();
+  } else if (!isWorking) {
+    workingStartedAtRef.current = null;
+  }
+  const effectiveActiveTurnStartedAt = isWorking
+    ? (workingStartedAtRef.current ?? activeTurnStartedAt)
+    : null;
   const rawRows = useMemo(
     () =>
       deriveMessagesTimelineRows({
@@ -188,7 +198,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         isWorking,
         activeTurnInProgress,
         activeTurnId: activeTurnId ?? null,
-        activeTurnStartedAt,
+        activeTurnStartedAt: effectiveActiveTurnStartedAt,
         turnDiffSummaryByAssistantMessageId,
         revertTurnCountByUserMessageId,
       }),
@@ -199,7 +209,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isWorking,
       activeTurnInProgress,
       activeTurnId,
-      activeTurnStartedAt,
+      effectiveActiveTurnStartedAt,
       turnDiffSummaryByAssistantMessageId,
       revertTurnCountByUserMessageId,
     ],
@@ -526,13 +536,15 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         <AssistantCompletionDivider completionSummary={row.completionSummary} />
       )}
       <div className="min-w-0 px-1 py-0.5">
-        <ChatMarkdown
-          text={messageText}
-          cwd={ctx.markdownCwd}
-          isStreaming={Boolean(row.message.streaming)}
-          skills={ctx.skills}
-          onImageExpand={ctx.onImageExpand}
-        />
+        <div className={cn(row.message.streaming && "assistant-response-fade-in")}>
+          <ChatMarkdown
+            text={messageText}
+            cwd={ctx.markdownCwd}
+            isStreaming={Boolean(row.message.streaming)}
+            skills={ctx.skills}
+            onImageExpand={ctx.onImageExpand}
+          />
+        </div>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
@@ -1504,15 +1516,18 @@ function CadReviewToolGroup({
 }
 
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
+  const shimmerStyle = useMemo<CSSProperties | undefined>(() => {
+    const animationDelay = workingTextShimmerDelay(row.createdAt);
+    return animationDelay ? { animationDelay } : undefined;
+  }, [row.createdAt]);
+
   return (
     <div className="py-0.5 pl-1.5">
-      <div className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground/70">
-        <span className="inline-flex items-center gap-[3px]">
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:200ms]" />
-          <span className="h-1 w-1 rounded-full bg-muted-foreground/30 animate-pulse [animation-delay:400ms]" />
-        </span>
-        <span>
+      <div className="pt-1 text-[11px]">
+        <span
+          className="inline-block animate-working-text-shimmer bg-[linear-gradient(110deg,var(--muted-foreground)_0%,var(--muted-foreground)_38%,var(--foreground)_50%,var(--muted-foreground)_62%,var(--muted-foreground)_100%)] bg-[length:200%_100%] bg-clip-text text-transparent opacity-75 motion-reduce:animate-none motion-reduce:text-muted-foreground"
+          style={shimmerStyle}
+        >
           {row.createdAt ? (
             <>
               Working for <WorkingTimer createdAt={row.createdAt} />
@@ -1999,6 +2014,20 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
 
 function formatWorkingTimerNow(startIso: string): string {
   return formatWorkingTimer(startIso, new Date().toISOString()) ?? "0s";
+}
+
+const WORKING_TEXT_SHIMMER_DURATION_MS = 2400;
+
+function workingTextShimmerDelay(startIso: string | null): string | null {
+  if (!startIso) {
+    return null;
+  }
+  const startedAtMs = Date.parse(startIso);
+  if (!Number.isFinite(startedAtMs)) {
+    return null;
+  }
+  const elapsedMs = Math.max(0, Date.now() - startedAtMs);
+  return `-${elapsedMs % WORKING_TEXT_SHIMMER_DURATION_MS}ms`;
 }
 
 function formatLiveMessageMetaNow(

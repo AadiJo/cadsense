@@ -925,7 +925,9 @@ export default function ChatView(props: ChatViewProps) {
   const activeProject = useStore(
     useMemo(() => createProjectSelectorByRef(activeProjectRef), [activeProjectRef]),
   );
-  const isProjectlessChat = isProjectlessChatProject(activeProject);
+  const isProjectlessChat =
+    isProjectlessChatProject(activeProject) ||
+    (routeKind === "draft" && draftThread !== null && activeProject == null);
   const forceReadOnlyRuntime =
     isProjectlessChat ||
     activeProject?.externalContext?.provider === "onshape" ||
@@ -3540,6 +3542,7 @@ export default function ChatView(props: ChatViewProps) {
       activeProject?.externalContext?.provider === "onshape" ||
       localCadFileCount > 0),
   );
+  const showSubmitModeToggle = !isProjectlessChat;
   const cadReviewOverlaySteps = useMemo(
     () => deriveCadReviewOverlaySteps(activeThread.reviews ?? [], cadReviewWorkLogEntries),
     [activeThread.reviews, cadReviewWorkLogEntries],
@@ -3666,7 +3669,11 @@ export default function ChatView(props: ChatViewProps) {
           activeThreadEnvironmentId={activeThread.environmentId}
           activeThreadId={activeThread.id}
           {...(routeKind === "draft" && draftId ? { draftId } : {})}
-          activeThreadTitle={activeThread.title}
+          activeThreadTitle={
+            isProjectlessChat && activeThread.messages.length === 0
+              ? "New chat"
+              : activeThread.title
+          }
           activeProjectName={activeProject?.name}
           isProjectlessChat={isProjectlessChat}
           activeProjectOnshapeContext={
@@ -3813,6 +3820,7 @@ export default function ChatView(props: ChatViewProps) {
                   interactionMode={interactionMode}
                   submitMode={composerSubmitMode}
                   canGenerateCadReview={canGenerateCadReview}
+                  showSubmitModeToggle={showSubmitModeToggle}
                   lockedProvider={lockedProvider}
                   providerStatuses={providerStatuses as ServerProvider[]}
                   activeProjectDefaultModelSelection={activeProject?.defaultModelSelection}

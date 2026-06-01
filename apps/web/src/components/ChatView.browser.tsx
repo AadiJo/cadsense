@@ -2891,7 +2891,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
-  it("treats /ask as a mode switch without starting a review while in review mode", async () => {
+  it("treats /prompt as a mode switch without starting a review while in review mode", async () => {
     const snapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-cad-review-slash-ask" as MessageId,
       targetText: "cad review slash ask target",
@@ -2940,7 +2940,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
     try {
       useComposerDraftStore.getState().setSubmitMode(THREAD_REF, "review");
-      useComposerDraftStore.getState().setPrompt(THREAD_REF, "/ask");
+      useComposerDraftStore.getState().setPrompt(THREAD_REF, "/prompt");
       await waitForLayout();
 
       const startReviewButton = await waitForElement(

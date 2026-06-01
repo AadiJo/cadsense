@@ -6,6 +6,7 @@
 
 @theme inline {
   --animate-skeleton: skeleton 2s -1s infinite linear;
+  --animate-working-text-shimmer: working-text-shimmer 2.4s linear infinite;
   --color-warning-foreground: var(--warning-foreground);
   --color-warning: var(--warning);
   --color-success-foreground: var(--success-foreground);
@@ -47,6 +48,11 @@
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
   @keyframes skeleton {
+    to {
+      background-position: -200% 0;
+    }
+  }
+  @keyframes working-text-shimmer {
     to {
       background-position: -200% 0;
     }
@@ -429,6 +435,10 @@ label:has(> select#reasoning-effort) select {
 
 .chat-markdown > :last-child {
   margin-bottom: 0;
+}
+
+.assistant-response-fade-in {
+  animation: assistant-response-fade-in 260ms ease-out both;
 }
 
 .chat-markdown p,
@@ -828,6 +838,15 @@ label:has(> select#reasoning-effort) select {
 @media (prefers-reduced-motion: reduce) {
   .user-message-bubble-in {
     animation: none;
+  }
+}
+
+@keyframes assistant-response-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
   }
 }
 
