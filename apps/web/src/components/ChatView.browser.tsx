@@ -2867,8 +2867,8 @@ describe("ChatView timeline estimator parity (full app)", () => {
         "Unable to find composer stop button.",
       );
 
-      expect(stopReviewButton.className).toContain("bg-rose-500");
-      expect(getComputedStyle(stopReviewButton).color).toBe("rgb(255, 255, 255)");
+      expect(stopReviewButton.className).not.toContain("bg-rose-500");
+      expect(stopReviewButton.className).toContain("hover:bg-white/8");
       stopReviewButton.click();
 
       await vi.waitFor(

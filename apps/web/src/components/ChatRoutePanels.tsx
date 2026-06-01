@@ -1,6 +1,14 @@
 import { scopeProjectRef, scopeThreadRef } from "@cadsense/client-runtime";
 import type { EnvironmentId, ThreadId } from "@cadsense/contracts";
-import { createContext, useCallback, useContext, useEffect, useMemo, type ReactNode } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  type ReactNode,
+} from "react";
 import { useMatch, useNavigate } from "@tanstack/react-router";
 
 import { ChatDiffSheetPanels, DiffPanelInlineSidebar } from "./ChatDiffRoutePanels";
@@ -25,9 +33,11 @@ import {
 import { threadHasProviderWorkStarted, threadHasStarted } from "../threadLifecycle";
 import { buildThreadRouteParams } from "../threadRoutes";
 import { isProjectlessChatProject } from "../projectlessChat";
+import { readEnvironmentApi } from "../environmentApi";
 
 const THREAD_ROUTE_ID = "/_chat/$environmentId/$threadId" as const;
 const DRAFT_ROUTE_ID = "/_chat/draft/$draftId" as const;
+const EMPTY_ROUTE_THREAD_IDS: readonly ThreadId[] = [];
 
 interface ChatRoutePanelsContextValue {
   readonly markDiffOpened: () => void;
@@ -78,6 +88,17 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
               scopeProjectRef(serverThread.environmentId, serverThread.projectId),
             )
           : undefined,
+      [serverThread],
+    ),
+  );
+  const sameProjectThreadIds = useStore(
+    useMemo(
+      () => (store: import("../store").AppState) =>
+        serverThread
+          ? (store.environmentStateById[serverThread.environmentId]?.threadIdsByProjectId?.[
+              serverThread.projectId
+            ] ?? EMPTY_ROUTE_THREAD_IDS)
+          : EMPTY_ROUTE_THREAD_IDS,
       [serverThread],
     ),
   );
@@ -142,6 +163,8 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   const isThreadRoute = Boolean(threadMatch && threadRef && bootstrapComplete && routeThreadExists);
   const isDraftRouteWithPanels = Boolean(draftMatch && draftId && draftSession);
   const diffOpen = (threadMatch?.search.diff ?? draftMatch?.search.diff) === "1";
+  const diffOpenRef = useRef(diffOpen);
+  diffOpenRef.current = diffOpen;
 
   const setDiffOpen = useCallback(
     (open: boolean) => {
@@ -225,6 +248,36 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   const renderCadPanel =
     !isProjectlessChatProject(serverThreadProject) && !isProjectlessChatProject(draftProject);
 
+  useEffect(() => {
+    if (!threadRef || !renderCadPanel) {
+      return;
+    }
+    const activeEnvironmentId = threadRef.environmentId;
+    const activeThreadId = threadRef.threadId;
+    const handledThreadIds = new Set<ThreadId>([activeThreadId, ...sameProjectThreadIds]);
+    const environmentApi = readEnvironmentApi(activeEnvironmentId);
+    if (!environmentApi) {
+      return;
+    }
+
+    const openForThread = (requestThreadId: ThreadId) => {
+      if (!diffOpenRef.current && handledThreadIds.has(requestThreadId)) {
+        openDiff();
+      }
+    };
+
+    const unsubscribers = [
+      environmentApi.onshape.onCadViewCommand((command) => openForThread(command.threadId)),
+      environmentApi.onshape.onCadHierarchyRequest((request) => openForThread(request.threadId)),
+      environmentApi.onshape.onCadScreenshotRequest((request) => openForThread(request.threadId)),
+    ];
+    return () => {
+      for (const unsubscribe of unsubscribers) {
+        unsubscribe();
+      }
+    };
+  }, [openDiff, renderCadPanel, sameProjectThreadIds, threadRef]);
+
   if (!showRightPanels) {
     return (
       <ChatRoutePanelsContext.Provider value={panelsContextValue}>
@@ -241,7 +294,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
           diffOpen={diffOpen}
           onCloseDiff={closeDiff}
           onOpenDiff={openDiff}
-          renderDiffContent={diffOpen}
+          renderDiffContent={diffOpen || renderCadPanel}
           renderCadPanel={renderCadPanel}
         />
       </ChatRoutePanelsContext.Provider>
@@ -254,7 +307,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
       <ChatDiffSheetPanels
         diffOpen={diffOpen}
         onCloseDiff={closeDiff}
-        shouldRenderDiffContent={diffOpen}
+        shouldRenderDiffContent={diffOpen || renderCadPanel}
         renderCadPanel={renderCadPanel}
       />
     </ChatRoutePanelsContext.Provider>

@@ -289,6 +289,7 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       yield* adapter.startSession({
         provider: ProviderDriverKind.make("opencode"),
         threadId: asThreadId("thread-opencode-cad-mcp"),
+        cadViewThreadId: asThreadId("thread-visible-cad-panel"),
         runtimeMode: "full-access",
       });
 
@@ -314,6 +315,10 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       assert.equal(
         cadMcp?.config.environment?.[CAD_VIEW_EXPORT_ROOT_ENV],
         "C:/tmp/cadsense-opencode-cad-screenshots",
+      );
+      assert.equal(
+        cadMcp?.config.environment?.CADSENSE_CAD_VIEW_THREAD_ID,
+        "thread-visible-cad-panel",
       );
     }).pipe(Effect.provide(adapterLayer));
   });

@@ -34,6 +34,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
+import { CAD_VIEW_MCP_SERVER_NAME } from "../../cad/CadViewMcp.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
@@ -301,6 +302,30 @@ validationLayer("CodexAdapterLive validation", (it) => {
       assert.ok(
         runtimeOptions.codexThreadStartConfig &&
           typeof runtimeOptions.codexThreadStartConfig === "object",
+      );
+    }),
+  );
+
+  it.effect("uses the visible CAD panel thread id for Codex CAD MCP requests", () =>
+    Effect.gen(function* () {
+      validationRuntimeFactory.factory.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-codex-provider"),
+        cadViewThreadId: asThreadId("thread-visible-cad-panel"),
+        runtimeMode: "full-access",
+      });
+
+      const runtimeOptions = validationRuntimeFactory.factory.mock.calls[0]?.[0];
+      assert.ok(runtimeOptions);
+      const codexConfig = runtimeOptions.codexThreadStartConfig as {
+        readonly mcp_servers?: Record<string, { readonly env?: Record<string, string> }>;
+      };
+      assert.equal(
+        codexConfig.mcp_servers?.[CAD_VIEW_MCP_SERVER_NAME]?.env?.CADSENSE_CAD_VIEW_THREAD_ID,
+        "thread-visible-cad-panel",
       );
     }),
   );

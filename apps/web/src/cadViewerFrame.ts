@@ -110,6 +110,13 @@ const ZOOM_TO_FIT_ANIMATION_MS = 240;
 const MODEL_REVEAL_TRANSITION = "opacity 300ms ease-out";
 const COMPONENT_ID_KEY = "cadSenseComponentId";
 const CAD_SCREENSHOT_MAX_DIMENSION = 1_400;
+const FALLBACK_VIEWER_ROOT_COMPONENT: CadViewerFrameComponentNode = {
+  id: "fallback-viewer-model",
+  name: "Model",
+  kind: "assembly",
+  hasChildren: false,
+  visible: true,
+};
 
 function postToParent(message: CadViewerFrameResponseInput): void {
   window.parent.postMessage({ source: CAD_VIEWER_FRAME_SOURCE, ...message }, "*");
@@ -1547,6 +1554,9 @@ async function handleRequest(request: CadViewerFrameRequest): Promise<{
     case "get-components":
       if (threeViewerRef) {
         return { components: getLoadedThreeViewer().componentTree };
+      }
+      if (embeddedViewerRef) {
+        return { components: [FALLBACK_VIEWER_ROOT_COMPONENT] };
       }
       return { components: [] };
     case "set-component-visibility":

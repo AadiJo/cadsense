@@ -815,7 +815,11 @@ async function postCadHierarchyRequest(
     }
     throw error;
   }
-  if (!response.ok) throw new Error(`Failed to get CAD hierarchy: HTTP ${response.status}`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    const suffix = detail ? ` - ${detail}` : "";
+    throw new Error(`Failed to get CAD hierarchy: HTTP ${response.status}${suffix}`);
+  }
   return (await response.json()) as CadHierarchyResult;
 }
 

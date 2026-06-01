@@ -7,6 +7,7 @@ import { useUiStateStore } from "../uiStateStore";
 
 const environmentId = "environment-cad-browser";
 const threadId = ThreadId.make("thread-cad-browser");
+const sameProjectThreadId = ThreadId.make("thread-cad-browser-same-project");
 const projectId = "project-cad-browser";
 const activeReview = {
   id: "cad-review-browser",
@@ -120,6 +121,7 @@ vi.mock("../storeSelectors", () => ({
     environmentId,
     projectId,
     messages: [],
+    activities: [],
     latestTurn: null,
     session: null,
     externalContext: null,
@@ -135,7 +137,17 @@ vi.mock("../store", () => ({
     cwd: "C:\\cad",
     externalContext: onshapeContext,
   }),
-  useStore: (selector: (state: unknown) => unknown) => selector({}),
+  useStore: (selector: (state: unknown) => unknown) =>
+    selector({
+      environmentStateById: {
+        [environmentId]: {
+          threadIds: [threadId, sameProjectThreadId],
+          threadIdsByProjectId: {
+            [projectId]: [threadId, sameProjectThreadId],
+          },
+        },
+      },
+    }),
 }));
 
 vi.mock("../composerDraftStore", () => ({
@@ -427,6 +439,40 @@ describe("CadPanel browser behavior", () => {
     await vi.waitFor(() => {
       expect(uploadedCadHierarchies).toContainEqual({
         requestId: "hierarchy-normal-chat",
+        components: [],
+      });
+    });
+
+    await screen.unmount();
+    queryClient.clear();
+  });
+
+  it("answers CAD hierarchy requests from another thread in the same project", async () => {
+    cadFrameUrl = delayedReadyFrameUrl();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await vi.waitFor(() => expect(cadHierarchyRequestHandler).toBeTypeOf("function"));
+
+    cadHierarchyRequestHandler?.({
+      requestId: "hierarchy-same-project-thread",
+      threadId: sameProjectThreadId,
+    });
+
+    await vi.waitFor(() => {
+      expect(uploadedCadHierarchies).toContainEqual({
+        requestId: "hierarchy-same-project-thread",
         components: [],
       });
     });

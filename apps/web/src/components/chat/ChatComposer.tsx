@@ -2271,7 +2271,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 className={cn(
                   "group/send flex size-8 shrink-0 items-center justify-center rounded-md bg-transparent transition-[background-color,box-shadow,opacity] duration-180 ease-[var(--motion-ease-out)] enabled:hover:bg-white/8 disabled:opacity-30",
                   isComposerRunning
-                    ? "cursor-pointer bg-rose-500/90 text-white hover:bg-rose-500"
+                    ? "cursor-pointer text-muted-foreground/70 enabled:hover:text-white"
                     : null,
                 )}
                 disabled={collapsedComposerPrimaryActionDisabled}

@@ -43,8 +43,13 @@ import {
   publishCadViewCommand,
   requestCadHierarchy,
 } from "./cad/CadViewCommands.ts";
+import { resolveCadRequestThreadId } from "./cad/CadThreadAliases.ts";
 import { captureCadScreenshot } from "./cad/CadScreenshotClient.ts";
-import { CAD_VIEW_MCP_TOKEN, CAD_VIEW_MCP_TOKEN_HEADER } from "./cad/CadViewMcp.ts";
+import {
+  CAD_HIERARCHY_HTTP_TIMEOUT_MS,
+  CAD_VIEW_MCP_TOKEN,
+  CAD_VIEW_MCP_TOKEN_HEADER,
+} from "./cad/CadViewMcp.ts";
 import {
   CAD_MODEL_HTTP_PATH,
   parseCadModelLeafFromPathname,
@@ -482,9 +487,11 @@ export const cadSetViewRouteLayer = HttpRouter.add(
     yield* requireAuthenticatedOrCadMcpRequest;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const body = yield* request.json;
-    const input = yield* decodeCadSetViewInput(body).pipe(
+    const rawInput = yield* decodeCadSetViewInput(body).pipe(
       Effect.mapError(() => "invalid" as const),
     );
+    const threadId = resolveCadRequestThreadId(rawInput.threadId);
+    const input: CadSetViewInput = { ...rawInput, threadId };
     const command = yield* publishCadViewCommand(input);
     return HttpServerResponse.jsonUnsafe(command, { status: 200 });
   }).pipe(
@@ -503,9 +510,11 @@ export const cadControlRouteLayer = HttpRouter.add(
     yield* requireAuthenticatedOrCadMcpRequest;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const body = yield* request.json;
-    const input = yield* decodeCadControlInput(body).pipe(
+    const rawInput = yield* decodeCadControlInput(body).pipe(
       Effect.mapError(() => "invalid" as const),
     );
+    const threadId = resolveCadRequestThreadId(rawInput.threadId);
+    const input: CadControlInput = { ...rawInput, threadId };
     const command = yield* publishCadControlCommand(input);
     return HttpServerResponse.jsonUnsafe(command, { status: 200 });
   }).pipe(
@@ -524,11 +533,12 @@ export const cadHierarchyRouteLayer = HttpRouter.add(
     yield* requireAuthenticatedOrCadMcpRequest;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const body = yield* request.json;
-    const input = yield* decodeCadHierarchyRequestInput(body).pipe(
+    const rawInput = yield* decodeCadHierarchyRequestInput(body).pipe(
       Effect.mapError(() => "invalid" as const),
     );
+    const threadId = resolveCadRequestThreadId(rawInput.threadId);
     const result = yield* Effect.race(
-      requestCadHierarchy(input.threadId).pipe(
+      requestCadHierarchy(threadId).pipe(
         Effect.mapError(
           (cause) =>
             new OnshapeRpcError({
@@ -537,7 +547,7 @@ export const cadHierarchyRouteLayer = HttpRouter.add(
             }),
         ),
       ),
-      Effect.sleep("10 seconds").pipe(
+      Effect.sleep(`${CAD_HIERARCHY_HTTP_TIMEOUT_MS} millis`).pipe(
         Effect.flatMap(() =>
           Effect.fail(new OnshapeRpcError({ message: "CAD hierarchy timed out." })),
         ),
@@ -587,9 +597,11 @@ export const cadScreenshotCaptureRouteLayer = HttpRouter.add(
     const request = yield* HttpServerRequest.HttpServerRequest;
     const pathService = yield* Path.Path;
     const body = yield* request.json;
-    const input = yield* decodeCadScreenshotMcpCaptureInput(body).pipe(
+    const rawInput = yield* decodeCadScreenshotMcpCaptureInput(body).pipe(
       Effect.mapError(() => "invalid" as const),
     );
+    const threadId = resolveCadRequestThreadId(rawInput.threadId);
+    const input: CadScreenshotMcpCaptureInput = { ...rawInput, threadId };
     const exportRootRaw = input.exportRoot.trim();
     if (
       exportRootRaw.length === 0 ||

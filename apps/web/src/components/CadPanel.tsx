@@ -59,6 +59,8 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
+const EMPTY_CAD_REQUEST_THREAD_IDS: readonly string[] = [];
+
 interface CadPanelProps {
   mode?: DiffPanelMode;
   threadRef?: ScopedThreadRef;
@@ -481,6 +483,24 @@ export default function CadPanel({
     activeProject?.cwd ?? activeThread?.worktreePath ?? draftSession?.worktreePath ?? null;
   const environmentId = activeThread?.environmentId ?? draftSession?.environmentId;
   const environmentApi = environmentId ? readEnvironmentApi(environmentId) : undefined;
+  const activeProjectId = activeProject?.id;
+  const activeProjectEnvironmentId = activeProject?.environmentId;
+  const sameProjectThreadIds = useStore(
+    useMemo(
+      () => (store) =>
+        activeProjectEnvironmentId && activeProjectId
+          ? (store.environmentStateById?.[activeProjectEnvironmentId]?.threadIdsByProjectId?.[
+              activeProjectId
+            ] ?? EMPTY_CAD_REQUEST_THREAD_IDS)
+          : EMPTY_CAD_REQUEST_THREAD_IDS,
+      [activeProjectEnvironmentId, activeProjectId],
+    ),
+  );
+  const shouldHandleCadAgentRequest = useCallback(
+    (requestThreadId: string) =>
+      requestThreadId === cadRoutingThreadId || sameProjectThreadIds.includes(requestThreadId),
+    [cadRoutingThreadId, sameProjectThreadIds],
+  );
   const projectCadScopeKey = activeProject
     ? `${activeProject.environmentId}:${activeProject.id}`
     : (activeThread?.projectId ?? draftSession?.projectId ?? null);
@@ -1050,7 +1070,7 @@ export default function CadPanel({
       return;
     }
     return environmentApi.onshape.onCadViewCommand((command) => {
-      if (cadRoutingThreadId && command.threadId !== cadRoutingThreadId) {
+      if (!shouldHandleCadAgentRequest(command.threadId)) {
         return;
       }
       if (agentControlHost) {
@@ -1064,6 +1084,7 @@ export default function CadPanel({
     applyCadViewCommand,
     environmentApi,
     recordCadAgentViewCommand,
+    shouldHandleCadAgentRequest,
   ]);
 
   useEffect(() => {
@@ -1078,7 +1099,7 @@ export default function CadPanel({
       return;
     }
     return environmentApi.onshape.onCadHierarchyRequest((req) => {
-      if (cadRoutingThreadId && req.threadId !== cadRoutingThreadId) {
+      if (!shouldHandleCadAgentRequest(req.threadId)) {
         return;
       }
       void (async () => {
@@ -1098,7 +1119,13 @@ export default function CadPanel({
         }
       })();
     });
-  }, [cadRoutingThreadId, cadAgentRequestResponderEnabled, environmentApi, postFrameRequest]);
+  }, [
+    cadRoutingThreadId,
+    cadAgentRequestResponderEnabled,
+    environmentApi,
+    postFrameRequest,
+    shouldHandleCadAgentRequest,
+  ]);
 
   useEffect(() => {
     if (loadState !== "loaded") {
@@ -1121,7 +1148,7 @@ export default function CadPanel({
       return;
     }
     return environmentApi.onshape.onCadScreenshotRequest((req) => {
-      if (cadRoutingThreadId && req.threadId !== cadRoutingThreadId) {
+      if (!shouldHandleCadAgentRequest(req.threadId)) {
         return;
       }
       const capture = async () => {
@@ -1170,6 +1197,7 @@ export default function CadPanel({
     environmentApi,
     postFrameRequest,
     recordCadAgentViewCommand,
+    shouldHandleCadAgentRequest,
   ]);
 
   useEffect(() => {

@@ -31,6 +31,7 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { registerCadProviderThreadAlias } from "../../cad/CadThreadAliases.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -440,6 +441,10 @@ const make = Effect.gen(function* () {
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
+        registerCadProviderThreadAlias({
+          cadThreadId: cadViewThreadId ?? threadId,
+          resumeCursor: session.resumeCursor,
+        });
         if (session.providerInstanceId === undefined) {
           return yield* new ProviderAdapterRequestError({
             provider: providerErrorLabel(session.provider),

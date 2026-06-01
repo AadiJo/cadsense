@@ -15,10 +15,27 @@ import * as Stream from "effect/Stream";
 
 const cadViewCommandPubSub = Effect.runSync(PubSub.unbounded<CadViewCommand>());
 const cadHierarchyRequestPubSub = Effect.runSync(PubSub.unbounded<CadHierarchyBrowserRequest>());
-const pendingHierarchyByRequestId = new Map<string, Deferred.Deferred<CadHierarchyResult, Error>>();
+
+interface PendingCadHierarchyRequest {
+  readonly deferred: Deferred.Deferred<CadHierarchyResult, Error>;
+  readonly browserRequest: CadHierarchyBrowserRequest;
+}
+
+const pendingHierarchyByRequestId = new Map<string, PendingCadHierarchyRequest>();
 
 export const cadViewCommandStream = Stream.fromPubSub(cadViewCommandPubSub);
-export const cadHierarchyRequestStream = Stream.fromPubSub(cadHierarchyRequestPubSub);
+export const cadHierarchyRequestStream = Stream.unwrap(
+  Effect.gen(function* () {
+    const subscription = yield* PubSub.subscribe(cadHierarchyRequestPubSub);
+    const pendingRequests = [...pendingHierarchyByRequestId.values()].map(
+      (entry) => entry.browserRequest,
+    );
+    return Stream.concat(
+      Stream.fromIterable(pendingRequests),
+      Stream.fromSubscription(subscription),
+    );
+  }),
+);
 
 export const publishCadViewCommand = (input: CadSetViewInput): Effect.Effect<CadViewCommand> =>
   publishCadControlCommand({ type: "set-view", ...input });
@@ -68,8 +85,9 @@ export const requestCadHierarchy = (
   Effect.gen(function* () {
     const requestId = yield* Random.nextUUIDv4;
     const deferred = yield* Deferred.make<CadHierarchyResult, Error>();
-    pendingHierarchyByRequestId.set(requestId, deferred);
-    yield* PubSub.publish(cadHierarchyRequestPubSub, { requestId, threadId });
+    const browserRequest: CadHierarchyBrowserRequest = { requestId, threadId };
+    pendingHierarchyByRequestId.set(requestId, { deferred, browserRequest });
+    yield* PubSub.publish(cadHierarchyRequestPubSub, browserRequest);
     return yield* Deferred.await(deferred).pipe(
       Effect.ensuring(Effect.sync(() => pendingHierarchyByRequestId.delete(requestId))),
     );
@@ -79,11 +97,11 @@ export function completeCadHierarchyRequest(
   requestId: string,
   result: CadHierarchyResult,
 ): boolean {
-  const deferred = pendingHierarchyByRequestId.get(requestId);
-  if (!deferred) {
+  const entry = pendingHierarchyByRequestId.get(requestId);
+  if (!entry) {
     return false;
   }
   pendingHierarchyByRequestId.delete(requestId);
-  Effect.runFork(Deferred.succeed(deferred, result));
+  Effect.runFork(Deferred.succeed(entry.deferred, result));
   return true;
 }

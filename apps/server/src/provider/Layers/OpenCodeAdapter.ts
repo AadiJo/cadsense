@@ -1142,7 +1142,7 @@ export function makeOpenCodeAdapter(
               });
               const cadMcpServer = makeCadViewOpenCodeMcpServerConfig(
                 serverConfig,
-                input.threadId,
+                input.cadViewThreadId ?? input.threadId,
                 options?.cadViewMcpExportRoot,
               );
               yield* runOpenCodeSdk("mcp.add", () =>
