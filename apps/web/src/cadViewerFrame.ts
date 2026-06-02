@@ -56,6 +56,8 @@ interface ThreeViewerState {
   readonly camera: ThreePerspectiveCamera;
   readonly controls: OrbitControlsInstance;
   middlePanController: MiddlePanController | null;
+  viewportPanOffsetX: number;
+  viewportPanOffsetY: number;
   readonly group: ThreeObject3D;
   readonly boundingSphere: ThreeSphere;
   exploded: boolean;
@@ -150,41 +152,49 @@ function preventMiddlePanEvent(event: PointerEvent): void {
   event.stopImmediatePropagation();
 }
 
-function applyThreeViewerPanDelta(
-  state: ThreeViewerState,
-  panVector: ThreeNamespace.Vector3,
-  scratchVector: ThreeNamespace.Vector3,
-  deltaX: number,
-  deltaY: number,
-): void {
-  const { camera, controls, renderer } = state;
-  const elementHeight = renderer.domElement.clientHeight;
-  if (elementHeight <= 0) {
+function applyThreeViewportPanOffset(state: ThreeViewerState): void {
+  const { camera, renderer } = state;
+  const element = renderer.domElement;
+  const width = Math.max(1, Math.round(element.clientWidth || element.width || 1));
+  const height = Math.max(1, Math.round(element.clientHeight || element.height || 1));
+  if (width <= 1 || height <= 1) {
     return;
   }
 
-  scratchVector.copy(camera.position).sub(controls.target);
-  const targetDistance = scratchVector.length() * Math.tan((camera.fov / 2) * (Math.PI / 180));
-  const panScale = (2 * targetDistance) / elementHeight;
+  if (state.viewportPanOffsetX === 0 && state.viewportPanOffsetY === 0) {
+    camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+    return;
+  }
 
-  panVector.setFromMatrixColumn(camera.matrix, 0);
-  panVector.multiplyScalar(-deltaX * panScale);
+  camera.setViewOffset(
+    width,
+    height,
+    state.viewportPanOffsetX,
+    state.viewportPanOffsetY,
+    width,
+    height,
+  );
+  camera.updateProjectionMatrix();
+}
 
-  scratchVector.setFromMatrixColumn(camera.matrix, 0);
-  scratchVector.crossVectors(camera.up, scratchVector);
-  scratchVector.multiplyScalar(deltaY * panScale);
-  panVector.add(scratchVector);
+function resetThreeViewportPan(state: ThreeViewerState): void {
+  state.viewportPanOffsetX = 0;
+  state.viewportPanOffsetY = 0;
+  state.camera.clearViewOffset();
+  state.camera.updateProjectionMatrix();
+}
 
-  camera.position.add(panVector);
-  controls.target.add(panVector);
-  controls.update();
+function applyThreeViewerPanDelta(state: ThreeViewerState, deltaX: number, deltaY: number): void {
+  state.viewportPanOffsetX -= deltaX;
+  state.viewportPanOffsetY -= deltaY;
+  applyThreeViewportPanOffset(state);
+  renderThreeViewer(state);
 }
 
 function createMiddlePanController(state: ThreeViewerState): MiddlePanController {
-  const { controls, renderer, three } = state;
+  const { controls, renderer } = state;
   const element = renderer.domElement;
-  const panVector = new three.Vector3();
-  const scratchVector = new three.Vector3();
   let activePointerId: number | null = null;
   let lastX = 0;
   let lastY = 0;
@@ -201,13 +211,7 @@ function createMiddlePanController(state: ThreeViewerState): MiddlePanController
     if (deltaX === 0 && deltaY === 0) {
       return;
     }
-    applyThreeViewerPanDelta(
-      state,
-      panVector,
-      scratchVector,
-      deltaX * controls.panSpeed,
-      deltaY * controls.panSpeed,
-    );
+    applyThreeViewerPanDelta(state, deltaX * controls.panSpeed, deltaY * controls.panSpeed);
   };
 
   const schedulePan = (): void => {
@@ -854,6 +858,7 @@ function updateThreeCameraClipping(state: ThreeViewerState): void {
 }
 
 function renderThreeViewer(state: ThreeViewerState): void {
+  applyThreeViewportPanOffset(state);
   updateThreeCameraClipping(state);
   state.renderer.render(state.scene, state.camera);
 }
@@ -954,7 +959,7 @@ function resizeThreeViewer(state: ThreeViewerState): void {
   const height = Math.max(1, Math.round(rect.height || root.clientHeight || 1));
   state.renderer.setSize(width, height, false);
   state.camera.aspect = width / height;
-  state.camera.updateProjectionMatrix();
+  applyThreeViewportPanOffset(state);
   renderThreeViewer(state);
 }
 
@@ -972,6 +977,7 @@ function applyThreeCadCamera(
 ): void {
   cancelCadViewFollowUp();
   const { three, camera, controls, boundingSphere } = state;
+  resetThreeViewportPan(state);
   const normalizedDirection = new three.Vector3(direction[0], direction[1], direction[2]);
   if (normalizedDirection.lengthSq() === 0) {
     normalizedDirection.set(1, -1, 1);
@@ -1005,6 +1011,7 @@ function applyThreeCadCamera(
 
 function zoomThreeViewerToFit(state: ThreeViewerState): void {
   cancelCadViewFollowUp();
+  resetThreeViewportPan(state);
   if (zoomToFitAnimationFrame !== 0) {
     cancelAnimationFrame(zoomToFitAnimationFrame);
     zoomToFitAnimationFrame = 0;
@@ -1241,6 +1248,8 @@ async function loadFilesDirect3mfUrl(
     camera,
     controls,
     middlePanController: null,
+    viewportPanOffsetX: 0,
+    viewportPanOffsetY: 0,
     group: model.group,
     boundingSphere: model.boundingSphere,
     exploded: false,

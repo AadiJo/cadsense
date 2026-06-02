@@ -1843,6 +1843,9 @@ export default function ChatView(props: ChatViewProps) {
     [keybindings],
   );
   const onToggleDiff = useCallback(() => {
+    if (isProjectlessChat) {
+      return;
+    }
     if (!isServerThread && routeKind !== "draft") {
       return;
     }
@@ -1879,6 +1882,7 @@ export default function ChatView(props: ChatViewProps) {
     diffOpen,
     draftId,
     environmentId,
+    isProjectlessChat,
     isServerThread,
     navigate,
     notifyDiffPanelOpened,

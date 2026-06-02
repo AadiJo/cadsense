@@ -737,6 +737,7 @@ interface SidebarProjectThreadListProps {
   showEmptyThreadState: boolean;
   emptyThreadLabel: string;
   emptyThreadStateVariant?: "sublist" | "section";
+  onEmptyThreadStateContextMenu?: (event: React.MouseEvent<HTMLElement>) => void;
   shouldShowThreadPanel: boolean;
   isThreadListExpanded: boolean;
   projectCwd: string;
@@ -789,6 +790,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
     showEmptyThreadState,
     emptyThreadLabel,
     emptyThreadStateVariant = "sublist",
+    onEmptyThreadStateContextMenu,
     shouldShowThreadPanel,
     isThreadListExpanded,
     projectCwd,
@@ -832,6 +834,7 @@ const SidebarProjectThreadList = memo(function SidebarProjectThreadList(
         <SidebarMenuSubItem className="w-full" data-thread-selection-safe>
           <div
             data-thread-selection-safe
+            onContextMenu={onEmptyThreadStateContextMenu}
             className={
               emptyThreadStateVariant === "section"
                 ? "w-full px-2 pt-4 text-center text-xs text-muted-foreground/60"
@@ -1464,7 +1467,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   );
 
   const handleProjectButtonContextMenu = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>) => {
+    (event: React.MouseEvent<HTMLElement>) => {
       event.preventDefault();
       suppressProjectClickForContextMenuRef.current = true;
       void (async () => {
@@ -2081,6 +2084,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         showEmptyThreadState={showEmptyThreadState}
         emptyThreadLabel={projectHeaderMode === "hidden" ? "No chats yet" : "No threads yet"}
         emptyThreadStateVariant={projectHeaderMode === "hidden" ? "section" : "sublist"}
+        onEmptyThreadStateContextMenu={handleProjectButtonContextMenu}
         shouldShowThreadPanel={shouldShowThreadPanel}
         isThreadListExpanded={isThreadListExpanded}
         projectCwd={project.cwd}

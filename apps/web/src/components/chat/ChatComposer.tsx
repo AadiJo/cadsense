@@ -2271,7 +2271,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 className={cn(
                   "group/send flex size-8 shrink-0 items-center justify-center rounded-md bg-transparent transition-[background-color,box-shadow,opacity] duration-180 ease-[var(--motion-ease-out)] enabled:hover:bg-white/8 disabled:opacity-30",
                   isComposerRunning
-                    ? "cursor-pointer text-muted-foreground/70 enabled:hover:text-white"
+                    ? "cursor-pointer text-red-300/85 enabled:hover:bg-red-500/10 enabled:hover:text-red-200"
                     : null,
                 )}
                 disabled={collapsedComposerPrimaryActionDisabled}
@@ -2489,12 +2489,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               data-chat-composer-footer="true"
               data-chat-composer-footer-compact={isComposerFooterCompact ? "true" : "false"}
               className={cn(
-                "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-visible px-2.5 pb-2.5 sm:px-3 sm:pb-3",
+                "flex min-w-0 flex-nowrap items-center justify-between gap-2 overflow-hidden px-2.5 pb-2.5 sm:px-3 sm:pb-3",
                 isComposerFooterCompact ? "gap-1.5" : "gap-2 sm:gap-0",
                 showMobilePendingAnswerActions && "hidden sm:flex",
               )}
             >
-              <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-x-auto p-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="-m-1 flex min-w-0 flex-1 items-center gap-1 overflow-hidden p-1">
                 <ProviderModelPicker
                   compact={isComposerFooterCompact}
                   activeInstanceId={selectedInstanceId}
@@ -2524,18 +2524,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
+                      submitMode={submitMode}
+                      showSubmitModeToggle={showSubmitModeToggle}
+                      canGenerateCadReview={canGenerateCadReview}
                       showRuntimeModeControl={showRuntimeModeControl}
                       traitsMenuContent={providerTraitsMenuContent}
                       onRuntimeModeChange={handleRuntimeModeChange}
+                      onSubmitModeChange={handleSubmitModeChange}
                       onTogglePlanSidebar={togglePlanSidebar}
                     />
-                    {showSubmitModeToggle ? (
-                      <ComposerSubmitModeToggle
-                        submitMode={submitMode}
-                        canGenerateCadReview={canGenerateCadReview}
-                        onSubmitModeChange={handleSubmitModeChange}
-                      />
-                    ) : null}
                   </>
                 ) : (
                   <>

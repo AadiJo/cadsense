@@ -52,7 +52,7 @@ import {
 import { isMacPlatform } from "../lib/utils";
 import { __resetLocalApiForTests } from "../localApi";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
-import { getServerConfig } from "../rpc/serverState";
+import { getServerConfig, resetServerStateForTests } from "../rpc/serverState";
 import { getRouter } from "../router";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { selectBootstrapCompleteForActiveEnvironment, useStore } from "../store";
@@ -1574,6 +1574,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       },
     });
     await __resetLocalApiForTests();
+    resetServerStateForTests();
     await setViewport(DEFAULT_VIEWPORT);
     localStorage.clear();
     document.body.innerHTML = "";
@@ -2868,7 +2869,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
       );
 
       expect(stopReviewButton.className).not.toContain("bg-rose-500");
-      expect(stopReviewButton.className).toContain("hover:bg-white/8");
+      expect(stopReviewButton.className).toContain("hover:bg-red-500/10");
       stopReviewButton.click();
 
       await vi.waitFor(

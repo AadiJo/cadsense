@@ -38,6 +38,7 @@ import { readEnvironmentApi } from "../environmentApi";
 const THREAD_ROUTE_ID = "/_chat/$environmentId/$threadId" as const;
 const DRAFT_ROUTE_ID = "/_chat/draft/$draftId" as const;
 const EMPTY_ROUTE_THREAD_IDS: readonly ThreadId[] = [];
+const rightPanelOpenByRouteKey = new Map<string, boolean>();
 
 interface ChatRoutePanelsContextValue {
   readonly markDiffOpened: () => void;
@@ -165,9 +166,20 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   const diffOpen = (threadMatch?.search.diff ?? draftMatch?.search.diff) === "1";
   const diffOpenRef = useRef(diffOpen);
   diffOpenRef.current = diffOpen;
+  const isProjectlessRoute =
+    isProjectlessChatProject(serverThreadProject) || isProjectlessChatProject(draftProject);
+  const rightPanelsEnabled = (isThreadRoute || isDraftRouteWithPanels) && !isProjectlessRoute;
+  const rightPanelRouteKey = threadRef
+    ? `thread:${threadRef.environmentId}:${threadRef.threadId}`
+    : draftId
+      ? `draft:${draftId}`
+      : null;
 
   const setDiffOpen = useCallback(
     (open: boolean) => {
+      if (open && !rightPanelsEnabled) {
+        return;
+      }
       if (threadMatch && threadRef) {
         void navigate({
           to: "/$environmentId/$threadId",
@@ -196,17 +208,40 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
         });
       }
     },
-    [draftId, draftMatch, navigate, threadMatch, threadRef],
+    [draftId, draftMatch, navigate, rightPanelsEnabled, threadMatch, threadRef],
   );
 
   const markDiffOpened = useCallback(() => {
+    if (!rightPanelsEnabled) {
+      return;
+    }
     setDiffOpen(true);
-  }, [setDiffOpen]);
+  }, [rightPanelsEnabled, setDiffOpen]);
 
   const panelsContextValue = useMemo(() => ({ markDiffOpened }), [markDiffOpened]);
 
   const closeDiff = useCallback(() => setDiffOpen(false), [setDiffOpen]);
   const openDiff = useCallback(() => setDiffOpen(true), [setDiffOpen]);
+
+  useEffect(() => {
+    if (!rightPanelsEnabled || !rightPanelRouteKey) {
+      return;
+    }
+    const rememberedOpen = rightPanelOpenByRouteKey.get(rightPanelRouteKey);
+    if (rememberedOpen === true && !diffOpen) {
+      setDiffOpen(true);
+    }
+  }, [diffOpen, rightPanelRouteKey, rightPanelsEnabled, setDiffOpen]);
+
+  useEffect(() => {
+    if (!rightPanelsEnabled || !rightPanelRouteKey) {
+      return;
+    }
+    if (rightPanelOpenByRouteKey.get(rightPanelRouteKey) === true && !diffOpen) {
+      return;
+    }
+    rightPanelOpenByRouteKey.set(rightPanelRouteKey, diffOpen);
+  }, [diffOpen, rightPanelRouteKey, rightPanelsEnabled]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -244,9 +279,13 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   }, [canonicalThreadRef, draftMatch, draftSession, navigate]);
 
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
-  const showRightPanels = isThreadRoute || isDraftRouteWithPanels;
-  const renderCadPanel =
-    !isProjectlessChatProject(serverThreadProject) && !isProjectlessChatProject(draftProject);
+  const renderCadPanel = rightPanelsEnabled;
+
+  useEffect(() => {
+    if (isProjectlessRoute && diffOpen) {
+      setDiffOpen(false);
+    }
+  }, [diffOpen, isProjectlessRoute, setDiffOpen]);
 
   useEffect(() => {
     if (!threadRef || !renderCadPanel) {
@@ -278,7 +317,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
     };
   }, [openDiff, renderCadPanel, sameProjectThreadIds, threadRef]);
 
-  if (!showRightPanels) {
+  if (!rightPanelsEnabled) {
     return (
       <ChatRoutePanelsContext.Provider value={panelsContextValue}>
         {children}

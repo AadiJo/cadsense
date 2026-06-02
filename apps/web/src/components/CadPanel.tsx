@@ -170,7 +170,7 @@ const cadShellProps = {
 const CAD_MODEL_LOADING_TEXT_DELAY_MS = 350;
 const CAD_FULLSCREEN_TRANSITION_MS = 260;
 const CAD_FULLSCREEN_BEACON_RELEASE_MS = CAD_FULLSCREEN_TRANSITION_MS * 3;
-const CAD_AGENT_CONTROL_IDLE_TIMEOUT_MS = 2_000;
+const CAD_AGENT_CONTROL_IDLE_TIMEOUT_MS = 3_000;
 const CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD = 2;
 const CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS = 90_000;
 const EMPTY_LOCAL_CAD_FILES: readonly LocalCadFile[] = [];
@@ -341,6 +341,22 @@ function errorFromUnknown(error: unknown): Error {
   return error instanceof Error ? error : new Error(String(error || "CAD viewer request failed."));
 }
 
+function cadToolActivitySignature(activity: {
+  readonly id: string;
+  readonly kind: string;
+  readonly summary: string;
+  readonly payload: unknown;
+  readonly createdAt: string;
+}): string {
+  return JSON.stringify([
+    activity.id,
+    activity.kind,
+    activity.summary,
+    activity.createdAt,
+    activity.payload,
+  ]);
+}
+
 export default function CadPanel({
   mode = "inline",
   threadRef: explicitThreadRef,
@@ -398,7 +414,10 @@ export default function CadPanel({
   );
   const [regularCadAgentControlActive, setRegularCadAgentControlActive] = useState(false);
   const cadAgentRequestResponderEnabled = true;
+  const cadModelStreamingActive =
+    !agentControlHost && activeThread?.latestTurn?.state === "running";
   const cadAgentControlActive = cadReviewInProgress || regularCadAgentControlActive;
+  const cadInteractionBlocked = cadAgentControlActive || cadModelStreamingActive;
   const cadUiStateKey =
     activeThread && activeThreadStarted
       ? activeThread.id
@@ -463,7 +482,7 @@ export default function CadPanel({
   const panelRef = useRef<HTMLDivElement>(null);
   const [agentControlOverlayRect, setAgentControlOverlayRect] =
     useState<CadAgentControlOverlayRect | null>(null);
-  const lastRegularCadToolActivityIdRef = useRef<string | null>(null);
+  const lastRegularCadToolActivitySignatureRef = useRef<string | null>(null);
   const regularCadAgentControlTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullscreenButtonRef = useRef<HTMLButtonElement>(null);
   const fullscreenCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -512,7 +531,7 @@ export default function CadPanel({
   const setLocalCadFiles = useUiStateStore((store) => store.setLocalCadFiles);
 
   useEffect(() => {
-    lastRegularCadToolActivityIdRef.current = null;
+    lastRegularCadToolActivitySignatureRef.current = null;
     if (regularCadAgentControlTimeoutRef.current) {
       clearTimeout(regularCadAgentControlTimeoutRef.current);
       regularCadAgentControlTimeoutRef.current = null;
@@ -532,6 +551,7 @@ export default function CadPanel({
         clearTimeout(regularCadAgentControlTimeoutRef.current);
         regularCadAgentControlTimeoutRef.current = null;
       }
+      lastRegularCadToolActivitySignatureRef.current = null;
       setRegularCadAgentControlActive(false);
       return;
     }
@@ -541,20 +561,25 @@ export default function CadPanel({
         clearTimeout(regularCadAgentControlTimeoutRef.current);
         regularCadAgentControlTimeoutRef.current = null;
       }
+      lastRegularCadToolActivitySignatureRef.current = null;
       setRegularCadAgentControlActive(false);
       return;
     }
 
-    const latestCadToolActivity = activeThread.activities.findLast(isCadRelatedToolActivity);
+    const activeTurnId = activeThread.latestTurn.turnId;
+    const latestCadToolActivity = activeThread.activities.findLast(
+      (activity) => activity.turnId === activeTurnId && isCadRelatedToolActivity(activity),
+    );
     if (!latestCadToolActivity) {
       return;
     }
 
-    if (lastRegularCadToolActivityIdRef.current === latestCadToolActivity.id) {
+    const activitySignature = cadToolActivitySignature(latestCadToolActivity);
+    if (lastRegularCadToolActivitySignatureRef.current === activitySignature) {
       return;
     }
 
-    lastRegularCadToolActivityIdRef.current = latestCadToolActivity.id;
+    lastRegularCadToolActivitySignatureRef.current = activitySignature;
     setRegularCadAgentControlActive(true);
 
     if (regularCadAgentControlTimeoutRef.current) {
@@ -1505,11 +1530,11 @@ export default function CadPanel({
               className="absolute inset-0 size-full border-0 bg-transparent"
             />
           ) : null}
-          {cadAgentControlActive ? (
+          {cadInteractionBlocked ? (
             <div
-              className="absolute inset-0 z-[70] cursor-not-allowed"
+              className="absolute inset-0 z-[75] cursor-not-allowed"
               aria-hidden="true"
-              data-cad-agent-control-interaction-blocker="true"
+              data-cad-interaction-blocker="true"
             />
           ) : null}
           {cadAgentControlActive ? (

@@ -1,4 +1,3 @@
-import { cn } from "~/lib/utils";
 import { type ContextWindowSnapshot, formatContextWindowTokens } from "~/lib/contextWindow";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 
@@ -16,7 +15,7 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
   const { usage } = props;
   const usedPercentage = formatPercentage(usage.usedPercentage);
   const normalizedPercentage = Math.max(0, Math.min(100, usage.usedPercentage ?? 0));
-  const radius = 9.75;
+  const radius = 6.5;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference - (normalizedPercentage / 100) * circumference;
 
@@ -38,41 +37,31 @@ export function ContextWindowMeter(props: { usage: ContextWindowSnapshot }) {
           >
             <span className="relative flex h-6 w-6 items-center justify-center">
               <svg
-                viewBox="0 0 24 24"
-                className="-rotate-90 absolute inset-0 h-full w-full transform-gpu"
+                viewBox="0 0 18 18"
+                className="h-[18px] w-[18px] -rotate-90 transform-gpu"
                 aria-hidden="true"
               >
                 <circle
-                  cx="12"
-                  cy="12"
+                  cx="9"
+                  cy="9"
                   r={radius}
                   fill="none"
                   stroke="color-mix(in oklab, var(--color-muted) 70%, transparent)"
-                  strokeWidth="3"
+                  strokeWidth="2.25"
                 />
                 <circle
-                  cx="12"
-                  cy="12"
+                  cx="9"
+                  cy="9"
                   r={radius}
                   fill="none"
                   stroke="var(--color-muted-foreground)"
-                  strokeWidth="3"
+                  strokeWidth="2.25"
                   strokeLinecap="round"
                   strokeDasharray={circumference}
                   strokeDashoffset={dashOffset}
                   className="transition-[stroke-dashoffset] duration-500 ease-out motion-reduce:transition-none"
                 />
               </svg>
-              <span
-                className={cn(
-                  "relative flex h-[15px] w-[15px] items-center justify-center rounded-full bg-background text-[8px] font-medium",
-                  "text-muted-foreground",
-                )}
-              >
-                {usage.usedPercentage !== null
-                  ? Math.round(usage.usedPercentage)
-                  : formatContextWindowTokens(usage.usedTokens)}
-              </span>
             </span>
           </button>
         }

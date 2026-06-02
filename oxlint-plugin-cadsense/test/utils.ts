@@ -7,6 +7,7 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -28,6 +29,7 @@ class OxlintFixtureExpectedFailure extends Data.TaggedError("OxlintFixtureExpect
 }
 
 const encodeOxlintConfig = Schema.encodeEffect(Schema.UnknownFromJsonString);
+const oxlintProcessSemaphore = Effect.runSync(Semaphore.make(1));
 
 interface RuleHarness {
   readonly run: (
@@ -98,8 +100,10 @@ export const createOxlintRuleHarness = (ruleName: string): RuleHarness => {
     );
     yield* fs.writeFileString(sourcePath, source);
 
-    const output = yield* spawnAndCollectOutput(
-      ChildProcess.make(oxlintBin, ["--config", configPath, sourcePath], { cwd: repoRoot }),
+    const output = yield* oxlintProcessSemaphore.withPermits(1)(
+      spawnAndCollectOutput(
+        ChildProcess.make(oxlintBin, ["--config", configPath, sourcePath], { cwd: repoRoot }),
+      ),
     );
 
     if (output.exitCode !== 0) {

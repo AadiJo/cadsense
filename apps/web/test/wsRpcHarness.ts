@@ -34,6 +34,10 @@ const STREAM_METHODS = new Set<string>([
   WS_METHODS.subscribeTerminalEvents,
   WS_METHODS.subscribeServerConfig,
   WS_METHODS.subscribeServerLifecycle,
+  WS_METHODS.subscribeAuthAccess,
+  WS_METHODS.subscribeCadViewCommands,
+  WS_METHODS.subscribeCadHierarchyRequests,
+  WS_METHODS.subscribeCadScreenshotRequests,
 ]);
 
 const ALL_RPC_METHODS = Array.from(WsRpcGroup.requests.keys());

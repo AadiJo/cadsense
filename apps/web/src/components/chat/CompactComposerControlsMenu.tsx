@@ -1,8 +1,17 @@
 import { memo, type ReactNode } from "react";
 import { EllipsisIcon, ListTodoIcon, ShieldIcon } from "lucide-react";
 import type { RuntimeMode } from "@cadsense/contracts";
+import type { ComposerSubmitMode } from "../../composerDraftStore";
 import { Button } from "../ui/button";
-import { Menu, MenuItem, MenuPopup, MenuSeparator as MenuDivider, MenuTrigger } from "../ui/menu";
+import {
+  Menu,
+  MenuCheckboxItem,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator as MenuDivider,
+  MenuTrigger,
+} from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 export const CompactComposerControlsMenu = memo(function CompactComposerControlsMenu(props: {
   activePlan: boolean;
@@ -10,14 +19,23 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
   planSidebarLabel: string;
   planSidebarOpen: boolean;
   runtimeMode?: unknown;
+  submitMode?: ComposerSubmitMode;
+  canGenerateCadReview?: boolean;
+  showSubmitModeToggle?: boolean;
   showRuntimeModeControl?: boolean;
   showInteractionModeToggle?: unknown;
   traitsMenuContent?: ReactNode;
   onToggleInteractionMode?: () => void;
   onTogglePlanSidebar: () => void;
   onRuntimeModeChange?: (mode: RuntimeMode) => void;
+  onSubmitModeChange?: (mode: ComposerSubmitMode) => void;
 }) {
-  if (!props.traitsMenuContent && !props.activePlan && !props.showRuntimeModeControl) {
+  if (
+    !props.traitsMenuContent &&
+    !props.activePlan &&
+    !props.showRuntimeModeControl &&
+    !props.showSubmitModeToggle
+  ) {
     return null;
   }
 
@@ -36,6 +54,46 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         <EllipsisIcon aria-hidden="true" className="size-4" />
       </MenuTrigger>
       <MenuPopup align="start">
+        {props.showSubmitModeToggle ? (
+          <>
+            <MenuCheckboxItem
+              checked={props.submitMode === "ask"}
+              onClick={() => props.onSubmitModeChange?.("ask")}
+              aria-checked={props.submitMode === "ask"}
+            >
+              Prompt
+            </MenuCheckboxItem>
+            {props.canGenerateCadReview ? (
+              <MenuCheckboxItem
+                checked={props.submitMode === "review"}
+                onClick={() => props.onSubmitModeChange?.("review")}
+                aria-checked={props.submitMode === "review"}
+              >
+                Review
+              </MenuCheckboxItem>
+            ) : (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <MenuCheckboxItem
+                      checked={props.submitMode === "review"}
+                      disabled
+                      className="data-disabled:pointer-events-auto data-disabled:cursor-not-allowed"
+                    />
+                  }
+                >
+                  Review
+                </TooltipTrigger>
+                <TooltipPopup side="right" className="max-w-56 whitespace-normal">
+                  Select a CAD file before starting a review.
+                </TooltipPopup>
+              </Tooltip>
+            )}
+            {props.traitsMenuContent || props.showRuntimeModeControl || props.activePlan ? (
+              <MenuDivider />
+            ) : null}
+          </>
+        ) : null}
         {props.traitsMenuContent ? (
           <>
             {props.traitsMenuContent}

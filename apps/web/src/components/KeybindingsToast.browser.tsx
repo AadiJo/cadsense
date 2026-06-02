@@ -26,7 +26,11 @@ import { render } from "vitest-browser-react";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { __resetLocalApiForTests } from "../localApi";
 import { AppAtomRegistryProvider } from "../rpc/atomRegistry";
-import { getServerConfig, getServerConfigUpdatedNotification } from "../rpc/serverState";
+import {
+  getServerConfig,
+  getServerConfigUpdatedNotification,
+  resetServerStateForTests,
+} from "../rpc/serverState";
 import { getWsConnectionStatus } from "../rpc/wsConnectionState";
 import { getRouter } from "../router";
 import { useStore } from "../store";
@@ -521,6 +525,7 @@ describe("Keybindings update toast", () => {
       },
     });
     await __resetLocalApiForTests();
+    resetServerStateForTests();
     localStorage.clear();
     document.body.innerHTML = "";
     useComposerDraftStore.setState({
