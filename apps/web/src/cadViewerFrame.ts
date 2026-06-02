@@ -18,6 +18,7 @@ import ThreeMfFastParserWorker from "./lib/cadThreeMfFastParser.worker?worker";
 import {
   CAD_VIEWER_FRAME_PARENT_SOURCE,
   CAD_VIEWER_FRAME_SOURCE,
+  type CadViewerFrameCameraSnapshot,
   type CadViewerFrameComponentNode,
   type CadViewerFrameFileDescriptor,
   type CadViewerFrameFilePayload,
@@ -98,6 +99,9 @@ let cadViewFollowUp: ReturnType<typeof setTimeout> | null = null;
 let resizeAnimationFrame = 0;
 let explodedAnimationFrame = 0;
 let zoomToFitAnimationFrame = 0;
+let cadViewAnimationFrame = 0;
+let cameraChangePostTimeout: ReturnType<typeof setTimeout> | null = null;
+let suppressThreeCameraChangePosts = false;
 const threeModelCache = new Map<string, CachedThreeModel>();
 const THREE_MODEL_CACHE_LIMIT = 3;
 const MATERIAL_DARKEN_FACTOR_DARK = 0.56;
@@ -107,6 +111,8 @@ const CANVAS_COLOR_GRADE_FILTER_DARK = "brightness(0.84) contrast(1.24) saturate
 const CANVAS_COLOR_GRADE_FILTER_LIGHT = "brightness(0.92) contrast(1.12) saturate(1.3)";
 const EXPLODED_DISTANCE_FACTOR = 0.18;
 const EXPLODED_ANIMATION_MS = 260;
+const CAD_VIEW_ANIMATION_MS = 280;
+const CAMERA_CHANGE_POST_DELAY_MS = 120;
 const ZOOM_TO_FIT_VIEWPORT_FILL = 1.3;
 const ZOOM_TO_FIT_ANIMATION_MS = 240;
 const MODEL_REVEAL_TRANSITION = "opacity 300ms ease-out";
@@ -122,6 +128,42 @@ const FALLBACK_VIEWER_ROOT_COMPONENT: CadViewerFrameComponentNode = {
 
 function postToParent(message: CadViewerFrameResponseInput): void {
   window.parent.postMessage({ source: CAD_VIEWER_FRAME_SOURCE, ...message }, "*");
+}
+
+function cadCameraSnapshotFromThree(state: ThreeViewerState): CadViewerFrameCameraSnapshot {
+  const direction = state.camera.position.clone().sub(state.controls.target);
+  if (direction.lengthSq() === 0) {
+    direction.set(1, -1, 1);
+  }
+  direction.normalize();
+
+  const up = state.camera.up.clone();
+  if (up.lengthSq() === 0) {
+    up.set(0, 0, 1);
+  }
+  up.normalize();
+
+  return {
+    direction: [direction.x, direction.y, direction.z],
+    up: [up.x, up.y, up.z],
+    distance: state.camera.position.distanceTo(state.controls.target),
+  };
+}
+
+function scheduleThreeCameraChangePost(state: ThreeViewerState): void {
+  if (suppressThreeCameraChangePosts) {
+    return;
+  }
+  if (cameraChangePostTimeout) {
+    clearTimeout(cameraChangePostTimeout);
+  }
+  cameraChangePostTimeout = setTimeout(() => {
+    cameraChangePostTimeout = null;
+    postToParent({
+      type: "camera-change",
+      camera: cadCameraSnapshotFromThree(state),
+    });
+  }, CAMERA_CHANGE_POST_DELAY_MS);
 }
 
 function postLoadStatus(
@@ -141,6 +183,10 @@ function preventMiddleMouseDefault(event: MouseEvent | PointerEvent): void {
   if (event.button === 1) {
     event.preventDefault();
   }
+}
+
+function preventCanvasWheelScroll(event: WheelEvent): void {
+  event.preventDefault();
 }
 
 function isDarkTheme(): boolean {
@@ -368,7 +414,7 @@ function applyCadView(
   fit: boolean,
 ): void {
   const { direction, up } = cadViewVector(view);
-  applyCadCamera(module, embeddedViewer, direction, up, fit, cadViewIsCloseUp(view));
+  applyCadCamera(module, embeddedViewer, direction, up, undefined, fit, cadViewIsCloseUp(view));
 }
 
 function applyCadCamera(
@@ -376,6 +422,7 @@ function applyCadCamera(
   embeddedViewer: EmbeddedViewerInstance,
   direction: CadCameraVector,
   up: CadCameraVector | undefined,
+  requestedDistance: number | undefined,
   fit: boolean,
   closeUp: boolean,
 ): void {
@@ -398,8 +445,11 @@ function applyCadCamera(
     number,
   ];
   const cameraUp = up ?? [0, 0, 1];
-  let distance = Math.max(sphere.radius * 2.8, 10);
-  if (fit) {
+  let distance =
+    requestedDistance !== undefined && Number.isFinite(requestedDistance) && requestedDistance > 0
+      ? requestedDistance
+      : Math.max(sphere.radius * 2.8, 10);
+  if (requestedDistance === undefined && fit) {
     let fieldOfView = 45 / 2.0;
     const canvas = (
       viewer as { GetCanvas?: () => { width: number; height: number } | null }
@@ -413,7 +463,7 @@ function applyCadCamera(
       distance = fitDistance;
     }
   }
-  if (closeUp) {
+  if (requestedDistance === undefined && closeUp) {
     distance *= 0.44;
   }
 
@@ -492,6 +542,15 @@ function destroyViewer(): void {
     cancelAnimationFrame(zoomToFitAnimationFrame);
     zoomToFitAnimationFrame = 0;
   }
+  if (cadViewAnimationFrame !== 0) {
+    cancelAnimationFrame(cadViewAnimationFrame);
+    cadViewAnimationFrame = 0;
+  }
+  if (cameraChangePostTimeout) {
+    clearTimeout(cameraChangePostTimeout);
+    cameraChangePostTimeout = null;
+  }
+  suppressThreeCameraChangePosts = false;
   embeddedViewerRef?.Destroy();
   embeddedViewerRef = null;
   if (threeViewerRef) {
@@ -965,17 +1024,31 @@ function resizeThreeViewer(state: ThreeViewerState): void {
 
 function applyThreeCadView(state: ThreeViewerState, view: CadView, fit: boolean): void {
   const { direction, up } = cadViewVector(view);
-  applyThreeCadCamera(state, direction, up, fit, cadViewIsCloseUp(view));
+  applyThreeCadCamera(state, direction, up, undefined, fit, cadViewIsCloseUp(view));
+}
+
+function syncThreeOrbitControlsToCamera(state: ThreeViewerState): void {
+  state.controls.update();
+  state.controls.saveState();
 }
 
 function applyThreeCadCamera(
   state: ThreeViewerState,
   direction: CadCameraVector,
   up: CadCameraVector | undefined,
+  requestedDistance: number | undefined,
   fit: boolean,
   closeUp: boolean,
 ): void {
   cancelCadViewFollowUp();
+  if (cadViewAnimationFrame !== 0) {
+    cancelAnimationFrame(cadViewAnimationFrame);
+    cadViewAnimationFrame = 0;
+  }
+  if (zoomToFitAnimationFrame !== 0) {
+    cancelAnimationFrame(zoomToFitAnimationFrame);
+    zoomToFitAnimationFrame = 0;
+  }
   const { three, camera, controls, boundingSphere } = state;
   resetThreeViewportPan(state);
   const normalizedDirection = new three.Vector3(direction[0], direction[1], direction[2]);
@@ -986,8 +1059,11 @@ function applyThreeCadCamera(
   const cameraUp = up ?? [0, 0, 1];
 
   const canvas = state.renderer.domElement;
-  let distance = Math.max(boundingSphere.radius * 2.8, 10);
-  if (fit) {
+  let distance =
+    requestedDistance !== undefined && Number.isFinite(requestedDistance) && requestedDistance > 0
+      ? requestedDistance
+      : Math.max(boundingSphere.radius * 2.8, 10);
+  if (requestedDistance === undefined && fit) {
     let halfFov = camera.fov / 2;
     if (canvas.width < canvas.height) {
       halfFov = (halfFov * canvas.width) / Math.max(1, canvas.height);
@@ -997,16 +1073,50 @@ function applyThreeCadCamera(
       distance = fitDistance;
     }
   }
-  if (closeUp) {
+  if (requestedDistance === undefined && closeUp) {
     distance *= 0.44;
   }
 
-  camera.position.copy(boundingSphere.center).addScaledVector(normalizedDirection, distance);
-  camera.up.set(cameraUp[0], cameraUp[1], cameraUp[2]).normalize();
-  camera.lookAt(boundingSphere.center);
-  controls.target.copy(boundingSphere.center);
-  controls.update();
-  renderThreeViewer(state);
+  const startPosition = camera.position.clone();
+  const startTarget = controls.target.clone();
+  const startUp = camera.up.clone();
+  const targetPosition = boundingSphere.center
+    .clone()
+    .addScaledVector(normalizedDirection, distance);
+  const targetTarget = boundingSphere.center.clone();
+  const targetUp = new three.Vector3(cameraUp[0], cameraUp[1], cameraUp[2]).normalize();
+  const startedAt = performance.now();
+  suppressThreeCameraChangePosts = true;
+
+  const step = () => {
+    const elapsed = performance.now() - startedAt;
+    const t = Math.min(1, elapsed / CAD_VIEW_ANIMATION_MS);
+    const eased = 1 - Math.pow(1 - t, 3);
+
+    camera.position.lerpVectors(startPosition, targetPosition, eased);
+    controls.target.lerpVectors(startTarget, targetTarget, eased);
+    camera.up.lerpVectors(startUp, targetUp, eased).normalize();
+    camera.lookAt(controls.target);
+    controls.update();
+    renderThreeViewer(state);
+
+    if (t < 1) {
+      cadViewAnimationFrame = requestAnimationFrame(step);
+      return;
+    }
+
+    cadViewAnimationFrame = 0;
+    camera.position.copy(targetPosition);
+    controls.target.copy(targetTarget);
+    camera.up.copy(targetUp);
+    camera.lookAt(controls.target);
+    syncThreeOrbitControlsToCamera(state);
+    renderThreeViewer(state);
+    setTimeout(() => {
+      suppressThreeCameraChangePosts = false;
+    }, 0);
+  };
+  step();
 }
 
 function zoomThreeViewerToFit(state: ThreeViewerState): void {
@@ -1218,6 +1328,7 @@ async function loadFilesDirect3mfUrl(
   renderer.domElement.addEventListener("mousedown", preventMiddleMouseDefault);
   renderer.domElement.addEventListener("pointerdown", preventMiddleMouseDefault);
   renderer.domElement.addEventListener("auxclick", preventMiddleMouseDefault);
+  renderer.domElement.addEventListener("wheel", preventCanvasWheelScroll, { passive: false });
   root.append(renderer.domElement);
 
   const scene = new threeModule.Scene();
@@ -1261,7 +1372,10 @@ async function loadFilesDirect3mfUrl(
   state.middlePanController = createMiddlePanController(state);
 
   resizeThreeViewer(state);
-  controls.addEventListener("change", () => renderThreeViewer(state));
+  controls.addEventListener("change", () => {
+    renderThreeViewer(state);
+    scheduleThreeCameraChangePost(state);
+  });
   applyThreeCadView(state, "isometric", true);
   revealViewerSurfaces();
   onStage?.("direct-3mf-viewer-created");
@@ -1539,6 +1653,7 @@ async function handleRequest(request: CadViewerFrameRequest): Promise<{
           getLoadedThreeViewer(),
           request.direction,
           request.up,
+          request.distance,
           request.fit,
           request.closeUp,
         );
@@ -1550,6 +1665,7 @@ async function handleRequest(request: CadViewerFrameRequest): Promise<{
         embeddedViewer,
         request.direction,
         request.up,
+        request.distance,
         request.fit,
         request.closeUp,
       );

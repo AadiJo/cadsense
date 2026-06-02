@@ -54,22 +54,15 @@ export const publishCadControlCommand = (input: CadControlInput): Effect.Effect<
       input.type === "set-view"
         ? { ...base, type: input.type, view: input.view, fit: input.fit }
         : input.type === "set-camera"
-          ? input.up === undefined
-            ? {
-                ...base,
-                type: input.type,
-                direction: input.direction,
-                fit: input.fit,
-                closeUp: input.closeUp,
-              }
-            : {
-                ...base,
-                type: input.type,
-                direction: input.direction,
-                up: input.up,
-                fit: input.fit,
-                closeUp: input.closeUp,
-              }
+          ? {
+              ...base,
+              type: input.type,
+              direction: input.direction,
+              ...(input.up === undefined ? {} : { up: input.up }),
+              ...(input.distance === undefined ? {} : { distance: input.distance }),
+              fit: input.fit,
+              closeUp: input.closeUp,
+            }
           : input.type === "set-component-visibility"
             ? { ...base, type: input.type, componentId: input.componentId, visible: input.visible }
             : input.type === "set-exploded"

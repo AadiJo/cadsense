@@ -7,6 +7,7 @@ import type {
 import {
   BoxIcon,
   ChevronRightIcon,
+  CircleIcon,
   FolderIcon,
   FolderOpenIcon,
   Maximize2Icon,
@@ -21,6 +22,7 @@ import {
   parseObjMtllibFilenames,
   SUPPORTED_CAD_MODEL_EXTENSIONS,
 } from "@cadsense/shared/cad";
+import type React from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useParams } from "@tanstack/react-router";
@@ -29,6 +31,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
 import { buildCadWebGlFailureUserMessage } from "../lib/cadViewerWebGl";
+import { cadViewLabel } from "../lib/cadView";
 import {
   deriveCadAgentViewStateForThread,
   isCadRelatedToolActivity,
@@ -37,6 +40,7 @@ import {
 import {
   CAD_VIEWER_FRAME_PARENT_SOURCE,
   isCadViewerFrameResponse,
+  type CadViewerFrameCameraSnapshot,
   type CadViewerFrameComponentNode,
   type CadViewerFrameLoadStats,
   type CadViewerFrameRequestInput,
@@ -174,6 +178,15 @@ const CAD_AGENT_CONTROL_IDLE_TIMEOUT_MS = 3_000;
 const CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD = 2;
 const CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS = 90_000;
 const EMPTY_LOCAL_CAD_FILES: readonly LocalCadFile[] = [];
+const CAD_TOOLBAR_VIEWS: readonly CadView[] = [
+  "isometric",
+  "front",
+  "back",
+  "left",
+  "right",
+  "top",
+  "bottom",
+];
 
 interface CadAgentControlOverlayRect {
   readonly left: number;
@@ -187,6 +200,25 @@ type CadViewerFrameResponsePayload = {
   readonly pngBase64?: string;
   readonly loadStats?: CadViewerFrameLoadStats;
 };
+
+function makeManualCadCameraCommand(input: {
+  readonly threadId: CadViewCommand["threadId"];
+  readonly camera: CadViewerFrameCameraSnapshot;
+  readonly createdAt?: string;
+}): CadViewCommand {
+  const createdAt = input.createdAt ?? new Date().toISOString();
+  return {
+    commandId: `manual-camera-${createdAt}`,
+    threadId: input.threadId,
+    type: "set-camera",
+    direction: input.camera.direction,
+    up: input.camera.up,
+    distance: input.camera.distance,
+    fit: false,
+    closeUp: false,
+    createdAt,
+  };
+}
 
 interface PendingFrameRequest {
   readonly resolve: (payload: CadViewerFrameResponsePayload | undefined) => void;
@@ -357,6 +389,95 @@ function cadToolActivitySignature(activity: {
   ]);
 }
 
+function CadViewerToolbarButton(props: {
+  readonly label: string;
+  readonly tooltip: string;
+  readonly disabled: boolean;
+  readonly pressed?: boolean;
+  readonly onClick: () => void;
+  readonly icon?: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            aria-label={props.tooltip}
+            aria-pressed={props.pressed}
+            className={cn(
+              "h-9 min-w-9 rounded-sm border-border/70 bg-background/78 px-2 text-[11px] font-semibold shadow-none backdrop-blur hover:bg-background",
+              "data-[pressed=true]:border-primary/45 data-[pressed=true]:bg-primary/15 data-[pressed=true]:text-primary",
+            )}
+            data-pressed={props.pressed ? "true" : undefined}
+            disabled={props.disabled}
+            size="icon"
+            variant="outline"
+            onClick={props.onClick}
+          >
+            {props.icon ?? props.label}
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">{props.tooltip}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function CadViewCubeIcon(props: { readonly view: CadView }) {
+  const activeFace = (() => {
+    switch (props.view) {
+      case "top":
+        return "top";
+      case "bottom":
+        return "bottom";
+      case "left":
+        return "left";
+      case "right":
+        return "right";
+      case "back":
+        return "back";
+      case "front":
+        return "front";
+      case "isometric":
+        return "isometric";
+    }
+  })();
+  const faceClass = (face: typeof activeFace) =>
+    cn(
+      "stroke-current stroke-[1.15] transition-[fill,opacity,transform] duration-220 ease-[var(--motion-ease-out)]",
+      activeFace === "isometric" || activeFace === face
+        ? "fill-red-500/85 stroke-red-300 opacity-100"
+        : "fill-background/78 opacity-72",
+    );
+  const hiddenFaceClass = (face: "back" | "bottom") =>
+    cn(
+      "stroke-current stroke-[1.15] transition-[fill,opacity] duration-220 ease-[var(--motion-ease-out)]",
+      activeFace === face
+        ? "fill-red-500/85 stroke-red-300 opacity-100"
+        : "fill-muted/20 opacity-35",
+    );
+
+  return (
+    <svg aria-hidden="true" className="size-6 text-foreground" fill="none" viewBox="0 0 32 32">
+      <path className={hiddenFaceClass("back")} d="M16 4.2 26 9.9 16 15.6 6 9.9Z" />
+      <path className={hiddenFaceClass("bottom")} d="M6 21.2 16 27.2 26 21.2 16 15.7Z" />
+      <path className={faceClass("top")} d="M16 2.8 25.2 8.2 16 13.6 6.8 8.2Z" />
+      <path className={faceClass("front")} d="M6.8 9.7 16 15 16 26 6.8 20.5Z" />
+      <path className={faceClass("right")} d="M16 15 25.2 9.7 25.2 20.5 16 26Z" />
+      <path className={faceClass("left")} d="M4.9 10.8 6.8 9.7 6.8 20.5 4.9 19.4Z" />
+      <path className={faceClass("back")} d="M25.2 9.7 27.1 10.8 27.1 19.4 25.2 20.5Z" />
+      <path
+        className={faceClass("bottom")}
+        d="M6.8 20.5 16 26 25.2 20.5 25.2 22.6 16 28.2 6.8 22.6Z"
+      />
+      <path
+        className="stroke-current stroke-[1.25] opacity-45"
+        d="M16 13.6v12.4M6.8 8.2v12.3M25.2 8.2v12.3"
+      />
+    </svg>
+  );
+}
+
 export default function CadPanel({
   mode = "inline",
   threadRef: explicitThreadRef,
@@ -428,9 +549,7 @@ export default function CadPanel({
   const setCadExploded = useUiStateStore((store) => store.setCadExploded);
   const recordCadAgentViewCommand = useUiStateStore((store) => store.recordCadAgentViewCommand);
   const cadAgentViewState = useUiStateStore((store) =>
-    cadReviewInProgress && cadRoutingThreadId
-      ? (store.cadAgentViewStateByThreadId[cadRoutingThreadId] ?? null)
-      : null,
+    cadRoutingThreadId ? (store.cadAgentViewStateByThreadId[cadRoutingThreadId] ?? null) : null,
   );
   const derivedCadAgentViewState = useStore(
     useMemo(
@@ -460,6 +579,7 @@ export default function CadPanel({
   const pendingFrameRequestsRef = useRef(new Map<string, PendingFrameRequest>());
   const frameRequestSequenceRef = useRef(0);
   const consecutiveFrameTimeoutsRef = useRef(0);
+  const skipLocalManualCameraReplayCommandIdsRef = useRef(new Set<string>());
   const modelFilesRef = useRef<ReadonlyArray<OnshapeSyncedCadFile>>([]);
   const activeFrameLoadIdRef = useRef(0);
   const frameLoadStartedAtRef = useRef(0);
@@ -762,6 +882,27 @@ export default function CadPanel({
     [postFrameRequest],
   );
 
+  const zoomCadToFit = useCallback(() => {
+    if (loadStateRef.current !== "loaded") {
+      return;
+    }
+    void postFrameRequest({ type: "zoom-to-fit" }, 3_000).catch(() => undefined);
+  }, [postFrameRequest]);
+
+  const toggleCadExploded = useCallback(() => {
+    const nextExploded = !cadExploded;
+    if (cadUiStateKey) {
+      setCadExploded(cadUiStateKey, nextExploded);
+      return;
+    }
+    if (loadStateRef.current !== "loaded") {
+      return;
+    }
+    void postFrameRequest({ type: "set-exploded", enabled: nextExploded }, 3_000).catch(
+      () => undefined,
+    );
+  }, [cadExploded, cadUiStateKey, postFrameRequest, setCadExploded]);
+
   const openFullscreen = useCallback(() => {
     if (fullscreenCloseTimeoutRef.current) {
       clearTimeout(fullscreenCloseTimeoutRef.current);
@@ -867,21 +1008,14 @@ export default function CadPanel({
         return;
       }
       if (command.type === "set-camera") {
-        const request =
-          command.up === undefined
-            ? {
-                type: "set-camera" as const,
-                direction: command.direction,
-                fit: command.fit,
-                closeUp: command.closeUp,
-              }
-            : {
-                type: "set-camera" as const,
-                direction: command.direction,
-                up: command.up,
-                fit: command.fit,
-                closeUp: command.closeUp,
-              };
+        const request = {
+          type: "set-camera" as const,
+          direction: command.direction,
+          ...(command.up === undefined ? {} : { up: command.up }),
+          ...(command.distance === undefined ? {} : { distance: command.distance }),
+          fit: command.fit,
+          closeUp: command.closeUp,
+        };
         void postFrameRequest(request, 3_000).catch(() => undefined);
         return;
       }
@@ -933,6 +1067,17 @@ export default function CadPanel({
         });
         return;
       }
+      if (event.data.type === "camera-change") {
+        if (cadRoutingThreadId) {
+          const command = makeManualCadCameraCommand({
+            threadId: cadRoutingThreadId,
+            camera: event.data.camera,
+          });
+          skipLocalManualCameraReplayCommandIdsRef.current.add(command.commandId);
+          recordCadAgentViewCommand(cadRoutingThreadId, command);
+        }
+        return;
+      }
 
       const pending = pendingFrameRequestsRef.current.get(event.data.requestId);
       if (!pending) {
@@ -954,7 +1099,7 @@ export default function CadPanel({
       window.removeEventListener("message", onMessage);
       rejectAllPendingFrameRequests("CAD viewer panel was closed.");
     };
-  }, [rejectAllPendingFrameRequests]);
+  }, [cadRoutingThreadId, recordCadAgentViewCommand, rejectAllPendingFrameRequests]);
 
   useEffect(() => {
     if (loadState !== "loading") {
@@ -1098,7 +1243,7 @@ export default function CadPanel({
       if (!shouldHandleCadAgentRequest(command.threadId)) {
         return;
       }
-      if (agentControlHost) {
+      if (cadRoutingThreadId) {
         recordCadAgentViewCommand(cadRoutingThreadId, command);
       }
       applyCadViewCommand(command);
@@ -1116,8 +1261,18 @@ export default function CadPanel({
     if (loadState !== "loaded" || !agentViewCommand) {
       return;
     }
+    if (skipLocalManualCameraReplayCommandIdsRef.current.delete(agentViewCommand.commandId)) {
+      return;
+    }
     applyCadViewCommand(agentViewCommand);
   }, [agentViewCommand, applyCadViewCommand, loadState]);
+
+  useEffect(() => {
+    if (loadState !== "loaded" || agentViewCommand) {
+      return;
+    }
+    setFixedView("isometric", true);
+  }, [agentViewCommand, cadRoutingThreadId, loadState, modelFileIdentityKey, setFixedView]);
 
   useEffect(() => {
     if (!cadAgentRequestResponderEnabled || !environmentApi || !cadRoutingThreadId) {
@@ -1467,6 +1622,52 @@ export default function CadPanel({
           document.body,
         )
       : null;
+  const cadToolbarDisabled = loadState !== "loaded" || cadInteractionBlocked;
+  const cadToolbar = (
+    <div
+      className={cn(
+        "pointer-events-auto absolute inset-x-3 bottom-11 z-[80] flex justify-center transition-[filter,opacity] duration-180 ease-[var(--motion-ease-out)]",
+        fullscreen && "inset-x-4 bottom-14",
+        cadToolbarDisabled && "opacity-45 grayscale",
+        loadState !== "loaded" && "hidden",
+      )}
+    >
+      <div
+        className="flex max-w-full items-center gap-1 overflow-x-auto rounded-md border border-border/70 bg-background/86 p-1 shadow-lg shadow-black/10 backdrop-blur"
+        aria-label="CAD viewer toolbar"
+        aria-disabled={cadToolbarDisabled}
+      >
+        <div className="flex items-center gap-1">
+          {CAD_TOOLBAR_VIEWS.map((view) => (
+            <CadViewerToolbarButton
+              key={view}
+              label={cadViewLabel(view)}
+              tooltip={`${cadViewLabel(view)} CAD view`}
+              disabled={cadToolbarDisabled}
+              icon={<CadViewCubeIcon view={view} />}
+              onClick={() => setFixedView(view, true)}
+            />
+          ))}
+        </div>
+        <div className="mx-1 h-5 w-px shrink-0 bg-border/70" />
+        <CadViewerToolbarButton
+          label="Fit"
+          tooltip="Zoom CAD view to fit"
+          disabled={cadToolbarDisabled}
+          icon={<SearchIcon className="size-3.5" />}
+          onClick={zoomCadToFit}
+        />
+        <CadViewerToolbarButton
+          label="Explode"
+          tooltip={cadExploded ? "Collapse CAD assembly" : "Explode CAD assembly"}
+          disabled={cadToolbarDisabled}
+          icon={<CircleIcon className="size-3.5" />}
+          pressed={cadExploded}
+          onClick={toggleCadExploded}
+        />
+      </div>
+    </div>
+  );
 
   return (
     <DiffPanelShell mode={mode} {...cadShellProps}>
@@ -1565,6 +1766,7 @@ export default function CadPanel({
               />
             </div>
           )}
+          {cadToolbar}
           <div
             className={cn(
               "pointer-events-none absolute bottom-2 left-2 rounded-md border border-border/70 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm",

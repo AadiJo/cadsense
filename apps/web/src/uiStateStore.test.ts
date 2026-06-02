@@ -83,6 +83,58 @@ describe("uiStateStore pure functions", () => {
     expect(next).toBe(initialState);
   });
 
+  it("clearThreadUi removes thread-scoped CAD viewer state", () => {
+    const threadId = ThreadId.make("thread-1");
+    const otherThreadId = ThreadId.make("thread-2");
+    const initialState = makeUiState({
+      threadLastVisitedAtById: {
+        [threadId]: "2026-02-25T12:35:00.000Z",
+      },
+      cadExplodedByThreadId: {
+        [threadId]: true,
+        [otherThreadId]: true,
+      },
+      cadZoomToFitRequestByThreadId: {
+        [threadId]: 2,
+        [otherThreadId]: 1,
+      },
+      cadAgentViewStateByThreadId: {
+        [threadId]: {
+          viewCommand: {
+            commandId: "agent-view-right",
+            threadId,
+            type: "set-view",
+            view: "right",
+            fit: true,
+            createdAt: "2026-05-20T00:00:00.000Z",
+          },
+          updatedAt: "2026-05-20T00:00:00.000Z",
+        },
+        [otherThreadId]: {
+          viewCommand: {
+            commandId: "agent-view-left",
+            threadId: otherThreadId,
+            type: "set-view",
+            view: "left",
+            fit: true,
+            createdAt: "2026-05-20T00:00:01.000Z",
+          },
+          updatedAt: "2026-05-20T00:00:01.000Z",
+        },
+      },
+    });
+
+    const next = clearThreadUi(initialState, threadId);
+
+    expect(next.threadLastVisitedAtById).not.toHaveProperty(threadId);
+    expect(next.cadExplodedByThreadId).not.toHaveProperty(threadId);
+    expect(next.cadZoomToFitRequestByThreadId).not.toHaveProperty(threadId);
+    expect(next.cadAgentViewStateByThreadId).not.toHaveProperty(threadId);
+    expect(next.cadExplodedByThreadId[otherThreadId]).toBe(true);
+    expect(next.cadZoomToFitRequestByThreadId[otherThreadId]).toBe(1);
+    expect(next.cadAgentViewStateByThreadId[otherThreadId]?.viewCommand?.type).toBe("set-view");
+  });
+
   it("reorderProjects moves a project to a target index", () => {
     const project1 = ProjectId.make("project-1");
     const project2 = ProjectId.make("project-2");
@@ -482,6 +534,40 @@ describe("uiStateStore persistence round-trip", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("persists thread CAD orientation state across reloads", () => {
+    const threadId = ThreadId.make("thread-1");
+    const state = makeUiState({
+      cadAgentViewStateByThreadId: {
+        [threadId]: {
+          viewCommand: {
+            commandId: "agent-camera",
+            threadId,
+            type: "set-camera",
+            direction: [1, 0, 0],
+            up: [0, 0, 1],
+            distance: 42,
+            fit: true,
+            closeUp: false,
+            createdAt: "2026-05-20T00:00:00.000Z",
+          },
+          updatedAt: "2026-05-20T00:00:00.000Z",
+        },
+      },
+    });
+
+    persistState(state);
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+    expect(persisted.cadAgentViewStateByThreadId?.[threadId]?.viewCommand?.type).toBe("set-camera");
+    expect(
+      persisted.cadAgentViewStateByThreadId?.[threadId]?.viewCommand?.type === "set-camera"
+        ? persisted.cadAgentViewStateByThreadId[threadId].viewCommand.distance
+        : undefined,
+    ).toBe(42);
   });
 
   it("preserves all-collapsed project state across restart", () => {

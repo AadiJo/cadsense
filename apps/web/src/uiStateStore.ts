@@ -30,6 +30,7 @@ export interface PersistedUiState {
   projectOrderCwds?: string[];
   defaultAdvertisedEndpointKey?: string | null;
   threadChangedFilesExpandedById?: Record<string, Record<string, boolean>>;
+  cadAgentViewStateByThreadId?: Record<string, CadAgentViewState>;
 }
 
 export interface UiProjectState {
@@ -126,6 +127,9 @@ function readPersistedState(): UiState {
       threadChangedFilesExpandedById: sanitizePersistedThreadChangedFilesExpanded(
         parsed.threadChangedFilesExpandedById,
       ),
+      cadAgentViewStateByThreadId: sanitizePersistedCadAgentViewState(
+        parsed.cadAgentViewStateByThreadId,
+      ),
     };
   } catch {
     return initialState;
@@ -157,6 +161,33 @@ function sanitizePersistedThreadChangedFilesExpanded(
     }
   }
 
+  return nextState;
+}
+
+function sanitizePersistedCadAgentViewState(
+  value: PersistedUiState["cadAgentViewStateByThreadId"],
+): Record<string, CadAgentViewState> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  const nextState: Record<string, CadAgentViewState> = {};
+  for (const [threadId, state] of Object.entries(value)) {
+    if (!threadId || !state || typeof state !== "object") {
+      continue;
+    }
+    if (typeof state.updatedAt !== "string" || state.updatedAt.length === 0) {
+      continue;
+    }
+    const viewCommand = state.viewCommand;
+    if (viewCommand?.type !== "set-view" && viewCommand?.type !== "set-camera") {
+      continue;
+    }
+    nextState[threadId] = {
+      viewCommand,
+      updatedAt: state.updatedAt,
+    };
+  }
   return nextState;
 }
 
@@ -216,6 +247,7 @@ export function persistState(state: UiState): void {
         projectOrderCwds,
         defaultAdvertisedEndpointKey: state.defaultAdvertisedEndpointKey,
         threadChangedFilesExpandedById,
+        cadAgentViewStateByThreadId: state.cadAgentViewStateByThreadId,
       } satisfies PersistedUiState),
     );
     if (!legacyKeysCleanedUp) {
@@ -505,17 +537,35 @@ export function markThreadUnread(
 export function clearThreadUi(state: UiState, threadId: string): UiState {
   const hasVisitedState = threadId in state.threadLastVisitedAtById;
   const hasChangedFilesState = threadId in state.threadChangedFilesExpandedById;
-  if (!hasVisitedState && !hasChangedFilesState) {
+  const hasCadExplodedState = threadId in state.cadExplodedByThreadId;
+  const hasCadZoomToFitState = threadId in state.cadZoomToFitRequestByThreadId;
+  const hasCadAgentViewState = threadId in state.cadAgentViewStateByThreadId;
+  if (
+    !hasVisitedState &&
+    !hasChangedFilesState &&
+    !hasCadExplodedState &&
+    !hasCadZoomToFitState &&
+    !hasCadAgentViewState
+  ) {
     return state;
   }
   const nextThreadLastVisitedAtById = { ...state.threadLastVisitedAtById };
   const nextThreadChangedFilesExpandedById = { ...state.threadChangedFilesExpandedById };
+  const nextCadExplodedByThreadId = { ...state.cadExplodedByThreadId };
+  const nextCadZoomToFitRequestByThreadId = { ...state.cadZoomToFitRequestByThreadId };
+  const nextCadAgentViewStateByThreadId = { ...state.cadAgentViewStateByThreadId };
   delete nextThreadLastVisitedAtById[threadId];
   delete nextThreadChangedFilesExpandedById[threadId];
+  delete nextCadExplodedByThreadId[threadId];
+  delete nextCadZoomToFitRequestByThreadId[threadId];
+  delete nextCadAgentViewStateByThreadId[threadId];
   return {
     ...state,
     threadLastVisitedAtById: nextThreadLastVisitedAtById,
     threadChangedFilesExpandedById: nextThreadChangedFilesExpandedById,
+    cadExplodedByThreadId: nextCadExplodedByThreadId,
+    cadZoomToFitRequestByThreadId: nextCadZoomToFitRequestByThreadId,
+    cadAgentViewStateByThreadId: nextCadAgentViewStateByThreadId,
   };
 }
 

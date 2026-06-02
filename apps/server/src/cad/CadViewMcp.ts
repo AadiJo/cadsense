@@ -351,6 +351,7 @@ function normalizeSetCameraArguments(args: unknown): CadSetCameraInput | undefin
     threadId: candidate.threadId ?? process.env.CADSENSE_CAD_VIEW_THREAD_ID,
     direction: candidate.direction,
     up: candidate.up,
+    ...("distance" in candidate ? { distance: candidate.distance } : {}),
     fit: candidate.fit,
     closeUp: candidate.closeUp,
   };
@@ -363,20 +364,17 @@ function normalizeSetCameraArguments(args: unknown): CadSetCameraInput | undefin
   if (input.up && (!input.up.every(Number.isFinite) || input.up.every((value) => value === 0))) {
     return undefined;
   }
-  return input.up === undefined
-    ? {
-        threadId: input.threadId,
-        direction: input.direction,
-        fit: input.fit,
-        closeUp: input.closeUp,
-      }
-    : {
-        threadId: input.threadId,
-        direction: input.direction,
-        up: input.up,
-        fit: input.fit,
-        closeUp: input.closeUp,
-      };
+  if (input.distance !== undefined && (!Number.isFinite(input.distance) || input.distance <= 0)) {
+    return undefined;
+  }
+  return {
+    threadId: input.threadId,
+    direction: input.direction,
+    ...(input.up === undefined ? {} : { up: input.up }),
+    ...(input.distance === undefined ? {} : { distance: input.distance }),
+    fit: input.fit,
+    closeUp: input.closeUp,
+  };
 }
 
 function normalizeThreadIdArg(args: unknown): string | undefined {
@@ -539,6 +537,11 @@ export async function handleCadViewMcpRequest(
                   type: "boolean",
                   description: "Fit the model to the viewport after changing camera direction.",
                   default: true,
+                },
+                distance: {
+                  type: "number",
+                  description:
+                    "Optional camera distance from the model center. Usually omitted so the viewer chooses a fitted inspection distance.",
                 },
                 closeUp: {
                   type: "boolean",

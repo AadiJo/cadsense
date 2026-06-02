@@ -272,6 +272,7 @@ export const CadSetCameraInput = Schema.Struct({
   threadId: ThreadId,
   direction: CadCameraVector,
   up: Schema.optionalKey(CadCameraVector),
+  distance: Schema.optionalKey(Schema.Number),
   fit: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   closeUp: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
 });
@@ -366,6 +367,7 @@ export const CadViewCommand = Schema.Union([
     threadId: ThreadId,
     direction: CadCameraVector,
     up: Schema.optionalKey(CadCameraVector),
+    distance: Schema.optionalKey(Schema.Number),
     fit: Schema.Boolean,
     closeUp: Schema.Boolean,
     createdAt: IsoDateTime,

@@ -33,6 +33,12 @@ export interface CadViewerFrameComponentNode {
   readonly visible: boolean;
 }
 
+export interface CadViewerFrameCameraSnapshot {
+  readonly direction: CadCameraVector;
+  readonly up: CadCameraVector;
+  readonly distance: number;
+}
+
 export type CadViewerFrameLoadStage =
   | "request-received"
   | "direct-3mf-imports-loaded"
@@ -61,6 +67,7 @@ export type CadViewerFrameRequestInput =
       readonly type: "set-camera";
       readonly direction: CadCameraVector;
       readonly up?: CadCameraVector;
+      readonly distance?: number;
       readonly fit: boolean;
       readonly closeUp: boolean;
     }
@@ -107,6 +114,11 @@ export type CadViewerFrameResponse =
     }
   | {
       readonly source: typeof CAD_VIEWER_FRAME_SOURCE;
+      readonly type: "camera-change";
+      readonly camera: CadViewerFrameCameraSnapshot;
+    }
+  | {
+      readonly source: typeof CAD_VIEWER_FRAME_SOURCE;
       readonly type: "response";
       readonly requestId: string;
       readonly ok: true;
@@ -133,6 +145,10 @@ export type CadViewerFrameResponseInput =
       readonly requestId: string;
       readonly stage: CadViewerFrameLoadStage;
       readonly elapsedMs: number;
+    }
+  | {
+      readonly type: "camera-change";
+      readonly camera: CadViewerFrameCameraSnapshot;
     }
   | {
       readonly type: "response";
