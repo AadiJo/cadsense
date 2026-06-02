@@ -7,6 +7,9 @@ export type CadViewVector = {
   readonly up: readonly [number, number, number];
 };
 
+const CAD_INTERACTIVE_TOP_NUDGE = 0.08;
+const CAD_Z_UP = [0, 0, 1] as const satisfies readonly [number, number, number];
+
 export function cadBaseView(view: CadView): CadBaseView {
   if (view.endsWith("-close-up")) {
     return view.slice(0, -"-close-up".length) as CadBaseView;
@@ -34,6 +37,17 @@ export function cadViewVector(view: CadView): CadViewVector {
       return { direction: [1, 0, 0], up: [0, 0, 1] };
     case "isometric":
       return { direction: [1, -1, 1], up: [0, 0, 1] };
+  }
+}
+
+export function cadInteractiveViewVector(view: CadView): CadViewVector {
+  switch (cadBaseView(view)) {
+    case "top":
+      return { direction: [0, -CAD_INTERACTIVE_TOP_NUDGE, 1], up: CAD_Z_UP };
+    case "bottom":
+      return { direction: [0, CAD_INTERACTIVE_TOP_NUDGE, -1], up: CAD_Z_UP };
+    default:
+      return cadViewVector(view);
   }
 }
 

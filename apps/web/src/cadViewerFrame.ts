@@ -2,7 +2,7 @@
 import type * as ThreeNamespace from "three";
 import type { OrbitControls as OrbitControlsInstance } from "three/examples/jsm/controls/OrbitControls.js";
 
-import { cadViewIsCloseUp, cadViewVector } from "./lib/cadView";
+import { cadInteractiveViewVector, cadViewIsCloseUp, cadViewVector } from "./lib/cadView";
 import {
   cadViewerOrientationTweenMs,
   cadViewerViewCommandSettleMs,
@@ -1023,7 +1023,7 @@ function resizeThreeViewer(state: ThreeViewerState): void {
 }
 
 function applyThreeCadView(state: ThreeViewerState, view: CadView, fit: boolean): void {
-  const { direction, up } = cadViewVector(view);
+  const { direction, up } = cadInteractiveViewVector(view);
   applyThreeCadCamera(state, direction, up, undefined, fit, cadViewIsCloseUp(view));
 }
 
