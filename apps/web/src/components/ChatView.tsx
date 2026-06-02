@@ -1842,53 +1842,60 @@ export default function ChatView(props: ChatViewProps) {
     () => shortcutLabelForCommand(keybindings, "diff.toggle"),
     [keybindings],
   );
-  const onToggleDiff = useCallback(() => {
-    if (isProjectlessChat) {
-      return;
-    }
-    if (!isServerThread && routeKind !== "draft") {
-      return;
-    }
-    if (!diffOpen) {
-      notifyDiffPanelOpened?.();
-    }
-    if (routeKind === "server") {
-      void navigate({
-        to: "/$environmentId/$threadId",
-        params: {
-          environmentId,
-          threadId,
-        },
-        replace: true,
-        search: (previous) => {
-          const rest = stripDiffSearchParams(previous);
-          return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
-        },
-      });
-      return;
-    }
-    if (routeKind === "draft" && draftId) {
-      void navigate({
-        to: "/draft/$draftId",
-        params: buildDraftThreadRouteParams(draftId),
-        replace: true,
-        search: (previous) => {
-          const rest = stripDiffSearchParams(previous);
-          return diffOpen ? { ...rest, diff: undefined } : { ...rest, diff: "1" };
-        },
-      });
-    }
-  }, [
-    diffOpen,
-    draftId,
-    environmentId,
-    isProjectlessChat,
-    isServerThread,
-    navigate,
-    notifyDiffPanelOpened,
-    routeKind,
-    threadId,
-  ]);
+  const onToggleDiff = useCallback(
+    (open?: boolean) => {
+      if (isProjectlessChat) {
+        return;
+      }
+      if (!isServerThread && routeKind !== "draft") {
+        return;
+      }
+      const nextDiffOpen = open ?? !diffOpen;
+      if (nextDiffOpen === diffOpen) {
+        return;
+      }
+      if (nextDiffOpen) {
+        notifyDiffPanelOpened?.();
+      }
+      if (routeKind === "server") {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId,
+            threadId,
+          },
+          replace: true,
+          search: (previous) => {
+            const rest = stripDiffSearchParams(previous);
+            return nextDiffOpen ? { ...rest, diff: "1" } : { ...rest, diff: undefined };
+          },
+        });
+        return;
+      }
+      if (routeKind === "draft" && draftId) {
+        void navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(draftId),
+          replace: true,
+          search: (previous) => {
+            const rest = stripDiffSearchParams(previous);
+            return nextDiffOpen ? { ...rest, diff: "1" } : { ...rest, diff: undefined };
+          },
+        });
+      }
+    },
+    [
+      diffOpen,
+      draftId,
+      environmentId,
+      isProjectlessChat,
+      isServerThread,
+      navigate,
+      notifyDiffPanelOpened,
+      routeKind,
+      threadId,
+    ],
+  );
 
   const envLocked = Boolean(
     activeThread &&

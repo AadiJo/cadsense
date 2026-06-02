@@ -3560,7 +3560,7 @@ export default function Sidebar() {
             projectsLength={regularProjects.length}
           />
 
-          <SidebarSeparator />
+          <SidebarSeparator className="mx-0" />
           <SidebarChromeFooter />
         </>
       )}

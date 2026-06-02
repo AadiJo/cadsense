@@ -103,7 +103,7 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
         </SidebarGroup>
       </SidebarContent>
 
-      <SidebarSeparator />
+      <SidebarSeparator className="mx-0" />
       <SidebarFooter className="p-2">
         <SidebarMenu>
           <SidebarMenuItem>

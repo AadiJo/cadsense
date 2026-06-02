@@ -38,7 +38,6 @@ import { readEnvironmentApi } from "../environmentApi";
 const THREAD_ROUTE_ID = "/_chat/$environmentId/$threadId" as const;
 const DRAFT_ROUTE_ID = "/_chat/draft/$draftId" as const;
 const EMPTY_ROUTE_THREAD_IDS: readonly ThreadId[] = [];
-const rightPanelOpenByRouteKey = new Map<string, boolean>();
 
 interface ChatRoutePanelsContextValue {
   readonly markDiffOpened: () => void;
@@ -169,11 +168,6 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   const isProjectlessRoute =
     isProjectlessChatProject(serverThreadProject) || isProjectlessChatProject(draftProject);
   const rightPanelsEnabled = (isThreadRoute || isDraftRouteWithPanels) && !isProjectlessRoute;
-  const rightPanelRouteKey = threadRef
-    ? `thread:${threadRef.environmentId}:${threadRef.threadId}`
-    : draftId
-      ? `draft:${draftId}`
-      : null;
 
   const setDiffOpen = useCallback(
     (open: boolean) => {
@@ -222,26 +216,6 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
 
   const closeDiff = useCallback(() => setDiffOpen(false), [setDiffOpen]);
   const openDiff = useCallback(() => setDiffOpen(true), [setDiffOpen]);
-
-  useEffect(() => {
-    if (!rightPanelsEnabled || !rightPanelRouteKey) {
-      return;
-    }
-    const rememberedOpen = rightPanelOpenByRouteKey.get(rightPanelRouteKey);
-    if (rememberedOpen === true && !diffOpen) {
-      setDiffOpen(true);
-    }
-  }, [diffOpen, rightPanelRouteKey, rightPanelsEnabled, setDiffOpen]);
-
-  useEffect(() => {
-    if (!rightPanelsEnabled || !rightPanelRouteKey) {
-      return;
-    }
-    if (rightPanelOpenByRouteKey.get(rightPanelRouteKey) === true && !diffOpen) {
-      return;
-    }
-    rightPanelOpenByRouteKey.set(rightPanelRouteKey, diffOpen);
-  }, [diffOpen, rightPanelRouteKey, rightPanelsEnabled]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {

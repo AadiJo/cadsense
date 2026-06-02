@@ -43,7 +43,7 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
-  onToggleDiff: () => void;
+  onToggleDiff: (open?: boolean) => void;
   onSyncOnshape: () => void;
   onToggleCadExploded: (exploded: boolean) => void;
   onZoomCadToFit: () => void;
@@ -179,7 +179,7 @@ export const ChatHeader = memo(function ChatHeader({
                 <Toggle
                   className="shrink-0"
                   pressed={diffOpen}
-                  onPressedChange={onToggleDiff}
+                  onPressedChange={(pressed) => onToggleDiff(pressed)}
                   aria-label="Toggle CAD view"
                   variant="outline"
                   size="xs"
