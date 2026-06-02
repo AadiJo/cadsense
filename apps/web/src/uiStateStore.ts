@@ -762,8 +762,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
       }
       if (
         previous?.updatedAt === next.updatedAt &&
-        previous.viewCommand?.commandId === next.viewCommand?.commandId &&
-        previous.exploded === next.exploded
+        previous?.viewCommand?.commandId === next.viewCommand?.commandId &&
+        previous?.exploded === next.exploded
       ) {
         return state;
       }

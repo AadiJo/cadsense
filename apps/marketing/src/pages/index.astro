@@ -14,8 +14,8 @@ import Layout from "../layouts/Layout.astro";
       <span class="hero-float-mark hf-codex" title="Codex">
         <img src="/harnesses/openai_dark.svg" alt="" />
       </span>
-      <span class="hero-float-mark hf-cadsense" title="Cadsense">
-        <img src="/cadsense-logo.png" alt="" />
+      <span class="hero-float-mark hf-opencode" title="OpenCode">
+        <img src="/harnesses/opencode-dark.svg" alt="" />
       </span>
       <span class="hero-float-mark hf-mechbase" title="Mechbase">
         <img src="/mechbase.svg" alt="" />
@@ -61,11 +61,11 @@ import Layout from "../layouts/Layout.astro";
   <section id="harnesses" class="sec-harness">
     <div class="container">
       <div class="section-head">
-        <h2>Bring your own Codex login.</h2>
+        <h2>Bring your own agent CLI login.</h2>
         <p>
-          Codex is supported today. Claude Code, OpenCode, and Cursor are on
-          the roadmap, but the current focus is making Codex useful for CAD
-          review and early mistake detection.
+          Codex and OpenCode are supported today. Claude Code and Cursor are on
+          the roadmap, while the current focus remains CAD review and early
+          mistake detection.
         </p>
       </div>
 
@@ -77,17 +77,17 @@ import Layout from "../layouts/Layout.astro";
             <div class="harness-tag">Supported now · codex login</div>
           </div>
         </div>
+        <div class="harness is-supported">
+          <div class="harness-mark"><img src="/harnesses/opencode-dark.svg" alt="" /></div>
+          <div class="harness-meta">
+            <div class="harness-name">OpenCode</div>
+            <div class="harness-tag">Supported now · opencode auth</div>
+          </div>
+        </div>
         <div class="harness is-coming-soon">
           <div class="harness-mark"><img src="/harnesses/claude-ai-icon.svg" alt="" /></div>
           <div class="harness-meta">
             <div class="harness-name">Claude Code</div>
-            <div class="harness-tag">Coming soon</div>
-          </div>
-        </div>
-        <div class="harness is-coming-soon">
-          <div class="harness-mark"><img src="/harnesses/opencode-dark.svg" alt="" /></div>
-          <div class="harness-meta">
-            <div class="harness-name">OpenCode</div>
             <div class="harness-tag">Coming soon</div>
           </div>
         </div>
@@ -101,7 +101,7 @@ import Layout from "../layouts/Layout.astro";
       </div>
 
       <div class="harness-footer">
-        <div class="harness-footer-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Uses your existing Codex auth.</div>
+        <div class="harness-footer-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Uses your existing Codex or OpenCode auth.</div>
         <div class="harness-footer-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Built around CAD review, screenshots, and model context.</div>
         <div class="harness-footer-item"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg> Other agent harnesses are coming later.</div>
       </div>
@@ -396,23 +396,23 @@ import Layout from "../layouts/Layout.astro";
     object-fit: contain;
   }
 
-  .hero-float-mark.hf-cadsense img {
+  .hero-float-mark.hf-opencode img {
     width: 58px;
     height: 58px;
   }
 
   .hero-float-mark.hf-onshape  { background: radial-gradient(circle at 30% 25%, rgba(32, 201, 122, 0.28), rgba(20, 20, 24, 0.92) 65%); top: 8%;  left: 7%;  animation-delay: 0s;    transform: rotate(-8deg); box-shadow: 0 22px 52px -18px rgba(32, 201, 122, 0.72), 0 0 34px rgba(32, 201, 122, 0.22), 0 2px 0 0 rgba(255, 255, 255, 0.04) inset; }
   .hero-float-mark.hf-codex    { background: radial-gradient(circle at 30% 25%, rgba(255, 255, 255, 0.12), rgba(20, 20, 24, 0.92) 65%); top: 6%;  right: 7%; animation-delay: -2.5s; transform: rotate(6deg); box-shadow: 0 20px 48px -16px rgba(255, 255, 255, 0.24), 0 0 24px rgba(255, 255, 255, 0.12), 0 2px 0 0 rgba(255, 255, 255, 0.04) inset; }
-  .hero-float-mark.hf-cadsense { background: radial-gradient(circle at 30% 25%, rgba(74, 144, 226, 0.22), rgba(20, 20, 24, 0.92) 65%); top: 32%; left: 5%;  animation-delay: -5s;   transform: rotate(4deg); box-shadow: 0 20px 48px -16px rgba(74, 144, 226, 0.38), 0 0 26px rgba(74, 144, 226, 0.16), 0 2px 0 0 rgba(255, 255, 255, 0.04) inset; }
+  .hero-float-mark.hf-opencode { background: radial-gradient(circle at 30% 25%, rgba(88, 72, 72, 0.5), rgba(20, 20, 24, 0.92) 65%); top: 32%; left: 5%;  animation-delay: -5s;   transform: rotate(4deg); box-shadow: 0 22px 52px -18px rgba(88, 72, 72, 0.95), 0 0 38px rgba(88, 72, 72, 0.56), 0 2px 0 0 rgba(255, 255, 255, 0.04) inset; }
   .hero-float-mark.hf-mechbase { background: radial-gradient(circle at 30% 25%, rgba(116, 104, 255, 0.28), rgba(20, 20, 24, 0.92) 65%); top: 30%; right: 5%; animation-delay: -7s; transform: rotate(-5deg); box-shadow: 0 20px 48px -16px rgba(116, 104, 255, 0.52), 0 0 28px rgba(116, 104, 255, 0.18), 0 2px 0 0 rgba(255, 255, 255, 0.04) inset; }
 
   @media (max-width: 1180px) {
     .hero-float-mark { width: 76px; height: 76px; border-radius: 20px; }
     .hero-float-mark img { width: 42px; height: 42px; }
-    .hero-float-mark.hf-cadsense img { width: 46px; height: 46px; }
+    .hero-float-mark.hf-opencode img { width: 46px; height: 46px; }
     .hero-float-mark.hf-onshape  { top: 4%;  left: 3%; }
     .hero-float-mark.hf-codex    { top: 2%;  right: 3%; }
-    .hero-float-mark.hf-cadsense { top: 26%; left: 2%; }
+    .hero-float-mark.hf-opencode { top: 26%; left: 2%; }
     .hero-float-mark.hf-mechbase { top: 24%; right: 2%; }
   }
 
@@ -448,7 +448,7 @@ import Layout from "../layouts/Layout.astro";
       height: 44px;
     }
 
-    .hero-float-mark.hf-cadsense img {
+    .hero-float-mark.hf-opencode img {
       width: 48px;
       height: 48px;
     }
@@ -466,7 +466,7 @@ import Layout from "../layouts/Layout.astro";
       transform: rotate(8deg);
     }
 
-    .hero-float-mark.hf-cadsense {
+    .hero-float-mark.hf-opencode {
       top: 474px;
       left: 4px;
       right: auto;

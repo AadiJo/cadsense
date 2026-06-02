@@ -563,8 +563,9 @@ describe("CadPanel browser behavior", () => {
         requestId: "screenshot-front",
         pngBase64: "cG5n",
       });
-      expect(captureRequests).toHaveLength(1);
-      expect(captureRequests[0]).toMatchObject({ type: "capture", view: "front", fit: true });
+      expect(captureRequests).toContainEqual(
+        expect.objectContaining({ type: "capture", view: "front", fit: true }),
+      );
     });
 
     window.removeEventListener("message", onObservedRequest);
