@@ -60,7 +60,6 @@ function buildProps() {
     completionSummary: null,
     turnDiffSummaryByAssistantMessageId: new Map(),
     routeThreadKey: "environment-local:thread-1",
-    onOpenTurnDiff: vi.fn(),
     revertTurnCountByUserMessageId: new Map(),
     onRevertUserMessage: vi.fn(),
     isRevertingCheckpoint: false,

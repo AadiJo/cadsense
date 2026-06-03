@@ -1,6 +1,8 @@
 import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
@@ -13,6 +15,9 @@ import { JsonRpcId, JsonRpcResponseEnvelope } from "./_internal/shared.ts";
 const isJsonRpcId = Schema.is(JsonRpcId);
 const isJsonRpcResponseEnvelope = Schema.is(JsonRpcResponseEnvelope);
 const isCodexAppServerError = Schema.is(CodexError.CodexAppServerError);
+
+const DEFAULT_OUTGOING_QUEUE_CAPACITY = 1024;
+const DEFAULT_INCOMING_QUEUE_CAPACITY = 1024;
 
 export interface CodexAppServerProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -33,6 +38,9 @@ export interface CodexAppServerIncomingRequest {
 
 export interface CodexAppServerPatchedProtocolOptions {
   readonly stdio: Stdio.Stdio;
+  readonly requestTimeout?: Duration.Input;
+  readonly outgoingQueueCapacity?: number;
+  readonly incomingQueueCapacity?: number;
   readonly terminationError?: Effect.Effect<CodexError.CodexAppServerError>;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
@@ -52,6 +60,7 @@ export interface CodexAppServerPatchedProtocol {
   readonly request: (
     method: string,
     payload?: unknown,
+    options?: { readonly timeout?: Duration.Input },
   ) => Effect.Effect<unknown, CodexError.CodexAppServerError>;
   readonly notify: (
     method: string,
@@ -140,9 +149,15 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
   function* (
     options: CodexAppServerPatchedProtocolOptions,
   ): Effect.fn.Return<CodexAppServerPatchedProtocol, never, Scope.Scope> {
-    const outgoing = yield* Queue.unbounded<string, Cause.Done<void>>();
-    const incomingNotifications = yield* Queue.unbounded<CodexAppServerIncomingNotification>();
-    const incomingRequests = yield* Queue.unbounded<CodexAppServerIncomingRequest>();
+    const outgoing = yield* Queue.bounded<string, Cause.Done<void>>(
+      options.outgoingQueueCapacity ?? DEFAULT_OUTGOING_QUEUE_CAPACITY,
+    );
+    const incomingNotifications = yield* Queue.bounded<CodexAppServerIncomingNotification>(
+      options.incomingQueueCapacity ?? DEFAULT_INCOMING_QUEUE_CAPACITY,
+    );
+    const incomingRequests = yield* Queue.bounded<CodexAppServerIncomingRequest>(
+      options.incomingQueueCapacity ?? DEFAULT_INCOMING_QUEUE_CAPACITY,
+    );
     const pending = yield* Ref.make(
       new Map<string, Deferred.Deferred<unknown, CodexError.CodexAppServerError>>(),
     );
@@ -366,7 +381,11 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
 
     yield* Stream.fromQueue(outgoing).pipe(Stream.run(options.stdio.stdout()), Effect.forkScoped);
 
-    const request = (method: string, payload?: unknown) =>
+    const request = (
+      method: string,
+      payload?: unknown,
+      requestOptions?: { readonly timeout?: Duration.Input },
+    ) =>
       Effect.gen(function* () {
         const requestId = yield* Ref.modify(
           nextRequestId,
@@ -383,8 +402,28 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
             removePending(String(requestId)).pipe(Effect.andThen(Effect.fail(error))),
           ),
         );
-        return yield* Deferred.await(deferred).pipe(
+        const awaitResponse = Deferred.await(deferred).pipe(
           Effect.onInterrupt(() => removePending(String(requestId))),
+        );
+        const timeout = requestOptions?.timeout ?? options.requestTimeout;
+        if (timeout === undefined) {
+          return yield* awaitResponse;
+        }
+        return yield* awaitResponse.pipe(
+          Effect.timeoutOption(timeout),
+          Effect.flatMap((result) =>
+            Option.match(result, {
+              onNone: () =>
+                Effect.fail(
+                  new CodexError.CodexAppServerTransportError({
+                    detail: `Codex App Server request timed out: ${method}`,
+                    cause: new Error(`Codex App Server request timed out: ${method}`),
+                  }),
+                ),
+              onSome: Effect.succeed,
+            }),
+          ),
+          Effect.onError(() => removePending(String(requestId))),
         );
       });
 

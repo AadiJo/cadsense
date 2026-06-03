@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -45,6 +46,10 @@ interface StreamRequestStartInfo {
   readonly stream: boolean;
 }
 
+class WsRpcRequestTimeoutError extends Data.TaggedError("WsRpcRequestTimeoutError")<{
+  readonly message: string;
+}> {}
+
 function formatErrorMessage(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
@@ -76,7 +81,7 @@ export class WsTransport {
 
   async request<TSuccess>(
     execute: (client: WsRpcProtocolClient) => Effect.Effect<TSuccess, Error, never>,
-    _options?: RequestOptions,
+    options?: RequestOptions,
   ): Promise<TSuccess> {
     if (this.disposed) {
       throw new Error("Transport disposed");
@@ -84,7 +89,27 @@ export class WsTransport {
 
     const session = this.session;
     const client = await session.clientPromise;
-    return await session.runtime.runPromise(Effect.suspend(() => execute(client)));
+    const operation: Effect.Effect<TSuccess, Error | WsRpcRequestTimeoutError, never> =
+      Effect.suspend(() => execute(client));
+    const timeout = options?.timeout;
+    return await session.runtime.runPromise(
+      timeout !== undefined && Option.isSome(timeout)
+        ? operation.pipe(
+            Effect.timeoutOption(timeout.value),
+            Effect.flatMap((result) =>
+              Option.match(result, {
+                onNone: () =>
+                  Effect.fail(
+                    new WsRpcRequestTimeoutError({
+                      message: "WebSocket RPC request timed out",
+                    }),
+                  ),
+                onSome: Effect.succeed,
+              }),
+            ),
+          )
+        : operation,
+    );
   }
 
   async requestStream<TValue>(
@@ -99,13 +124,7 @@ export class WsTransport {
     const client = await session.clientPromise;
     await session.runtime.runPromise(
       Stream.runForEach(connect(client), (value) =>
-        Effect.sync(() => {
-          try {
-            listener(value);
-          } catch {
-            // Swallow listener errors so the stream can finish cleanly.
-          }
-        }),
+        Effect.sync(() => this.invokeStreamListener(listener, value)),
       ),
     );
   }
@@ -322,11 +341,7 @@ export class WsTransport {
               }
 
               markValueReceived();
-              try {
-                listener(value);
-              } catch {
-                // Swallow listener errors so the stream stays live.
-              }
+              this.invokeStreamListener(listener, value);
             }),
           ),
         ),
@@ -351,6 +366,16 @@ export class WsTransport {
       cancel,
       completed,
     };
+  }
+
+  private invokeStreamListener<TValue>(listener: (value: TValue) => void, value: TValue) {
+    try {
+      listener(value);
+    } catch (error) {
+      console.error("WebSocket RPC stream listener failed", {
+        error: formatErrorMessage(error),
+      });
+    }
   }
 }
 

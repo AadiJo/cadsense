@@ -57,15 +57,6 @@ export interface WsRpcClient {
   readonly dispose: () => Promise<void>;
   readonly reconnect: () => Promise<void>;
   readonly isHeartbeatFresh: () => boolean;
-  readonly terminal: {
-    readonly open: RpcUnaryMethod<typeof WS_METHODS.terminalOpen>;
-    readonly write: RpcUnaryMethod<typeof WS_METHODS.terminalWrite>;
-    readonly resize: RpcUnaryMethod<typeof WS_METHODS.terminalResize>;
-    readonly clear: RpcUnaryMethod<typeof WS_METHODS.terminalClear>;
-    readonly restart: RpcUnaryMethod<typeof WS_METHODS.terminalRestart>;
-    readonly close: RpcUnaryMethod<typeof WS_METHODS.terminalClose>;
-    readonly onEvent: (callback: (event: unknown) => void) => () => void;
-  };
   readonly projects: {
     readonly ensureProjectlessChat: RpcUnaryMethod<typeof WS_METHODS.projectsEnsureProjectlessChat>;
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
@@ -87,7 +78,6 @@ export interface WsRpcClient {
     readonly searchIndex: RpcUnaryMethod<typeof WS_METHODS.onshapeSearchIndex>;
     readonly syncProject: RpcUnaryMethod<typeof WS_METHODS.onshapeSyncProject>;
     readonly listSyncedCadFiles: RpcUnaryMethod<typeof WS_METHODS.onshapeListSyncedCadFiles>;
-    readonly setCadView: RpcUnaryMethod<typeof WS_METHODS.cadSetView>;
     readonly onCadViewCommand: RpcStreamMethod<typeof WS_METHODS.subscribeCadViewCommands>;
     readonly uploadCadHierarchy: RpcUnaryMethod<typeof WS_METHODS.cadHierarchyUpload>;
     readonly onCadHierarchyRequest: RpcStreamMethod<
@@ -187,15 +177,6 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
       await transport.reconnect();
     },
     isHeartbeatFresh: () => transport.isHeartbeatFresh(),
-    terminal: {
-      open: (input) => transport.request((client) => client[WS_METHODS.terminalOpen](input)),
-      write: (input) => transport.request((client) => client[WS_METHODS.terminalWrite](input)),
-      resize: (input) => transport.request((client) => client[WS_METHODS.terminalResize](input)),
-      clear: (input) => transport.request((client) => client[WS_METHODS.terminalClear](input)),
-      restart: (input) => transport.request((client) => client[WS_METHODS.terminalRestart](input)),
-      close: (input) => transport.request((client) => client[WS_METHODS.terminalClose](input)),
-      onEvent: () => () => undefined,
-    },
     projects: {
       ensureProjectlessChat: (input) =>
         transport.request((client) => client[WS_METHODS.projectsEnsureProjectlessChat](input)),
@@ -230,7 +211,6 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.onshapeSyncProject](input)),
       listSyncedCadFiles: (input) =>
         transport.request((client) => client[WS_METHODS.onshapeListSyncedCadFiles](input)),
-      setCadView: (input) => transport.request((client) => client[WS_METHODS.cadSetView](input)),
       onCadViewCommand: (listener, options) =>
         transport.subscribe((client) => client[WS_METHODS.subscribeCadViewCommands]({}), listener, {
           ...options,

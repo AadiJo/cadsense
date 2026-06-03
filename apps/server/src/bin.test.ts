@@ -33,13 +33,8 @@ import {
 import { WorkspacePathsLive } from "./workspace/Layers/WorkspacePaths.ts";
 import { ServerSecretStoreLive } from "./auth/Layers/ServerSecretStore.ts";
 import { ServerAuthLive } from "./auth/Layers/ServerAuth.ts";
-import { TerminalManagerDisabledLive } from "./terminal/Services/Manager.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(
-  NodeServices.layer,
-  NetService.layer,
-  TerminalManagerDisabledLive,
-);
+const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
 
 const runCli = (args: ReadonlyArray<string>) => Command.runWith(cli, { version: "0.0.0" })(args);
 const runCliWithRuntime = (args: ReadonlyArray<string>) =>
@@ -81,8 +76,6 @@ const makeCliTestServerConfig = (baseDir: string) =>
       desktopBootstrapToken: undefined,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
-      tailscaleServeEnabled: false,
-      tailscaleServePort: 443,
     } satisfies ServerConfigShape;
   });
 

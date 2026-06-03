@@ -17,8 +17,6 @@
   "dependencies": {
     "@cadsense/contracts": "workspace:*",
     "@cadsense/shared": "workspace:*",
-    "@cadsense/ssh": "workspace:*",
-    "@cadsense/tailscale": "workspace:*",
     "@effect/platform-node": "catalog:",
     "effect": "catalog:",
     "electron": "41.5.0",

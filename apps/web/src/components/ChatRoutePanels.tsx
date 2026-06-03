@@ -7,11 +7,12 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 import { useMatch, useNavigate } from "@tanstack/react-router";
 
-import { ChatDiffSheetPanels, DiffPanelInlineSidebar } from "./ChatDiffRoutePanels";
+import { CadPanelInlineSidebar, ChatCadSheetPanel } from "./ChatCadRoutePanels";
 import {
   finalizePromotedDraftThreadByRef,
   DraftId,
@@ -19,7 +20,6 @@ import {
 } from "../composerDraftStore";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
-import { stripDiffSearchParams } from "../diffRouteSearch";
 import {
   selectEnvironmentState,
   selectProjectByRef,
@@ -40,13 +40,16 @@ const DRAFT_ROUTE_ID = "/_chat/draft/$draftId" as const;
 const EMPTY_ROUTE_THREAD_IDS: readonly ThreadId[] = [];
 
 interface ChatRoutePanelsContextValue {
-  readonly markDiffOpened: () => void;
+  readonly cadPanelOpen: boolean;
+  readonly setCadPanelOpen: (open: boolean) => void;
 }
 
 const ChatRoutePanelsContext = createContext<ChatRoutePanelsContextValue | null>(null);
 
-export function useChatRoutePanelsMarkOpened(): (() => void) | undefined {
-  return useContext(ChatRoutePanelsContext)?.markDiffOpened;
+export function useChatRoutePanelsState():
+  | { readonly cadPanelOpen: boolean; readonly setCadPanelOpen: (open: boolean) => void }
+  | undefined {
+  return useContext(ChatRoutePanelsContext) ?? undefined;
 }
 
 export function ChatRoutePanelsProvider({ children }: { readonly children: ReactNode }) {
@@ -162,60 +165,30 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
 
   const isThreadRoute = Boolean(threadMatch && threadRef && bootstrapComplete && routeThreadExists);
   const isDraftRouteWithPanels = Boolean(draftMatch && draftId && draftSession);
-  const diffOpen = (threadMatch?.search.diff ?? draftMatch?.search.diff) === "1";
-  const diffOpenRef = useRef(diffOpen);
-  diffOpenRef.current = diffOpen;
+  const [cadPanelOpen, setCadPanelOpenState] = useState(false);
+  const cadPanelOpenRef = useRef(cadPanelOpen);
+  cadPanelOpenRef.current = cadPanelOpen;
   const isProjectlessRoute =
     isProjectlessChatProject(serverThreadProject) || isProjectlessChatProject(draftProject);
   const rightPanelsEnabled = (isThreadRoute || isDraftRouteWithPanels) && !isProjectlessRoute;
 
-  const setDiffOpen = useCallback(
+  const setCadPanelOpen = useCallback(
     (open: boolean) => {
       if (open && !rightPanelsEnabled) {
         return;
       }
-      if (threadMatch && threadRef) {
-        void navigate({
-          to: "/$environmentId/$threadId",
-          params: {
-            environmentId: threadRef.environmentId,
-            threadId: threadRef.threadId,
-          },
-          replace: true,
-          search: (previous) => {
-            const rest = stripDiffSearchParams(previous);
-            return open ? { ...rest, diff: "1" } : { ...rest, diff: undefined };
-          },
-        });
-        return;
-      }
-
-      if (draftMatch && draftId) {
-        void navigate({
-          to: "/draft/$draftId",
-          params: { draftId },
-          replace: true,
-          search: (previous) => {
-            const rest = stripDiffSearchParams(previous);
-            return open ? { ...rest, diff: "1" } : { ...rest, diff: undefined };
-          },
-        });
-      }
+      setCadPanelOpenState(open);
     },
-    [draftId, draftMatch, navigate, rightPanelsEnabled, threadMatch, threadRef],
+    [rightPanelsEnabled],
   );
 
-  const markDiffOpened = useCallback(() => {
-    if (!rightPanelsEnabled) {
-      return;
-    }
-    setDiffOpen(true);
-  }, [rightPanelsEnabled, setDiffOpen]);
+  const panelsContextValue = useMemo(
+    () => ({ cadPanelOpen, setCadPanelOpen }),
+    [cadPanelOpen, setCadPanelOpen],
+  );
 
-  const panelsContextValue = useMemo(() => ({ markDiffOpened }), [markDiffOpened]);
-
-  const closeDiff = useCallback(() => setDiffOpen(false), [setDiffOpen]);
-  const openDiff = useCallback(() => setDiffOpen(true), [setDiffOpen]);
+  const closeCadPanel = useCallback(() => setCadPanelOpen(false), [setCadPanelOpen]);
+  const openCadPanel = useCallback(() => setCadPanelOpen(true), [setCadPanelOpen]);
 
   useEffect(() => {
     if (!threadRef || !bootstrapComplete) {
@@ -238,6 +211,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
     if (!canonicalThreadRef) {
       return;
     }
+    setCadPanelOpenState(false);
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(canonicalThreadRef),
@@ -256,10 +230,10 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   const renderCadPanel = rightPanelsEnabled;
 
   useEffect(() => {
-    if (isProjectlessRoute && diffOpen) {
-      setDiffOpen(false);
+    if (isProjectlessRoute && cadPanelOpen) {
+      setCadPanelOpen(false);
     }
-  }, [diffOpen, isProjectlessRoute, setDiffOpen]);
+  }, [cadPanelOpen, isProjectlessRoute, setCadPanelOpen]);
 
   useEffect(() => {
     if (!threadRef || !renderCadPanel) {
@@ -274,8 +248,8 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
     }
 
     const openForThread = (requestThreadId: ThreadId) => {
-      if (!diffOpenRef.current && handledThreadIds.has(requestThreadId)) {
-        openDiff();
+      if (!cadPanelOpenRef.current && handledThreadIds.has(requestThreadId)) {
+        openCadPanel();
       }
     };
 
@@ -289,7 +263,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
         unsubscribe();
       }
     };
-  }, [openDiff, renderCadPanel, sameProjectThreadIds, threadRef]);
+  }, [openCadPanel, renderCadPanel, sameProjectThreadIds, threadRef]);
 
   if (!rightPanelsEnabled) {
     return (
@@ -303,12 +277,11 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
     return (
       <ChatRoutePanelsContext.Provider value={panelsContextValue}>
         {children}
-        <DiffPanelInlineSidebar
-          diffOpen={diffOpen}
-          onCloseDiff={closeDiff}
-          onOpenDiff={openDiff}
-          renderDiffContent={diffOpen || renderCadPanel}
-          renderCadPanel={renderCadPanel}
+        <CadPanelInlineSidebar
+          open={cadPanelOpen}
+          onClose={closeCadPanel}
+          onOpen={openCadPanel}
+          shouldRender={cadPanelOpen || renderCadPanel}
         />
       </ChatRoutePanelsContext.Provider>
     );
@@ -317,11 +290,10 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   return (
     <ChatRoutePanelsContext.Provider value={panelsContextValue}>
       {children}
-      <ChatDiffSheetPanels
-        diffOpen={diffOpen}
-        onCloseDiff={closeDiff}
-        shouldRenderDiffContent={diffOpen || renderCadPanel}
-        renderCadPanel={renderCadPanel}
+      <ChatCadSheetPanel
+        open={cadPanelOpen}
+        onClose={closeCadPanel}
+        shouldRender={cadPanelOpen || renderCadPanel}
       />
     </ChatRoutePanelsContext.Provider>
   );

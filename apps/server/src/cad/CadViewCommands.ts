@@ -13,8 +13,14 @@ import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
 import * as Stream from "effect/Stream";
 
-const cadViewCommandPubSub = Effect.runSync(PubSub.unbounded<CadViewCommand>());
-const cadHierarchyRequestPubSub = Effect.runSync(PubSub.unbounded<CadHierarchyBrowserRequest>());
+const CAD_BROWSER_PUBSUB_CAPACITY = 256;
+
+const cadViewCommandPubSub = Effect.runSync(
+  PubSub.bounded<CadViewCommand>(CAD_BROWSER_PUBSUB_CAPACITY),
+);
+const cadHierarchyRequestPubSub = Effect.runSync(
+  PubSub.bounded<CadHierarchyBrowserRequest>(CAD_BROWSER_PUBSUB_CAPACITY),
+);
 
 interface PendingCadHierarchyRequest {
   readonly deferred: Deferred.Deferred<CadHierarchyResult, Error>;

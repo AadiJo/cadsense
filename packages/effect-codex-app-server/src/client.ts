@@ -84,6 +84,8 @@ type ServerNotificationHandler = (
   payload: unknown,
 ) => Effect.Effect<void, CodexError.CodexAppServerError>;
 
+const CODEX_NOTIFICATION_DECODE_FAILURE_MARKER = "__codexNotificationDecodeFailure";
+
 export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make")(function* (
   stdio: Stdio.Stdio,
   options: CodexAppServerClientOptions = {},
@@ -156,15 +158,25 @@ export const make = Effect.fn("effect-codex-app-server/CodexAppServerClient.make
         Effect.catchTag("CodexAppServerProtocolParseError", (error) =>
           Effect.andThen(
             Effect.logWarning(
-              "Codex App Server notification failed schema decode; forwarding raw payload to handlers",
+              "Codex App Server notification failed schema decode; forwarding protocol warning payload to handlers",
               {
                 method: notification.method,
                 detail: error.detail,
               },
             ),
-            Effect.forEach(handlers, (handler) => handler(notification.params as never), {
-              discard: true,
-            }),
+            Effect.forEach(
+              handlers,
+              (handler) =>
+                handler({
+                  [CODEX_NOTIFICATION_DECODE_FAILURE_MARKER]: true,
+                  method: notification.method,
+                  detail: error.detail,
+                  rawParams: notification.params,
+                } as never),
+              {
+                discard: true,
+              },
+            ),
           ),
         ),
         Effect.catch(() => Effect.void),

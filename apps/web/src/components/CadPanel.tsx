@@ -51,7 +51,7 @@ import { threadHasStarted } from "../threadLifecycle";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import { useUiStateStore, type LocalCadFile } from "../uiStateStore";
 import { cn } from "../lib/utils";
-import { DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
+import { SidePanelShell, type SidePanelMode } from "./SidePanelShell";
 import {
   CAD_MODEL_LOAD_TARGET_MS,
   CAD_MODEL_LOAD_TIMEOUT_MS,
@@ -66,7 +66,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 const EMPTY_CAD_REQUEST_THREAD_IDS: readonly string[] = [];
 
 interface CadPanelProps {
-  mode?: DiffPanelMode;
+  mode?: SidePanelMode;
   threadRef?: ScopedThreadRef;
   agentControlHost?: boolean;
 }
@@ -1497,40 +1497,40 @@ export default function CadPanel({
   if (!isOnshapeProject) {
     if (localCadFiles.length === 0) {
       return (
-        <DiffPanelShell mode={mode} {...cadShellProps}>
+        <SidePanelShell mode={mode} {...cadShellProps}>
           <LocalCadOpenState error={localCadFileError} onSelectFiles={handleSelectLocalCadFiles} />
-        </DiffPanelShell>
+        </SidePanelShell>
       );
     }
   }
 
   if (isOnshapeProject && !cwd) {
     return (
-      <DiffPanelShell mode={mode} {...cadShellProps}>
+      <SidePanelShell mode={mode} {...cadShellProps}>
         <CadPanelEmptyState
           title="CAD view unavailable"
           detail="This project does not have a workspace path."
         />
-      </DiffPanelShell>
+      </SidePanelShell>
     );
   }
 
   if (filesQuery.isLoading) {
     return (
-      <DiffPanelShell mode={mode} {...cadShellProps}>
+      <SidePanelShell mode={mode} {...cadShellProps}>
         <CadPanelLoadingState />
-      </DiffPanelShell>
+      </SidePanelShell>
     );
   }
 
   if (modelFiles.length === 0) {
     return (
-      <DiffPanelShell mode={mode} {...cadShellProps}>
+      <SidePanelShell mode={mode} {...cadShellProps}>
         <CadPanelEmptyState
           title="No synced CAD model"
           detail="Sync this Onshape project to download an OBJ preview or other supported model file."
         />
-      </DiffPanelShell>
+      </SidePanelShell>
     );
   }
 
@@ -1670,7 +1670,7 @@ export default function CadPanel({
   );
 
   return (
-    <DiffPanelShell mode={mode} {...cadShellProps}>
+    <SidePanelShell mode={mode} {...cadShellProps}>
       <div
         ref={panelRef}
         className={cn(
@@ -1782,6 +1782,6 @@ export default function CadPanel({
         {fullscreenMist}
         {agentControlOverlay}
       </div>
-    </DiffPanelShell>
+    </SidePanelShell>
   );
 }

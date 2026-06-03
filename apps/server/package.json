@@ -40,7 +40,6 @@
   "devDependencies": {
     "@cadsense/contracts": "workspace:*",
     "@cadsense/shared": "workspace:*",
-    "@cadsense/tailscale": "workspace:*",
     "@cadsense/web": "workspace:*",
     "@effect/language-service": "catalog:",
     "@effect/vitest": "catalog:",

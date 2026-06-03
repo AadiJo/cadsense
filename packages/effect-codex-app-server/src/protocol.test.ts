@@ -198,4 +198,35 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
       assert.equal(circularError.detail, "Failed to encode Codex App Server message");
     }),
   );
+
+  it.effect("fails pending requests when the peer does not respond before the timeout", () =>
+    Effect.gen(function* () {
+      const { stdio, output } = yield* makeInMemoryStdio();
+      const transport = yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        requestTimeout: 0,
+        stdio,
+      });
+
+      const pendingRequest = yield* transport.request("initialize", {}).pipe(
+        Effect.match({
+          onFailure: (error) => ({ _tag: "Failure" as const, error }),
+          onSuccess: (value) => ({ _tag: "Success" as const, value }),
+        }),
+        Effect.forkScoped,
+      );
+
+      assert.deepEqual(yield* decodeJson(yield* Queue.take(output)), {
+        id: 1,
+        method: "initialize",
+        params: {},
+      });
+      const timeoutResult = yield* Fiber.join(pendingRequest);
+      if (timeoutResult._tag !== "Failure") {
+        assert.fail("Expected request to time out");
+      }
+      const timeoutError = timeoutResult.error;
+      assert.instanceOf(timeoutError, CodexError.CodexAppServerTransportError);
+      assert.equal(timeoutError.detail, "Codex App Server request timed out: initialize");
+    }),
+  );
 });

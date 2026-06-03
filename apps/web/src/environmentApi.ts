@@ -5,24 +5,8 @@ import { readEnvironmentConnection } from "./environments/runtime";
 
 const environmentApiOverridesForTests = new Map<EnvironmentId, EnvironmentApi>();
 
-function environmentTerminalApi(rpcClient: WsRpcClient): EnvironmentApi["terminal"] {
-  const terminalRpc = (rpcClient as unknown as { terminal?: EnvironmentApi["terminal"] }).terminal;
-  return (
-    terminalRpc ?? {
-      open: async () => ({}),
-      write: async () => undefined,
-      resize: async () => undefined,
-      clear: async () => undefined,
-      restart: async () => ({}),
-      close: async () => undefined,
-      onEvent: () => () => undefined,
-    }
-  );
-}
-
 export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
   return {
-    terminal: environmentTerminalApi(rpcClient),
     projects: {
       ensureProjectlessChat: rpcClient.projects.ensureProjectlessChat,
       searchEntries: rpcClient.projects.searchEntries,

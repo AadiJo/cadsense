@@ -28,7 +28,6 @@ interface OrchestrationHandlers {
     snapshot: OrchestrationShellSnapshot,
     environmentId: EnvironmentId,
   ) => void;
-  readonly applyTerminalEvent?: (event: unknown, environmentId: EnvironmentId) => void;
 }
 
 interface EnvironmentConnectionInput extends OrchestrationHandlers {

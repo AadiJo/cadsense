@@ -14,8 +14,11 @@ import * as Stream from "effect/Stream";
 
 const CAPTURE_TIMEOUT = Duration.seconds(120);
 export const MAX_SCREENSHOT_BYTES = 25 * 1024 * 1024;
+const CAD_SCREENSHOT_REQUEST_PUBSUB_CAPACITY = 256;
 
-const cadScreenshotRequestPubSub = Effect.runSync(PubSub.unbounded<CadScreenshotBrowserRequest>());
+const cadScreenshotRequestPubSub = Effect.runSync(
+  PubSub.bounded<CadScreenshotBrowserRequest>(CAD_SCREENSHOT_REQUEST_PUBSUB_CAPACITY),
+);
 
 export const publishCadScreenshotRequest = (
   event: CadScreenshotBrowserRequest,

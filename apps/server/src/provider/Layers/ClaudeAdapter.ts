@@ -801,28 +801,6 @@ function extractTextContent(value: unknown): string {
   return extractTextContent(record.content);
 }
 
-function extractExitPlanModePlan(value: unknown): string | undefined {
-  if (!value || typeof value !== "object") {
-    return undefined;
-  }
-
-  const record = value as {
-    plan?: unknown;
-  };
-  return typeof record.plan === "string" && record.plan.trim().length > 0
-    ? record.plan.trim()
-    : undefined;
-}
-
-function exitPlanCaptureKey(input: {
-  readonly toolUseId?: string | undefined;
-  readonly planMarkdown: string;
-}): string {
-  return input.toolUseId && input.toolUseId.length > 0
-    ? `tool:${input.toolUseId}`
-    : `plan:${input.planMarkdown}`;
-}
-
 function tryParseJsonRecord(value: string): Record<string, unknown> | undefined {
   const result = decodeUnknownJsonStringExit(value);
   if (!Exit.isSuccess(result)) {
@@ -1376,53 +1354,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(detail !== undefined ? { detail } : {}),
       },
       providerRefs: nativeProviderRefs(context),
-    });
-  });
-
-  const emitProposedPlanCompleted = Effect.fn("emitProposedPlanCompleted")(function* (
-    context: ClaudeSessionContext,
-    input: {
-      readonly planMarkdown: string;
-      readonly toolUseId?: string | undefined;
-      readonly rawSource: "claude.sdk.message" | "claude.sdk.permission";
-      readonly rawMethod: string;
-      readonly rawPayload: unknown;
-    },
-  ) {
-    const turnState = context.turnState;
-    const planMarkdown = input.planMarkdown.trim();
-    if (!turnState || planMarkdown.length === 0) {
-      return;
-    }
-
-    const captureKey = exitPlanCaptureKey({
-      toolUseId: input.toolUseId,
-      planMarkdown,
-    });
-    if (turnState.capturedProposedPlanKeys.has(captureKey)) {
-      return;
-    }
-    turnState.capturedProposedPlanKeys.add(captureKey);
-
-    const stamp = yield* makeEventStamp();
-    yield* offerRuntimeEvent({
-      type: "turn.proposed.completed",
-      eventId: stamp.eventId,
-      provider: PROVIDER,
-      createdAt: stamp.createdAt,
-      threadId: context.session.threadId,
-      turnId: turnState.turnId,
-      payload: {
-        planMarkdown,
-      },
-      providerRefs: nativeProviderRefs(context, {
-        providerItemId: input.toolUseId,
-      }),
-      raw: {
-        source: input.rawSource,
-        method: input.rawMethod,
-        payload: input.rawPayload,
-      },
     });
   });
 
@@ -2022,20 +1953,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           name?: unknown;
           input?: unknown;
         };
-        if (toolUse.type !== "tool_use" || toolUse.name !== "ExitPlanMode") {
+        if (toolUse.type === "tool_use" && toolUse.name === "ExitPlanMode") {
           continue;
         }
-        const planMarkdown = extractExitPlanModePlan(toolUse.input);
-        if (!planMarkdown) {
-          continue;
-        }
-        yield* emitProposedPlanCompleted(context, {
-          planMarkdown,
-          toolUseId: typeof toolUse.id === "string" ? toolUse.id : undefined,
-          rawSource: "claude.sdk.message",
-          rawMethod: "claude/assistant",
-          rawPayload: message,
-        });
       }
     }
 
@@ -2729,31 +2649,15 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         }
 
         // Handle AskUserQuestion: surface clarifying questions to the
-        // user via the user-input runtime event channel, regardless of
-        // runtime mode (plan mode relies on this heavily).
+        // user via the user-input runtime event channel.
         if (toolName === "AskUserQuestion") {
           return yield* handleAskUserQuestion(context, toolInput, callbackOptions);
         }
 
         if (toolName === "ExitPlanMode") {
-          const planMarkdown = extractExitPlanModePlan(toolInput);
-          if (planMarkdown) {
-            yield* emitProposedPlanCompleted(context, {
-              planMarkdown,
-              toolUseId: callbackOptions.toolUseID,
-              rawSource: "claude.sdk.permission",
-              rawMethod: "canUseTool/ExitPlanMode",
-              rawPayload: {
-                toolName,
-                input: toolInput,
-              },
-            });
-          }
-
           return {
             behavior: "deny",
-            message:
-              "The client captured your proposed plan. Stop here and wait for the user's feedback or implementation request in a later turn.",
+            message: "Plan mode is disabled. Continue working in build mode.",
           } satisfies PermissionResult;
         }
 
@@ -3130,16 +3034,8 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
     }
 
-    // Apply interaction mode by switching the SDK's permission mode.
-    // "plan" maps directly to the SDK's "plan" permission mode;
-    // "default" restores the session's original permission mode.
-    // When interactionMode is absent we leave the current mode unchanged.
-    if (input.interactionMode === "plan") {
-      yield* Effect.tryPromise({
-        try: () => context.query.setPermissionMode("plan"),
-        catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
-      });
-    } else if (input.interactionMode === "default") {
+    // Build mode always restores the session's original permission mode.
+    if (input.interactionMode !== undefined) {
       yield* Effect.tryPromise({
         try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),

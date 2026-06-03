@@ -1,4 +1,3 @@
-import { TurnId } from "@cadsense/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 
@@ -38,13 +37,7 @@ describe("ChangedFilesTree", () => {
     "renders $name collapsed on the first render when collapse-all is active",
     ({ files, visibleLabels, hiddenLabels }) => {
       const markup = renderToStaticMarkup(
-        <ChangedFilesTree
-          turnId={TurnId.make("turn-1")}
-          files={files}
-          allDirectoriesExpanded={false}
-          resolvedTheme="light"
-          onOpenTurnDiff={() => {}}
-        />,
+        <ChangedFilesTree files={files} allDirectoriesExpanded={false} resolvedTheme="light" />,
       );
 
       for (const label of visibleLabels) {
@@ -99,13 +92,7 @@ describe("ChangedFilesTree", () => {
     "renders $name expanded on the first render when expand-all is active",
     ({ files, visibleLabels }) => {
       const markup = renderToStaticMarkup(
-        <ChangedFilesTree
-          turnId={TurnId.make("turn-1")}
-          files={files}
-          allDirectoriesExpanded
-          resolvedTheme="light"
-          onOpenTurnDiff={() => {}}
-        />,
+        <ChangedFilesTree files={files} allDirectoriesExpanded resolvedTheme="light" />,
       );
 
       for (const label of visibleLabels) {

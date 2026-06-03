@@ -40,8 +40,6 @@ const DESKTOP_BACKEND_ENV_NAMES = [
   "CADSENSE_DESKTOP_LAN_ACCESS",
   "CADSENSE_DESKTOP_LAN_HOST",
   "CADSENSE_DESKTOP_HTTPS_ENDPOINTS",
-  "CADSENSE_TAILSCALE_SERVE",
-  "CADSENSE_TAILSCALE_SERVE_PORT",
 ] as const;
 
 const backendChildEnvPatch = (): Record<string, string | undefined> =>
@@ -125,8 +123,6 @@ const resolveBackendStartConfig = Effect.fn("desktop.backendConfiguration.resolv
         cadsenseHome: environment.baseDir,
         host: backendExposure.bindHost,
         desktopBootstrapToken: input.bootstrapToken,
-        tailscaleServeEnabled: backendExposure.tailscaleServeEnabled,
-        tailscaleServePort: backendExposure.tailscaleServePort,
         ...Option.match(input.observabilitySettings.otlpTracesUrl, {
           onNone: () => ({}),
           onSome: (otlpTracesUrl) => ({ otlpTracesUrl }),

@@ -1,4 +1,6 @@
 import { DEFAULT_SERVER_SETTINGS, ServerSettings, WS_METHODS } from "@cadsense/contracts";
+import * as Duration from "effect/Duration";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -656,6 +658,28 @@ describe("WsTransport", () => {
     await transport.dispose();
   });
 
+  it("rejects unary requests when the configured timeout elapses", async () => {
+    const transport = createTransport("ws://localhost:3020");
+
+    const requestPromise = transport.request((client) => client[WS_METHODS.serverGetSettings]({}), {
+      timeout: Option.some(Duration.millis(25)),
+    });
+
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const socket = getSocket();
+    socket.open();
+
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+
+    await expect(requestPromise).rejects.toThrow("WebSocket RPC request timed out");
+    await transport.dispose();
+  });
+
   it("delivers stream chunks to subscribers", async () => {
     const transport = createTransport("ws://localhost:3020");
     const listener = vi.fn();
@@ -705,6 +729,68 @@ describe("WsTransport", () => {
 
     await waitFor(() => {
       expect(listener).toHaveBeenCalledWith(welcomeEvent);
+    });
+
+    unsubscribe();
+    await transport.dispose();
+  });
+
+  it("logs stream listener failures without terminating the subscription", async () => {
+    const transport = createTransport("ws://localhost:3020");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const listener = vi
+      .fn()
+      .mockImplementationOnce(() => {
+        throw new Error("listener crashed");
+      })
+      .mockImplementation(() => undefined);
+
+    const unsubscribe = transport.subscribe(
+      (client) => client[WS_METHODS.subscribeServerLifecycle]({}),
+      listener,
+    );
+    await waitFor(() => {
+      expect(sockets).toHaveLength(1);
+    });
+
+    const socket = getSocket();
+    socket.open();
+
+    await waitFor(() => {
+      expect(socket.sent).toHaveLength(1);
+    });
+
+    const requestMessage = JSON.parse(socket.sent[0] ?? "{}") as { id: string };
+    const event = {
+      version: 1,
+      sequence: 1,
+      type: "welcome",
+      payload: {
+        environment: {
+          environmentId: "environment-local",
+          label: "Local environment",
+          platform: { os: "darwin", arch: "arm64" },
+          serverVersion: "0.0.0-test",
+          capabilities: { repositoryIdentity: true },
+        },
+        cwd: "/tmp/workspace",
+        projectName: "workspace",
+      },
+    };
+
+    socket.serverMessage(
+      JSON.stringify({
+        _tag: "Chunk",
+        requestId: requestMessage.id,
+        values: [event, event],
+      }),
+    );
+
+    await waitFor(() => {
+      expect(listener).toHaveBeenCalledTimes(2);
+    });
+    expect(consoleError).toHaveBeenCalledWith("WebSocket RPC stream listener failed", {
+      error: "listener crashed",
     });
 
     unsubscribe();

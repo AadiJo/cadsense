@@ -48,6 +48,8 @@ const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
   OrchestrationCommandPreviouslyRejectedError,
 );
 const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvariantError);
+const ORCHESTRATION_COMMAND_QUEUE_CAPACITY = 1024;
+const ORCHESTRATION_EVENT_PUBSUB_CAPACITY = 4096;
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
@@ -85,8 +87,10 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
 
-  const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
-  const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
+  const commandQueue = yield* Queue.bounded<CommandEnvelope>(ORCHESTRATION_COMMAND_QUEUE_CAPACITY);
+  const eventPubSub = yield* PubSub.bounded<OrchestrationEvent>(
+    ORCHESTRATION_EVENT_PUBSUB_CAPACITY,
+  );
 
   const projectEventsOntoReadModel = (
     baseReadModel: OrchestrationReadModel,

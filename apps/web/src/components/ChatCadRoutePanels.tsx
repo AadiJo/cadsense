@@ -1,58 +1,33 @@
 import type { CSSProperties } from "react";
 import { Suspense, lazy, useCallback } from "react";
-import {
-  DiffPanelHeaderSkeleton,
-  DiffPanelLoadingState,
-  DiffPanelShell,
-  type DiffPanelMode,
-} from "./DiffPanelShell";
-import { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
+import { SidePanelShell, type SidePanelMode } from "./SidePanelShell";
 import { RightPanelSheet } from "./RightPanelSheet";
 import { Sidebar, SidebarProvider, SidebarRail } from "~/components/ui/sidebar";
 
-const DiffPanel = lazy(() => import("./DiffPanel"));
 const CadPanel = lazy(() => import("./CadPanel"));
 
-const DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_diff_sidebar_width";
-const DIFF_INLINE_DEFAULT_WIDTH = "clamp(24rem,34vw,36rem)";
-const DIFF_INLINE_SIDEBAR_MIN_WIDTH = 22 * 16;
-const DIFF_INLINE_SIDEBAR_MAX_WIDTH = 256 * 16;
-const DIFF_INLINE_MAIN_CONTENT_MIN_WIDTH = 34 * 16;
-const DIFF_INLINE_SIDEBAR_MAX_VIEWPORT_FRACTION = 0.42;
+const CAD_INLINE_SIDEBAR_WIDTH_STORAGE_KEY = "chat_cad_sidebar_width";
+const CAD_INLINE_DEFAULT_WIDTH = "clamp(24rem,34vw,36rem)";
+const CAD_INLINE_SIDEBAR_MIN_WIDTH = 22 * 16;
+const CAD_INLINE_SIDEBAR_MAX_WIDTH = 256 * 16;
+const CAD_INLINE_MAIN_CONTENT_MIN_WIDTH = 34 * 16;
+const CAD_INLINE_SIDEBAR_MAX_VIEWPORT_FRACTION = 0.42;
 const COMPOSER_COMPACT_MIN_LEFT_CONTROLS_WIDTH_PX = 208;
 
-const DiffLoadingFallback = (props: { mode: DiffPanelMode }) => {
+const CadLoadingFallback = (props: { mode: SidePanelMode }) => {
   return (
-    <DiffPanelShell mode={props.mode} header={<DiffPanelHeaderSkeleton />}>
-      <DiffPanelLoadingState label="Loading diff viewer..." />
-    </DiffPanelShell>
-  );
-};
-
-const CadLoadingFallback = (props: { mode: DiffPanelMode }) => {
-  return (
-    <DiffPanelShell mode={props.mode} header={null} showHeader={false}>
+    <SidePanelShell mode={props.mode} header={null} showHeader={false}>
       <div
         className="flex min-h-0 flex-1 items-center justify-center bg-card/20 text-sm text-muted-foreground"
         role="status"
         aria-live="polite"
         aria-label="Loading CAD viewer"
       />
-    </DiffPanelShell>
+    </SidePanelShell>
   );
 };
 
-export const LazyDiffPanel = (props: { mode: DiffPanelMode }) => {
-  return (
-    <DiffWorkerPoolProvider>
-      <Suspense fallback={<DiffLoadingFallback mode={props.mode} />}>
-        <DiffPanel mode={props.mode} />
-      </Suspense>
-    </DiffWorkerPoolProvider>
-  );
-};
-
-export const LazyCadPanel = (props: { mode: DiffPanelMode }) => {
+export const LazyCadPanel = (props: { mode: SidePanelMode }) => {
   return (
     <Suspense fallback={<CadLoadingFallback mode={props.mode} />}>
       <CadPanel mode={props.mode} />
@@ -60,23 +35,22 @@ export const LazyCadPanel = (props: { mode: DiffPanelMode }) => {
   );
 };
 
-export function DiffPanelInlineSidebar(props: {
-  diffOpen: boolean;
-  onCloseDiff: () => void;
-  onOpenDiff: () => void;
-  renderDiffContent: boolean;
-  renderCadPanel: boolean;
+export function CadPanelInlineSidebar(props: {
+  open: boolean;
+  onClose: () => void;
+  onOpen: () => void;
+  shouldRender: boolean;
 }) {
-  const { diffOpen, onCloseDiff, onOpenDiff, renderDiffContent, renderCadPanel } = props;
+  const { open, onClose, onOpen, shouldRender } = props;
   const onOpenChange = useCallback(
     (open: boolean) => {
       if (open) {
-        onOpenDiff();
+        onOpen();
         return;
       }
-      onCloseDiff();
+      onClose();
     },
-    [onCloseDiff, onOpenDiff],
+    [onClose, onOpen],
   );
   const shouldAcceptInlineSidebarWidth = useCallback(
     ({ nextWidth, wrapper }: { nextWidth: number; wrapper: HTMLElement }) => {
@@ -127,10 +101,10 @@ export function DiffPanelInlineSidebar(props: {
   return (
     <SidebarProvider
       defaultOpen={false}
-      open={diffOpen}
+      open={open}
       onOpenChange={onOpenChange}
       className="w-auto min-h-0 flex-none bg-transparent"
-      style={{ "--sidebar-width": DIFF_INLINE_DEFAULT_WIDTH } as CSSProperties}
+      style={{ "--sidebar-width": CAD_INLINE_DEFAULT_WIDTH } as CSSProperties}
     >
       <Sidebar
         side="right"
@@ -139,47 +113,34 @@ export function DiffPanelInlineSidebar(props: {
         resizable={{
           getMaxWidth: () =>
             Math.max(
-              DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+              CAD_INLINE_SIDEBAR_MIN_WIDTH,
               Math.min(
-                window.innerWidth * DIFF_INLINE_SIDEBAR_MAX_VIEWPORT_FRACTION,
-                window.innerWidth - DIFF_INLINE_MAIN_CONTENT_MIN_WIDTH,
+                window.innerWidth * CAD_INLINE_SIDEBAR_MAX_VIEWPORT_FRACTION,
+                window.innerWidth - CAD_INLINE_MAIN_CONTENT_MIN_WIDTH,
               ),
             ),
-          maxWidth: DIFF_INLINE_SIDEBAR_MAX_WIDTH,
-          minWidth: DIFF_INLINE_SIDEBAR_MIN_WIDTH,
+          maxWidth: CAD_INLINE_SIDEBAR_MAX_WIDTH,
+          minWidth: CAD_INLINE_SIDEBAR_MIN_WIDTH,
           shouldAcceptWidth: shouldAcceptInlineSidebarWidth,
-          storageKey: DIFF_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
+          storageKey: CAD_INLINE_SIDEBAR_WIDTH_STORAGE_KEY,
         }}
       >
-        {renderDiffContent ? (
-          renderCadPanel ? (
-            <LazyCadPanel mode="sidebar" />
-          ) : (
-            <LazyDiffPanel mode="sidebar" />
-          )
-        ) : null}
+        {shouldRender ? <LazyCadPanel mode="sidebar" /> : null}
         <SidebarRail />
       </Sidebar>
     </SidebarProvider>
   );
 }
 
-export function ChatDiffSheetPanels(props: {
-  diffOpen: boolean;
-  onCloseDiff: () => void;
-  shouldRenderDiffContent: boolean;
-  renderCadPanel: boolean;
+export function ChatCadSheetPanel(props: {
+  open: boolean;
+  onClose: () => void;
+  shouldRender: boolean;
 }) {
-  const { diffOpen, onCloseDiff, shouldRenderDiffContent, renderCadPanel } = props;
+  const { open, onClose, shouldRender } = props;
   return (
-    <RightPanelSheet open={diffOpen} onClose={onCloseDiff}>
-      {shouldRenderDiffContent ? (
-        renderCadPanel ? (
-          <LazyCadPanel mode="sheet" />
-        ) : (
-          <LazyDiffPanel mode="sheet" />
-        )
-      ) : null}
+    <RightPanelSheet open={open} onClose={onClose}>
+      {shouldRender ? <LazyCadPanel mode="sheet" /> : null}
     </RightPanelSheet>
   );
 }

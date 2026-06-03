@@ -176,6 +176,24 @@ function readUnknownCodexWireRecord(
   return payload as Record<string, unknown>;
 }
 
+function readCodexNotificationDecodeFailure(payload: ProviderEvent["payload"]):
+  | {
+      readonly method: string;
+      readonly detail: string;
+      readonly rawParams: unknown;
+    }
+  | undefined {
+  const record = readUnknownCodexWireRecord(payload);
+  if (record?.__codexNotificationDecodeFailure !== true) {
+    return undefined;
+  }
+  return {
+    method: typeof record.method === "string" ? record.method : "unknown",
+    detail: typeof record.detail === "string" ? record.detail : "Unknown decode failure",
+    rawParams: record.rawParams,
+  };
+}
+
 function resolveCodexPayloadDelta(event: ProviderEvent): string | undefined {
   const raw = readUnknownCodexWireRecord(event.payload);
   return (
@@ -580,6 +598,23 @@ function mapToRuntimeEvents(
   event: ProviderEvent,
   canonicalThreadId: ThreadId,
 ): ReadonlyArray<ProviderRuntimeEvent> {
+  const decodeFailure = readCodexNotificationDecodeFailure(event.payload);
+  if (decodeFailure) {
+    return [
+      {
+        ...runtimeEventBase(event, canonicalThreadId),
+        type: "runtime.warning",
+        payload: {
+          message: `Codex App Server notification failed schema decode: ${decodeFailure.method}`,
+          detail: {
+            issue: decodeFailure.detail,
+            rawParams: decodeFailure.rawParams,
+          },
+        },
+      },
+    ];
+  }
+
   if (event.kind === "error") {
     if (!event.message) {
       return [];
@@ -1512,7 +1547,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
       : undefined);
   const managedNativeEventLogger =
     options?.nativeEventLogger === undefined ? nativeEventLogger : undefined;
-  const runtimeEventQueue = yield* Queue.unbounded<ProviderRuntimeEvent>();
+  const runtimeEventQueue = yield* Queue.bounded<ProviderRuntimeEvent>(4096);
   const sessions = new Map<ThreadId, CodexAdapterSessionContext>();
 
   const startSession: CodexAdapterShape["startSession"] = (input) =>
@@ -1694,7 +1729,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             }
           : {}),
         ...(fastMode === true ? { serviceTier: "fast" } : {}),
-        ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
+        ...(input.interactionMode !== undefined ? { interactionMode: "default" as const } : {}),
         ...(codexAttachments.length > 0 ? { attachments: codexAttachments } : {}),
       })
       .pipe(Effect.mapError((cause) => mapCodexRuntimeError(input.threadId, "turn/start", cause)));

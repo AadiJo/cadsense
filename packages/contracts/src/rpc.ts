@@ -56,7 +56,6 @@ import {
   CadHierarchyResult,
   CadScreenshotUploadInput,
   CadScreenshotUploadResult,
-  CadSetViewInput,
   CadViewCommand,
   OnshapeImportUrlInput,
   OnshapeIndexResult,
@@ -89,16 +88,6 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
-import {
-  TerminalClearInput,
-  TerminalCloseInput,
-  TerminalError,
-  TerminalOpenInput,
-  TerminalResizeInput,
-  TerminalRestartInput,
-  TerminalSessionSnapshot,
-  TerminalWriteInput,
-} from "./terminal.ts";
 import {
   ServerConfigStreamEvent,
   ServerConfig,
@@ -160,14 +149,6 @@ export const WS_METHODS = {
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
 
-  // Deprecated terminal methods retained only for older client-side fixtures/configs.
-  terminalOpen: "terminal.open",
-  terminalWrite: "terminal.write",
-  terminalResize: "terminal.resize",
-  terminalClear: "terminal.clear",
-  terminalRestart: "terminal.restart",
-  terminalClose: "terminal.close",
-
   // Server meta
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
@@ -197,13 +178,11 @@ export const WS_METHODS = {
   onshapeListSyncedCadFiles: "onshape.listSyncedCadFiles",
   mechbaseListConnections: "mechbase.listConnections",
   mechbaseSetupConnection: "mechbase.setupConnection",
-  cadSetView: "cad.setView",
   cadScreenshotUpload: "cad.screenshotUpload",
   cadHierarchyUpload: "cad.hierarchyUpload",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
-  subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -367,12 +346,6 @@ export const WsMechbaseSetupConnectionRpc = Rpc.make(WS_METHODS.mechbaseSetupCon
   error: MechbaseRpcError,
 });
 
-export const WsCadSetViewRpc = Rpc.make(WS_METHODS.cadSetView, {
-  payload: CadSetViewInput,
-  success: CadViewCommand,
-  error: OnshapeRpcError,
-});
-
 export const WsCadScreenshotUploadRpc = Rpc.make(WS_METHODS.cadScreenshotUpload, {
   payload: CadScreenshotUploadInput,
   success: CadScreenshotUploadResult,
@@ -487,38 +460,6 @@ export const WsVcsSwitchRefRpc = Rpc.make(WS_METHODS.vcsSwitchRef, {
 export const WsVcsInitRpc = Rpc.make(WS_METHODS.vcsInit, {
   payload: VcsInitInput,
   error: VcsError,
-});
-
-export const WsTerminalOpenRpc = Rpc.make(WS_METHODS.terminalOpen, {
-  payload: TerminalOpenInput,
-  success: TerminalSessionSnapshot,
-  error: TerminalError,
-});
-
-export const WsTerminalWriteRpc = Rpc.make(WS_METHODS.terminalWrite, {
-  payload: TerminalWriteInput,
-  error: TerminalError,
-});
-
-export const WsTerminalResizeRpc = Rpc.make(WS_METHODS.terminalResize, {
-  payload: TerminalResizeInput,
-  error: TerminalError,
-});
-
-export const WsTerminalClearRpc = Rpc.make(WS_METHODS.terminalClear, {
-  payload: TerminalClearInput,
-  error: TerminalError,
-});
-
-export const WsTerminalRestartRpc = Rpc.make(WS_METHODS.terminalRestart, {
-  payload: TerminalRestartInput,
-  success: TerminalSessionSnapshot,
-  error: TerminalError,
-});
-
-export const WsTerminalCloseRpc = Rpc.make(WS_METHODS.terminalClose, {
-  payload: TerminalCloseInput,
-  error: TerminalError,
 });
 
 export const WsOrchestrationDispatchCommandRpc = Rpc.make(
@@ -645,7 +586,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsOnshapeListSyncedCadFilesRpc,
   WsMechbaseListConnectionsRpc,
   WsMechbaseSetupConnectionRpc,
-  WsCadSetViewRpc,
   WsCadScreenshotUploadRpc,
   WsCadHierarchyUploadRpc,
   WsProjectsEnsureProjectlessChatRpc,
@@ -665,12 +605,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
-  WsTerminalOpenRpc,
-  WsTerminalWriteRpc,
-  WsTerminalResizeRpc,
-  WsTerminalClearRpc,
-  WsTerminalRestartRpc,
-  WsTerminalCloseRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

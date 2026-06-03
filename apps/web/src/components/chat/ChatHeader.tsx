@@ -4,14 +4,9 @@ import {
   type OnshapeContext,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
-  type ThreadId,
 } from "@cadsense/contracts";
-import { scopeThreadRef } from "@cadsense/client-runtime";
 import { memo } from "react";
-import GitActionsControl from "../GitActionsControl";
-import { type DraftId } from "~/composerDraftStore";
 import { BoxIcon } from "lucide-react";
-import { Badge } from "../ui/badge";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScriptsControl";
 import { OnshapeSyncControl } from "../OnshapeSyncControl";
@@ -22,28 +17,23 @@ import { usePrimaryEnvironmentId } from "../../environments/primary";
 
 interface ChatHeaderProps {
   activeThreadEnvironmentId: EnvironmentId;
-  activeThreadId: ThreadId;
-  draftId?: DraftId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
   isProjectlessChat: boolean;
   activeProjectOnshapeContext?: OnshapeContext | null;
-  isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
-  diffToggleShortcutLabel: string | null;
-  gitCwd: string | null;
-  diffOpen: boolean;
+  cadPanelOpen: boolean;
   onshapeSyncing: boolean;
   cadExploded: boolean;
   onRunProjectScript: (script: ProjectScript) => void;
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
-  onToggleDiff: (open?: boolean) => void;
+  onToggleCadPanel: (open: boolean) => void;
   onSyncOnshape: () => void;
   onToggleCadExploded: (exploded: boolean) => void;
   onZoomCadToFit: () => void;
@@ -72,28 +62,23 @@ export function shouldShowCadPanelToggle(input: {
 
 export const ChatHeader = memo(function ChatHeader({
   activeThreadEnvironmentId,
-  activeThreadId,
-  draftId,
   activeThreadTitle,
   activeProjectName,
   isProjectlessChat,
   activeProjectOnshapeContext,
-  isGitRepo,
   openInCwd,
   activeProjectScripts,
   preferredScriptId,
   keybindings,
   availableEditors,
-  diffToggleShortcutLabel,
-  gitCwd,
-  diffOpen,
+  cadPanelOpen,
   onshapeSyncing,
   cadExploded,
   onRunProjectScript,
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
-  onToggleDiff,
+  onToggleCadPanel,
   onSyncOnshape,
   onToggleCadExploded,
   onZoomCadToFit,
@@ -126,17 +111,8 @@ export const ChatHeader = memo(function ChatHeader({
             {activeProjectName}
           </span>
         )}
-        {showProjectControls && !isGitRepo && (
-          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
-            No Git
-          </Badge>
-        )}
       </div>
-      <div
-        className={`ml-auto flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3 ${
-          diffOpen ? "" : "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+0.5em)]"
-        }`}
-      >
+      <div className="ml-auto flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+0.5em)]">
         {showProjectControls && activeProjectOnshapeContext ? (
           <OnshapeSyncControl
             context={activeProjectOnshapeContext}
@@ -165,21 +141,14 @@ export const ChatHeader = memo(function ChatHeader({
             onshapeUrl={activeProjectOnshapeContext?.reference.url ?? null}
           />
         )}
-        {showProjectControls && (
-          <GitActionsControl
-            gitCwd={gitCwd}
-            activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}
-            {...(draftId ? { draftId } : {})}
-          />
-        )}
         {showCadPanelToggle ? (
           <Tooltip>
             <TooltipTrigger
               render={
                 <Toggle
                   className="shrink-0"
-                  pressed={diffOpen}
-                  onPressedChange={(pressed) => onToggleDiff(pressed)}
+                  pressed={cadPanelOpen}
+                  onPressedChange={(pressed) => onToggleCadPanel(pressed)}
                   aria-label="Toggle CAD view"
                   variant="outline"
                   size="xs"
@@ -188,11 +157,7 @@ export const ChatHeader = memo(function ChatHeader({
                 </Toggle>
               }
             />
-            <TooltipPopup side="bottom">
-              {diffToggleShortcutLabel
-                ? `Toggle CAD view (${diffToggleShortcutLabel})`
-                : "Toggle CAD view"}
-            </TooltipPopup>
+            <TooltipPopup side="bottom">Toggle CAD view</TooltipPopup>
           </Tooltip>
         ) : null}
       </div>

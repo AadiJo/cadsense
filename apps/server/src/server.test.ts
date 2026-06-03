@@ -12,7 +12,6 @@ import {
   MessageId,
   ExternalLauncherError,
   type OrchestrationThreadShell,
-  TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
   ORCHESTRATION_WS_METHODS,
@@ -372,8 +371,6 @@ const buildAppUnderTest = (options?: {
       desktopBootstrapToken: defaultDesktopBootstrapToken,
       autoBootstrapProjectFromCwd: false,
       logWebSocketEvents: false,
-      tailscaleServeEnabled: false,
-      tailscaleServePort: 443,
       ...options?.config,
     };
     const layerConfig = Layer.succeed(ServerConfig, config);
@@ -4276,130 +4273,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         dispatchedCommands.map((command) => command.type),
         ["thread.create", "thread.delete"],
       );
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes websocket rpc terminal methods", () =>
-    Effect.gen(function* () {
-      const snapshot = {
-        threadId: "thread-1",
-        terminalId: "default",
-        cwd: "/tmp/project",
-        worktreePath: null,
-        status: "running" as const,
-        pid: 1234,
-        history: "",
-        exitCode: null,
-        exitSignal: null,
-        updatedAt: "2026-01-01T00:00:00.000Z",
-      };
-
-      yield* buildAppUnderTest({
-        layers: {
-          terminalManager: {
-            open: () => Effect.succeed(snapshot),
-            write: () => Effect.void,
-            resize: () => Effect.void,
-            clear: () => Effect.void,
-            restart: () => Effect.succeed(snapshot),
-            close: () => Effect.void,
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-
-      const opened = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalOpen]({
-            threadId: "thread-1",
-            terminalId: "default",
-            cwd: "/tmp/project",
-          }),
-        ),
-      );
-      assert.equal(opened.terminalId, "default");
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalWrite]({
-            threadId: "thread-1",
-            terminalId: "default",
-            data: "echo hi\n",
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalResize]({
-            threadId: "thread-1",
-            terminalId: "default",
-            cols: 120,
-            rows: 40,
-          }),
-        ),
-      );
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalClear]({
-            threadId: "thread-1",
-            terminalId: "default",
-          }),
-        ),
-      );
-
-      const restarted = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalRestart]({
-            threadId: "thread-1",
-            terminalId: "default",
-            cwd: "/tmp/project",
-            cols: 120,
-            rows: 40,
-          }),
-        ),
-      );
-      assert.equal(restarted.terminalId, "default");
-
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalClose]({
-            threadId: "thread-1",
-            terminalId: "default",
-          }),
-        ),
-      );
-    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
-  );
-
-  it.effect("routes websocket rpc terminal.write errors", () =>
-    Effect.gen(function* () {
-      const terminalError = new TerminalNotRunningError({
-        threadId: "thread-1",
-        terminalId: "default",
-      });
-      yield* buildAppUnderTest({
-        layers: {
-          terminalManager: {
-            write: () => Effect.fail(terminalError),
-          },
-        },
-      });
-
-      const wsUrl = yield* getWsServerUrl("/ws");
-      const result = yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          client[WS_METHODS.terminalWrite]({
-            threadId: "thread-1",
-            terminalId: "default",
-            data: "echo fail\n",
-          }),
-        ).pipe(Effect.result),
-      );
-
-      assertFailure(result, terminalError);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 });

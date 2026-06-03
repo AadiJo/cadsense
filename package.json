@@ -62,10 +62,10 @@
   },
   "devDependencies": {
     "@effect/language-service": "catalog:",
-    "@oxlint/plugins": "^1.63.0",
+    "@oxlint/plugins": "^1.68.0",
     "@types/node": "catalog:",
     "oxfmt": "^0.40.0",
-    "oxlint": "^1.63.0",
+    "oxlint": "^1.68.0",
     "turbo": "^2.3.3",
     "typescript": "catalog:",
     "vitest": "catalog:"

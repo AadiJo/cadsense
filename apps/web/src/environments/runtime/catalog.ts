@@ -18,7 +18,6 @@ export interface SavedEnvironmentRecord {
   readonly httpBaseUrl: string;
   readonly createdAt: string;
   readonly lastConnectedAt: string | null;
-  readonly desktopSsh?: PersistedSavedEnvironmentRecord["desktopSsh"];
 }
 
 interface SavedEnvironmentRegistryState {
@@ -46,7 +45,6 @@ export function toPersistedSavedEnvironmentRecord(
     wsBaseUrl: record.wsBaseUrl,
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
-    ...(record.desktopSsh ? { desktopSsh: record.desktopSsh } : {}),
   };
 }
 

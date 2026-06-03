@@ -1,6 +1,5 @@
 import { parseScopedThreadKey, scopeProjectRef, scopeThreadRef } from "@cadsense/client-runtime";
 import { type ScopedThreadRef, ThreadId } from "@cadsense/contracts";
-import { useQueryClient } from "@tanstack/react-query";
 import { useRouter } from "@tanstack/react-router";
 import { useCallback, useRef } from "react";
 
@@ -8,7 +7,6 @@ import { getFallbackThreadIdAfterDelete } from "../components/Sidebar.logic";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useNewThreadHandler } from "./useHandleNewThread";
 import { ensureEnvironmentApi, readEnvironmentApi } from "../environmentApi";
-import { invalidateGitQueries } from "../lib/gitReactQuery";
 import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
 import { newCommandId } from "../lib/utils";
 import { readLocalApi } from "../localApi";
@@ -40,7 +38,6 @@ export function useThreadActions() {
   // sidebar row via archiveThread → attemptArchiveThread.
   const handleNewThreadRef = useRef(handleNewThread);
   handleNewThreadRef.current = handleNewThread;
-  const queryClient = useQueryClient();
 
   const resolveThreadTarget = useCallback((target: ScopedThreadRef) => {
     const state = useStore.getState();
@@ -223,9 +220,6 @@ export function useThreadActions() {
           path: orphanedWorktreePath,
           force: true,
         });
-        await invalidateGitQueries(queryClient, {
-          environmentId: threadRef.environmentId,
-        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
         console.error("Failed to remove orphaned worktree after thread deletion", {
@@ -249,7 +243,6 @@ export function useThreadActions() {
       clearTerminalState,
       getCurrentRouteThreadRef,
       router,
-      queryClient,
       resolveThreadTarget,
       sidebarThreadSortOrder,
     ],

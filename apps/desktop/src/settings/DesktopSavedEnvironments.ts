@@ -16,15 +16,7 @@ import * as Ref from "effect/Ref";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 
-type PersistedSavedEnvironmentDesktopSsh = NonNullable<
-  PersistedSavedEnvironmentRecord["desktopSsh"]
->;
-
-interface PersistedSavedEnvironmentStorageRecord extends Omit<
-  PersistedSavedEnvironmentRecord,
-  "desktopSsh"
-> {
-  readonly desktopSsh?: PersistedSavedEnvironmentDesktopSsh;
+interface PersistedSavedEnvironmentStorageRecord extends PersistedSavedEnvironmentRecord {
   readonly encryptedBearerToken?: string;
 }
 
@@ -38,13 +30,6 @@ interface SavedEnvironmentRegistryStorageDocument {
   readonly records?: readonly PersistedSavedEnvironmentStorageRecord[];
 }
 
-const DesktopSshTargetSchema = Schema.Struct({
-  alias: Schema.String,
-  hostname: Schema.String,
-  username: Schema.NullOr(Schema.String),
-  port: Schema.NullOr(Schema.Number),
-});
-
 const PersistedSavedEnvironmentStorageRecordSchema = Schema.Struct({
   environmentId: EnvironmentId,
   label: Schema.String,
@@ -52,7 +37,6 @@ const PersistedSavedEnvironmentStorageRecordSchema = Schema.Struct({
   wsBaseUrl: Schema.String,
   createdAt: Schema.String,
   lastConnectedAt: Schema.NullOr(Schema.String),
-  desktopSsh: Schema.optionalKey(DesktopSshTargetSchema),
   encryptedBearerToken: Schema.optionalKey(Schema.String),
 });
 
@@ -134,7 +118,7 @@ function toPersistedSavedEnvironmentRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
   };
-  return record.desktopSsh ? { ...nextRecord, desktopSsh: record.desktopSsh } : nextRecord;
+  return nextRecord;
 }
 
 function toSavedEnvironmentStorageRecord(
@@ -149,17 +133,6 @@ function toSavedEnvironmentStorageRecord(
     createdAt: record.createdAt,
     lastConnectedAt: record.lastConnectedAt,
   };
-  const desktopSsh = record.desktopSsh;
-  if (desktopSsh) {
-    return Option.match(encryptedBearerToken, {
-      onNone: () => ({ ...nextRecord, desktopSsh }),
-      onSome: (value) => ({
-        ...nextRecord,
-        desktopSsh,
-        encryptedBearerToken: value,
-      }),
-    });
-  }
   return Option.match(encryptedBearerToken, {
     onNone: () => nextRecord,
     onSome: (value) => ({ ...nextRecord, encryptedBearerToken: value }),
