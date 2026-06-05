@@ -1040,7 +1040,7 @@ function cadReviewArtifactPreviewUrl(artifact: CadReviewEvidenceArtifact): strin
   if (/^https:\/\/api-frcrag-v2\.johari-dev\.com\//i.test(artifact.artifactUri)) {
     return `/api/mechbase/artifact?artifactUrl=${encodeURIComponent(artifact.artifactUri)}`;
   }
-  return `/api/cad/review-artifact?artifactUri=${encodeURIComponent(artifact.artifactUri)}`;
+  return `/api/cad/review-artifact?artifactUri=${encodeURIComponent(artifact.artifactUri)}&artifactId=${encodeURIComponent(artifact.id)}`;
 }
 
 function isPreviewableCadReviewArtifact(artifact: CadReviewEvidenceArtifact): boolean {
@@ -1320,7 +1320,7 @@ function CadReviewActionEvidenceCarousel({
       (artifact): artifact is CadReviewEvidenceArtifact =>
         artifact !== undefined && isPreviewableCadReviewArtifact(artifact),
     )
-    .slice(0, 6);
+    .slice(0, 3);
   if (artifacts.length === 0) {
     return null;
   }

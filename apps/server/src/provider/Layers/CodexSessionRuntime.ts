@@ -40,7 +40,10 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import { CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
+import {
+  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+} from "../CodexDeveloperInstructions.ts";
 import { normalizeCodexStreamDelta, normalizeCodexTranscriptSnippet } from "../codexWireText.ts";
 const decodeV2TurnStartResponse = Schema.decodeUnknownEffect(EffectCodexSchema.V2TurnStartResponse);
 
@@ -406,11 +409,14 @@ function buildCodexCollaborationMode(input: {
   }
   const model = normalizeCodexModelSlug(input.model) ?? DEFAULT_MODEL;
   return {
-    mode: "default",
+    mode: input.interactionMode,
     settings: {
       model,
       reasoning_effort: input.effort ?? "medium",
-      developer_instructions: CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+      developer_instructions:
+        input.interactionMode === "plan"
+          ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+          : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
     },
   };
 }

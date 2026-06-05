@@ -2,13 +2,15 @@ import type {
   CadView,
   CadViewCommand,
   CadReviewStatus,
+  CadReviewPersona,
+  CadReviewReport,
   OrchestrationThreadActivity,
   ThreadId,
 } from "@cadsense/contracts";
 
 import type { EnvironmentState } from "../store";
 import { getThreadFromEnvironmentState } from "../threadDerivation";
-import type { Thread } from "../types";
+import type { ChatMessage, Thread } from "../types";
 import type { CadAgentViewCommand, CadAgentViewState } from "../uiStateStore";
 
 const CAD_REVIEW_CHILD_CREATED_KIND = "cad-review.child-thread.created";
@@ -19,7 +21,12 @@ const CAD_REVIEW_ACTIVE_STATUSES: ReadonlySet<CadReviewStatus> = new Set<CadRevi
   "reviewing",
   "deep-diving",
   "synthesizing",
+  "failed",
 ]);
+
+type CadReviewOutputTokenStep = keyof NonNullable<CadReviewReport["outputTokensByStep"]>;
+
+type CadReviewChildPhase = "planning" | "reviewing" | "deep-dive" | "synthesis";
 
 export interface CadReviewChildActivitySummary {
   readonly reviewRunId: string;
@@ -32,6 +39,8 @@ export interface CadReviewChildActivitySummary {
   readonly latestToolTitle: string | null;
   readonly latestScreenshotAt: string | null;
   readonly latestRenderAt: string | null;
+  readonly outputTokens: number | null;
+  readonly outputTokensByStep: Readonly<Partial<Record<CadReviewOutputTokenStep, number>>>;
   readonly updatedAt: string;
 }
 
@@ -60,6 +69,36 @@ function optionalNumberTuple(value: unknown): [number, number, number] | undefin
   return value as [number, number, number];
 }
 
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function outputTokensFromActivity(activity: OrchestrationThreadActivity): number | null {
+  if (activity.kind !== "context-window.updated") {
+    return null;
+  }
+  const payload = payloadRecord(activity.payload);
+  return finiteNumber(payload?.lastOutputTokens) ?? finiteNumber(payload?.outputTokens);
+}
+
+function estimateOutputTokensFromText(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  return Math.max(1, Math.ceil(trimmed.length / 4));
+}
+
+function latestAssistantMessage(messages: ReadonlyArray<ChatMessage>): ChatMessage | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role === "assistant" && message.text.trim().length > 0) {
+      return message;
+    }
+  }
+  return null;
+}
+
 function activeReviewId(thread: Thread): string | null {
   return (
     thread.reviews
@@ -72,11 +111,27 @@ function childThreadIdsForReview(thread: Thread, reviewRunId: string): Set<Threa
   return new Set(childThreadMetadataForReview(thread, reviewRunId).keys());
 }
 
+export function cadReviewChildThreadIdsForActiveReviews(thread: Thread): ThreadId[] {
+  const childThreadIds = new Set<ThreadId>();
+  for (const review of thread.reviews ?? []) {
+    if (!CAD_REVIEW_ACTIVE_STATUSES.has(review.status)) {
+      continue;
+    }
+    for (const childThreadId of childThreadIdsForReview(thread, review.id)) {
+      childThreadIds.add(childThreadId);
+    }
+  }
+  return [...childThreadIds];
+}
+
 function childThreadMetadataForReview(
   thread: Thread,
   reviewRunId: string,
-): Map<ThreadId, { reviewer: string | null }> {
-  const childThreadIds = new Map<ThreadId, { reviewer: string | null }>();
+): Map<ThreadId, { reviewer: string | null; phase: CadReviewChildPhase | null }> {
+  const childThreadIds = new Map<
+    ThreadId,
+    { reviewer: string | null; phase: CadReviewChildPhase | null }
+  >();
   for (const activity of thread.activities) {
     if (activity.kind !== CAD_REVIEW_CHILD_CREATED_KIND) {
       continue;
@@ -87,9 +142,61 @@ function childThreadMetadataForReview(
     }
     childThreadIds.set(payload.childThreadId as ThreadId, {
       reviewer: typeof payload.persona === "string" ? payload.persona : null,
+      phase: cadReviewChildPhase(payload.phase),
     });
   }
   return childThreadIds;
+}
+
+function cadReviewChildPhase(value: unknown): CadReviewChildPhase | null {
+  return value === "planning" ||
+    value === "reviewing" ||
+    value === "deep-dive" ||
+    value === "synthesis"
+    ? value
+    : null;
+}
+
+function isCadReviewSpecialistPersona(
+  value: string | null,
+): value is Exclude<CadReviewPersona, "synthesis"> {
+  return (
+    value === "systems_integration" ||
+    value === "program_readiness" ||
+    value === "mechanical_robustness"
+  );
+}
+
+function outputTokenStepForChild(input: {
+  readonly reviewer: string | null;
+  readonly phase: CadReviewChildPhase | null;
+  readonly reviewStatus: CadReviewStatus;
+}): CadReviewOutputTokenStep | null {
+  switch (input.phase) {
+    case "planning":
+      return "planning";
+    case "deep-dive":
+      return "deep_diving";
+    case "synthesis":
+      return "synthesizing";
+    case "reviewing":
+      return isCadReviewSpecialistPersona(input.reviewer) ? input.reviewer : null;
+    case null:
+      break;
+  }
+  if (input.reviewer === "synthesis") {
+    if (input.reviewStatus === "planning") {
+      return "planning";
+    }
+    if (input.reviewStatus === "deep-diving") {
+      return "deep_diving";
+    }
+    if (input.reviewStatus === "synthesizing") {
+      return "synthesizing";
+    }
+    return null;
+  }
+  return isCadReviewSpecialistPersona(input.reviewer) ? input.reviewer : null;
 }
 
 function toolNameFromActivity(activity: OrchestrationThreadActivity): string | undefined {
@@ -229,20 +336,55 @@ export function deriveCadReviewChildActivitySummaries(
     const childThreadMetadata = childThreadMetadataForReview(thread, review.id);
     const childPrefix = `${thread.id}:cad-review:${review.id}:`;
     let latest: CadReviewChildActivitySummary | null = null;
+    const outputTokensByStep: Partial<Record<CadReviewOutputTokenStep, number>> = {};
+    const recordOutputTokens = (
+      step: CadReviewOutputTokenStep | null,
+      outputTokens: number | null,
+    ) => {
+      if (step === null || outputTokens === null || outputTokens <= 0) {
+        return;
+      }
+      outputTokensByStep[step] = Math.max(outputTokensByStep[step] ?? 0, outputTokens);
+    };
 
     for (const threadId of environmentState.threadIds) {
       if (!childThreadMetadata.has(threadId) && !threadId.startsWith(childPrefix)) {
         continue;
       }
       const childThread = getThreadFromEnvironmentState(environmentState, threadId);
-      const reviewer =
-        childThreadMetadata.get(threadId)?.reviewer ?? reviewerFromChildThreadId(threadId);
+      const metadata = childThreadMetadata.get(threadId);
+      const reviewer = metadata?.reviewer ?? reviewerFromChildThreadId(threadId);
+      const outputTokenStep = outputTokenStepForChild({
+        reviewer,
+        phase: metadata?.phase ?? null,
+        reviewStatus: review.status,
+      });
+      const assistantMessage = latestAssistantMessage(childThread?.messages ?? []);
+      const assistantOutputTokens = assistantMessage
+        ? estimateOutputTokensFromText(assistantMessage.text)
+        : null;
+      let latestScreenshotAtForThread: string | null = latest?.latestScreenshotAt ?? null;
+      let latestRenderAtForThread: string | null = latest?.latestRenderAt ?? null;
       for (const activity of childThread?.activities ?? []) {
         if (activity.kind === CAD_REVIEW_CHILD_CREATED_KIND) {
           continue;
         }
+        const activityOutputTokens = outputTokensFromActivity(activity);
+        recordOutputTokens(outputTokenStep, activityOutputTokens);
         const toolName = toolNameFromActivity(activity) ?? null;
         const toolTitle = toolTitleFromActivity(activity) ?? null;
+        if (activityLooksLike(activity, ["screenshot", "capture"])) {
+          latestScreenshotAtForThread =
+            latestScreenshotAtForThread === null || activity.createdAt > latestScreenshotAtForThread
+              ? activity.createdAt
+              : latestScreenshotAtForThread;
+        }
+        if (activityLooksLike(activity, ["render", "view"])) {
+          latestRenderAtForThread =
+            latestRenderAtForThread === null || activity.createdAt > latestRenderAtForThread
+              ? activity.createdAt
+              : latestRenderAtForThread;
+        }
         const next: CadReviewChildActivitySummary = {
           reviewRunId: review.id,
           reviewer,
@@ -252,22 +394,47 @@ export function deriveCadReviewChildActivitySummaries(
           latestActivityLabel: activity.summary,
           latestToolName: toolName,
           latestToolTitle: toolTitle,
-          latestScreenshotAt: activityLooksLike(activity, ["screenshot", "capture"])
-            ? activity.createdAt
-            : (latest?.latestScreenshotAt ?? null),
-          latestRenderAt: activityLooksLike(activity, ["render", "view"])
-            ? activity.createdAt
-            : (latest?.latestRenderAt ?? null),
+          latestScreenshotAt: latestScreenshotAtForThread,
+          latestRenderAt: latestRenderAtForThread,
+          outputTokens:
+            activityOutputTokens ?? latest?.outputTokens ?? assistantOutputTokens ?? null,
+          outputTokensByStep: { ...outputTokensByStep },
           updatedAt: activity.createdAt,
         };
         if (!latest || next.updatedAt > latest.updatedAt) {
           latest = next;
         }
       }
+
+      if (assistantMessage && assistantOutputTokens !== null) {
+        recordOutputTokens(outputTokenStep, assistantOutputTokens);
+        const messageUpdatedAt =
+          assistantMessage.updatedAt ?? assistantMessage.completedAt ?? assistantMessage.createdAt;
+        const next: CadReviewChildActivitySummary = {
+          reviewRunId: review.id,
+          reviewer,
+          childThreadId: threadId,
+          latestActivityId: assistantMessage.id,
+          latestActivityKind: "assistant.message",
+          latestActivityLabel: "Assistant output",
+          latestToolName: null,
+          latestToolTitle: null,
+          latestScreenshotAt: latestScreenshotAtForThread,
+          latestRenderAt: latestRenderAtForThread,
+          outputTokens: Math.max(latest?.outputTokens ?? 0, assistantOutputTokens),
+          outputTokensByStep: { ...outputTokensByStep },
+          updatedAt: messageUpdatedAt,
+        };
+        if (!latest || next.updatedAt >= latest.updatedAt) {
+          latest = next;
+        } else if (latest.outputTokens === null || assistantOutputTokens > latest.outputTokens) {
+          latest = { ...latest, outputTokens: assistantOutputTokens };
+        }
+      }
     }
 
     if (latest) {
-      summaries[review.id] = latest;
+      summaries[review.id] = { ...latest, outputTokensByStep };
     }
   }
 

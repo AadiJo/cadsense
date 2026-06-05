@@ -481,7 +481,7 @@ describe("CadPanel browser behavior", () => {
     queryClient.clear();
   });
 
-  it("answers CAD hierarchy requests while the visible thread has an active CAD review", async () => {
+  it("answers active review CAD hierarchy requests for the visible thread", async () => {
     cadFrameUrl = delayedReadyFrameUrl();
     threadReviews = [activeReview];
     const queryClient = new QueryClient({
@@ -559,13 +559,20 @@ describe("CadPanel browser behavior", () => {
           "type" in request &&
           request.type === "capture",
       );
+      expect(observedFrameRequests).toContainEqual(
+        expect.objectContaining({ type: "set-view", view: "front", fit: true }),
+      );
       expect(uploadedCadScreenshots).toContainEqual({
         requestId: "screenshot-front",
         pngBase64: "cG5n",
       });
       expect(captureRequests).toContainEqual(
-        expect.objectContaining({ type: "capture", view: "front", fit: true }),
+        expect.objectContaining({ type: "capture", fit: true }),
       );
+      expect(captureRequests).not.toContainEqual(expect.objectContaining({ view: "front" }));
+      expect(
+        useUiStateStore.getState().cadAgentViewStateByThreadId[threadId]?.viewCommand,
+      ).toMatchObject({ type: "set-view", view: "front", fit: true });
     });
 
     window.removeEventListener("message", onObservedRequest);
@@ -726,8 +733,8 @@ describe("CadPanel browser behavior", () => {
       );
       expect(releasedButton).toBeTruthy();
       const releasedRect = releasedButton!.getBoundingClientRect();
-      expect(releasedRect.top).toBeLessThanOrEqual(9);
-      expect(releasedRect.right).toBeGreaterThanOrEqual(window.innerWidth - 9);
+      expect(releasedRect.top).toBeGreaterThanOrEqual(47);
+      expect(releasedRect.right).toBeGreaterThanOrEqual(window.innerWidth - 17);
     });
 
     await page.getByRole("button", { name: "Exit fullscreen CAD view" }).click();

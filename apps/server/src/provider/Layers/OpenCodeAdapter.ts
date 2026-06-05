@@ -31,7 +31,10 @@ import { ServerConfig } from "../../config.ts";
 import { MECHBASE_API_KEY_SECRET_NAME } from "../../mechbase/MechbaseApi.ts";
 import { getCachedValidatedMechbaseApiKey } from "../../mechbase/MechbaseConnection.ts";
 import { makeMechbaseOpenCodeMcpServerConfig } from "../../mechbase/MechbaseMcp.ts";
-import { CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
+import {
+  CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
+  CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
+} from "../CodexDeveloperInstructions.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
   ProviderAdapterProcessError,
@@ -119,9 +122,11 @@ function makeMechbaseApiKeySecretPath(secretsDir: string): string {
 }
 
 function openCodeDeveloperInstructionsForMode(
-  _interactionMode: "default" | "plan" | undefined,
+  interactionMode: "default" | "plan" | undefined,
 ): string {
-  return CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
+  return interactionMode === "plan"
+    ? CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS
+    : CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS;
 }
 
 /**

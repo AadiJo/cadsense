@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  type CadReviewReport,
   type OrchestrationEvent,
 } from "@cadsense/contracts";
 import { describe, expect, it } from "vitest";
@@ -84,6 +85,40 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     branch: null,
     worktreePath: null,
     ...overrides,
+  };
+}
+
+function makeCadReview(
+  id: string,
+  status: CadReviewReport["status"],
+  updatedAt: string,
+): CadReviewReport {
+  return {
+    id,
+    threadId: ThreadId.make("thread-1"),
+    title: "CAD Review",
+    status,
+    whatIsBeingReviewed: "Assembly 1",
+    commonThemes: [],
+    positiveSignals: [],
+    reviewerTraits: {
+      systems_integration: "Systems integration",
+      program_readiness: "Program readiness",
+      mechanical_robustness: "Mechanical robustness",
+      synthesis: "Synthesis",
+    },
+    personaReports: [],
+    deepDiveReports: [],
+    mergedActionItems: [],
+    evidenceArtifacts: [],
+    toolCallsByReviewer: {
+      systems_integration: [],
+      program_readiness: [],
+      mechanical_robustness: [],
+      synthesis: [],
+    },
+    createdAt: "2026-02-13T00:00:00.000Z",
+    updatedAt,
   };
 }
 
@@ -167,6 +202,14 @@ function makeState(thread: Thread): AppState {
       [thread.id]: Object.fromEntries(
         thread.proposedPlans.map((plan) => [plan.id, plan] as const),
       ) as EnvironmentState["proposedPlanByThreadId"][ThreadId],
+    },
+    reviewIdsByThreadId: {
+      [thread.id]: thread.reviews?.map((review) => review.id) ?? [],
+    },
+    reviewByThreadId: {
+      [thread.id]: Object.fromEntries(
+        (thread.reviews ?? []).map((review) => [review.id, review] as const),
+      ) as NonNullable<EnvironmentState["reviewByThreadId"]>[ThreadId],
     },
     turnDiffIdsByThreadId: {
       [thread.id]: thread.turnDiffSummaries.map((summary) => summary.turnId),
@@ -446,6 +489,33 @@ describe("setThreadBranch", () => {
 });
 
 describe("incremental orchestration updates", () => {
+  it("keeps a successful CAD review when a late failed upsert arrives for the same run", () => {
+    const completedReview = makeCadReview("review-1", "completed", "2026-02-13T00:01:00.000Z");
+    const thread = makeThread({ reviews: [completedReview] });
+
+    const next = applyOrchestrationEvent(
+      makeState(thread),
+      makeEvent("thread.review-upserted", {
+        threadId: thread.id,
+        review: {
+          ...completedReview,
+          status: "failed",
+          error: "CAD review failed: child session stopped after completion.",
+          updatedAt: "2026-02-13T00:02:00.000Z",
+        },
+      }),
+      localEnvironmentId,
+    );
+
+    const review = threadsOf(next)[0]?.reviews?.[0];
+    expect(review).toMatchObject({
+      id: "review-1",
+      status: "completed",
+      updatedAt: "2026-02-13T00:01:00.000Z",
+    });
+    expect(review).not.toHaveProperty("error");
+  });
+
   it("does not mark bootstrap complete for incremental events", () => {
     const state = withActiveEnvironmentState(localEnvironmentStateOf(makeState(makeThread())), {
       bootstrapComplete: false,

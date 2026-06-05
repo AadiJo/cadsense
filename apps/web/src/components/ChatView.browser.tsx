@@ -2883,6 +2883,102 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("passes the selected model when starting a CAD review on an existing thread", async () => {
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-cad-review-model-selection" as MessageId,
+      targetText: "cad review model selection target",
+    });
+    const onshapeContext = {
+      provider: "onshape" as const,
+      onshape: {
+        connectionId: "onshape_conn",
+        entityId: "onshape_entity",
+        entityKind: "assembly" as const,
+        name: "Drive base",
+        breadcrumb: ["Robot", "Drive base"],
+        reference: {
+          baseUrl: "https://cad.onshape.com",
+          documentId: "doc",
+          wvmKind: "w" as const,
+          wvmId: "workspace",
+          elementId: "element",
+          url: "https://cad.onshape.com/documents/doc/w/workspace/e/element",
+        },
+        lastSyncedRelativePath: "onshape-sync/current.3mf",
+      },
+    };
+    const cadSnapshot: OrchestrationReadModel = {
+      ...snapshot,
+      projects: snapshot.projects.map((project) =>
+        project.id === PROJECT_ID
+          ? Object.assign({}, project, { externalContext: onshapeContext })
+          : project,
+      ),
+      threads: snapshot.threads.map((thread) =>
+        thread.id === THREAD_ID
+          ? Object.assign({}, thread, { title: "New thread", externalContext: onshapeContext })
+          : thread,
+      ),
+    };
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: cadSnapshot,
+      resolveRpc: (body) => {
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return { sequence: fixture.snapshot.snapshotSequence + 1 };
+        }
+        return undefined;
+      },
+    });
+
+    try {
+      const selectedModelSelection = createModelSelection(
+        ProviderInstanceId.make("codex"),
+        "gpt-5.4",
+        [
+          { id: "reasoningEffort", value: "low" },
+          { id: "fastMode", value: true },
+        ],
+      );
+      useComposerDraftStore.getState().setSubmitMode(THREAD_REF, "review");
+      useComposerDraftStore.getState().setModelSelection(THREAD_REF, selectedModelSelection);
+      await waitForLayout();
+
+      const startReviewButton = await waitForElement(
+        () => document.querySelector<HTMLButtonElement>('button[aria-label="Start CAD review"]'),
+        "Unable to find start CAD review composer button.",
+      );
+      startReviewButton.click();
+
+      await vi.waitFor(
+        () => {
+          const reviewRequest = wsRequests.find(
+            (request) =>
+              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
+              request.type === "thread.review.generate",
+          );
+          expect(reviewRequest).toMatchObject({
+            type: "thread.review.generate",
+            threadId: THREAD_ID,
+            modelSelection: {
+              instanceId: selectedModelSelection.instanceId,
+              model: selectedModelSelection.model,
+            },
+          });
+          expect(String((reviewRequest as { reviewPrompt?: unknown })?.reviewPrompt)).toContain(
+            "Review my CAD from all angles",
+          );
+          expect(String((reviewRequest as { reviewPrompt?: unknown })?.reviewPrompt)).not.toContain(
+            "New thread",
+          );
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("treats /prompt as a mode switch without starting a review while in review mode", async () => {
     const snapshot = createSnapshotForTargetUser({
       targetMessageId: "msg-user-cad-review-slash-ask" as MessageId,

@@ -1536,7 +1536,7 @@ describe.sequential("ProviderRuntimeIngestion", () => {
     expect(proposedPlan?.planMarkdown).toBe("## Buffered plan\n\n- first\n- second");
   });
 
-  it("buffers assistant deltas when assistant streaming is disabled", async () => {
+  it("streams assistant deltas even when persisted settings disable assistant streaming", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: false } });
     const now = "2026-01-01T00:00:00.000Z";
 
@@ -1571,11 +1571,11 @@ describe.sequential("ProviderRuntimeIngestion", () => {
     await harness.drain();
     const midReadModel = await harness.readModel();
     const midThread = midReadModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
-    expect(
-      midThread?.messages.some(
-        (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-buffered",
-      ),
-    ).toBe(false);
+    const midMessage = midThread?.messages.find(
+      (message: ProviderRuntimeTestMessage) => message.id === "assistant:item-buffered",
+    );
+    expect(midMessage?.text).toBe("buffer me");
+    expect(midMessage?.streaming).toBe(true);
 
     harness.emit({
       type: "item.completed",
@@ -1731,7 +1731,7 @@ describe.sequential("ProviderRuntimeIngestion", () => {
     expect(message?.streaming).toBe(false);
   });
 
-  it("does not create assistant segments for whitespace-only buffered text at approval boundaries", async () => {
+  it("streams whitespace-only assistant text even when an approval boundary opens", async () => {
     const harness = await createHarness({ serverSettings: { enableAssistantStreaming: false } });
     const startedAt = "2026-03-28T06:28:00.000Z";
     const pausedAt = "2026-03-28T06:28:01.000Z";
@@ -1783,12 +1783,11 @@ describe.sequential("ProviderRuntimeIngestion", () => {
         (activity: ProviderRuntimeTestActivity) => activity.kind === "approval.requested",
       ),
     );
-    expect(
-      thread.messages.some(
-        (message: ProviderRuntimeTestMessage) =>
-          message.id === "assistant:item-buffered-whitespace-request",
-      ),
-    ).toBe(false);
+    const message = thread.messages.find(
+      (entry: ProviderRuntimeTestMessage) =>
+        entry.id === "assistant:item-buffered-whitespace-request",
+    );
+    expect(message?.text).toBe("\n\n\n");
   });
 
   it("starts a new buffered assistant message segment after approval and completes without duplication", async () => {

@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   EventId,
+  MessageId,
   ProjectId,
   ThreadId,
   type OrchestrationThreadActivity,
@@ -10,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import type { EnvironmentState } from "../store";
 import type { Thread, ThreadShell } from "../types";
 import {
+  cadReviewChildThreadIdsForActiveReviews,
   deriveCadReviewChildActivitySummaries,
   deriveCadAgentViewStateForThread,
   isCadRelatedToolActivity,
@@ -48,39 +50,67 @@ function activity(
   };
 }
 
-function makeEnvironmentState(childActivities: OrchestrationThreadActivity[]): EnvironmentState {
+function makeEnvironmentState(
+  childActivities: OrchestrationThreadActivity[],
+  childMessages: Thread["messages"] = [],
+): EnvironmentState {
+  return makeEnvironmentStateForChildThreads([
+    { id: childThreadId, activities: childActivities, messages: childMessages },
+  ]);
+}
+
+function makeEnvironmentStateForChildThreads(
+  children: ReadonlyArray<{
+    readonly id: ThreadId;
+    readonly activities: OrchestrationThreadActivity[];
+    readonly messages?: Thread["messages"];
+  }>,
+): EnvironmentState {
   return {
     projectIds: [],
     projectById: {},
-    threadIds: [childThreadId],
+    threadIds: children.map((child) => child.id),
     threadIdsByProjectId: {},
-    threadShellById: {
-      [childThreadId]: {
-        id: childThreadId,
-        environmentId,
-        codexThreadId: null,
-        projectId,
-        title: "child",
-        modelSelection: { instanceId: "codex", model: "gpt-5" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        error: null,
-        createdAt: "2026-01-01T00:00:00.000Z",
-        archivedAt: null,
-        branch: null,
-        worktreePath: null,
-      } as ThreadShell,
-    },
+    threadShellById: Object.fromEntries(
+      children.map((child) => [
+        child.id,
+        {
+          id: child.id,
+          environmentId,
+          codexThreadId: null,
+          projectId,
+          title: "child",
+          modelSelection: { instanceId: "codex", model: "gpt-5" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          error: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          archivedAt: null,
+          branch: null,
+          worktreePath: null,
+        } as ThreadShell,
+      ]),
+    ),
     threadSessionById: {},
     threadTurnStateById: {},
-    messageIdsByThreadId: {},
-    messageByThreadId: {},
-    activityIdsByThreadId: {
-      [childThreadId]: childActivities.map((entry) => entry.id),
-    },
-    activityByThreadId: {
-      [childThreadId]: Object.fromEntries(childActivities.map((entry) => [entry.id, entry])),
-    },
+    messageIdsByThreadId: Object.fromEntries(
+      children.map((child) => [child.id, (child.messages ?? []).map((message) => message.id)]),
+    ),
+    messageByThreadId: Object.fromEntries(
+      children.map((child) => [
+        child.id,
+        Object.fromEntries((child.messages ?? []).map((message) => [message.id, message])),
+      ]),
+    ),
+    activityIdsByThreadId: Object.fromEntries(
+      children.map((child) => [child.id, child.activities.map((entry) => entry.id)]),
+    ),
+    activityByThreadId: Object.fromEntries(
+      children.map((child) => [
+        child.id,
+        Object.fromEntries(child.activities.map((entry) => [entry.id, entry])),
+      ]),
+    ),
     proposedPlanIdsByThreadId: {},
     proposedPlanByThreadId: {},
     reviewIdsByThreadId: {},
@@ -90,6 +120,48 @@ function makeEnvironmentState(childActivities: OrchestrationThreadActivity[]): E
     sidebarThreadSummaryById: {},
     bootstrapComplete: true,
   } as EnvironmentState;
+}
+
+function childCreatedActivity(
+  id: string,
+  childId: ThreadId,
+  persona: string,
+  phase?: string,
+): OrchestrationThreadActivity {
+  return {
+    id: EventId.make(id),
+    tone: "info",
+    kind: "cad-review.child-thread.created",
+    summary: `${persona} reviewer thread created`,
+    payload: {
+      reviewRunId,
+      persona,
+      ...(phase ? { phase } : {}),
+      childThreadId: childId,
+    },
+    turnId: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+  };
+}
+
+function usageActivity(
+  id: string,
+  createdAt: string,
+  outputTokens: number,
+): OrchestrationThreadActivity {
+  return {
+    id: EventId.make(id),
+    tone: "info",
+    kind: "context-window.updated",
+    summary: "Context window updated",
+    payload: {
+      lastOutputTokens: outputTokens,
+      outputTokens,
+      usedTokens: outputTokens + 100,
+    },
+    turnId: null,
+    createdAt,
+  };
 }
 
 function makeParentThread(): Thread {
@@ -235,6 +307,163 @@ describe("cadAgentViewState", () => {
       latestToolName: "read_file",
       latestScreenshotAt: "2026-01-01T00:00:02.000Z",
       updatedAt: "2026-01-01T00:00:03.000Z",
+    });
+  });
+
+  it("estimates live output tokens from streaming assistant messages", () => {
+    const summaries = deriveCadReviewChildActivitySummaries(
+      makeEnvironmentState(
+        [],
+        [
+          {
+            id: MessageId.make("assistant-streaming"),
+            role: "assistant",
+            text: "Planning review priorities from the CAD context.",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:04.000Z",
+            updatedAt: "2026-01-01T00:00:05.000Z",
+            streaming: true,
+          },
+        ],
+      ),
+      makeParentThread(),
+    );
+
+    expect(summaries[reviewRunId]).toMatchObject({
+      latestActivityId: "assistant-streaming",
+      latestActivityKind: "assistant.message",
+      outputTokens: 12,
+      updatedAt: "2026-01-01T00:00:05.000Z",
+    });
+  });
+
+  it("keeps screenshot progress visible when later assistant output streams", () => {
+    const summaries = deriveCadReviewChildActivitySummaries(
+      makeEnvironmentState(
+        [
+          activity("screenshot", "2026-01-01T00:00:02.000Z", "export_cad_screenshot", {
+            view: "front",
+          }),
+        ],
+        [
+          {
+            id: MessageId.make("assistant-after-screenshot"),
+            role: "assistant",
+            text: "Continuing the review after taking the capture.",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03.000Z",
+            updatedAt: "2026-01-01T00:00:04.000Z",
+            streaming: true,
+          },
+        ],
+      ),
+      makeParentThread(),
+    );
+
+    expect(summaries[reviewRunId]).toMatchObject({
+      latestActivityId: "assistant-after-screenshot",
+      latestActivityKind: "assistant.message",
+      latestScreenshotAt: "2026-01-01T00:00:02.000Z",
+      updatedAt: "2026-01-01T00:00:04.000Z",
+    });
+  });
+
+  it("collects active CAD review child thread ids for detail subscriptions", () => {
+    expect(cadReviewChildThreadIdsForActiveReviews(makeParentThread())).toEqual([childThreadId]);
+    expect(
+      cadReviewChildThreadIdsForActiveReviews({
+        ...makeParentThread(),
+        reviews: [
+          {
+            ...makeParentThread().reviews![0]!,
+            status: "completed",
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("prefers usage output tokens over assistant text estimates", () => {
+    const summaries = deriveCadReviewChildActivitySummaries(
+      makeEnvironmentState(
+        [
+          {
+            id: EventId.make("usage"),
+            tone: "info",
+            kind: "context-window.updated",
+            summary: "Context window updated",
+            payload: {
+              lastOutputTokens: 32,
+              outputTokens: 32,
+              usedTokens: 100,
+            },
+            turnId: null,
+            createdAt: "2026-01-01T00:00:03.000Z",
+          },
+        ],
+        [
+          {
+            id: MessageId.make("assistant-streaming-short"),
+            role: "assistant",
+            text: "Short.",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:02.000Z",
+            streaming: true,
+          },
+        ],
+      ),
+      makeParentThread(),
+    );
+
+    expect(summaries[reviewRunId]?.outputTokens).toBe(32);
+  });
+
+  it("keeps live output tokens bucketed by CAD review step across child phases", () => {
+    const planningChildId = ThreadId.make(
+      `${parentThreadId}:cad-review:${reviewRunId}:synthesis:planning-child`,
+    );
+    const systemsChildId = ThreadId.make(
+      `${parentThreadId}:cad-review:${reviewRunId}:systems_integration:systems-child`,
+    );
+    const synthesisChildId = ThreadId.make(
+      `${parentThreadId}:cad-review:${reviewRunId}:synthesis:synthesis-child`,
+    );
+    const parent = {
+      ...makeParentThread(),
+      activities: [
+        childCreatedActivity("planning-child-created", planningChildId, "synthesis", "planning"),
+        childCreatedActivity(
+          "systems-child-created",
+          systemsChildId,
+          "systems_integration",
+          "reviewing",
+        ),
+        childCreatedActivity("synthesis-child-created", synthesisChildId, "synthesis", "synthesis"),
+      ],
+    } as Thread;
+
+    const summaries = deriveCadReviewChildActivitySummaries(
+      makeEnvironmentStateForChildThreads([
+        {
+          id: planningChildId,
+          activities: [usageActivity("planning-usage", "2026-01-01T00:00:01.000Z", 12_000)],
+        },
+        {
+          id: systemsChildId,
+          activities: [usageActivity("systems-usage", "2026-01-01T00:00:02.000Z", 800)],
+        },
+        {
+          id: synthesisChildId,
+          activities: [usageActivity("synthesis-usage", "2026-01-01T00:00:03.000Z", 54)],
+        },
+      ]),
+      parent,
+    );
+
+    expect(summaries[reviewRunId]?.outputTokensByStep).toEqual({
+      planning: 12_000,
+      systems_integration: 800,
+      synthesizing: 54,
     });
   });
 

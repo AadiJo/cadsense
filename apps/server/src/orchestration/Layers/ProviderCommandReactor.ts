@@ -626,7 +626,7 @@ const make = Effect.gen(function* () {
       ...(normalizedInput ? { input: normalizedInput } : {}),
       ...(normalizedAttachments.length > 0 ? { attachments: normalizedAttachments } : {}),
       ...(modelForTurn !== undefined ? { modelSelection: modelForTurn } : {}),
-      ...(input.interactionMode !== undefined ? { interactionMode: "default" as const } : {}),
+      ...(input.interactionMode !== undefined ? { interactionMode: input.interactionMode } : {}),
     };
   });
 

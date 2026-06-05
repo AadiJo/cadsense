@@ -409,10 +409,20 @@ it.effect("decodes CAD review commands and events with review prompts", () =>
       threadId: "thread-1",
       reviewRunId: "review-1",
       reviewPrompt: "Review the flywheel mounting.",
+      modelSelection: {
+        instanceId: "codex",
+        model: "gpt-5.4",
+        options: [
+          { id: "reasoningEffort", value: "low" },
+          { id: "fastMode", value: true },
+        ],
+      },
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(command.type, "thread.review.generate");
     assert.strictEqual(command.reviewPrompt, "Review the flywheel mounting.");
+    assert.strictEqual(command.modelSelection?.instanceId, "codex");
+    assert.strictEqual(command.modelSelection?.model, "gpt-5.4");
 
     const event = yield* decodeOrchestrationEvent({
       sequence: 1,
@@ -429,11 +439,21 @@ it.effect("decodes CAD review commands and events with review prompts", () =>
         threadId: "thread-1",
         reviewRunId: "review-1",
         reviewPrompt: "Review the flywheel mounting.",
+        modelSelection: {
+          instanceId: "codex",
+          model: "gpt-5.4",
+          options: [
+            { id: "reasoningEffort", value: "low" },
+            { id: "fastMode", value: true },
+          ],
+        },
         createdAt: "2026-01-01T00:00:00.000Z",
       },
     });
     assert.strictEqual(event.type, "thread.review-requested");
     assert.strictEqual(event.payload.reviewPrompt, "Review the flywheel mounting.");
+    assert.strictEqual(event.payload.modelSelection?.instanceId, "codex");
+    assert.strictEqual(event.payload.modelSelection?.model, "gpt-5.4");
   }),
 );
 

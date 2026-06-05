@@ -17,6 +17,7 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -27,7 +28,7 @@ import {
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
-import { toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { isTransientSqliteLockError, toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
@@ -196,6 +197,11 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             }),
           )
           .pipe(
+            Effect.retry({
+              schedule: Schedule.spaced(Duration.millis(50)),
+              times: 5,
+              while: isTransientSqliteLockError,
+            }),
             Effect.catchTag("SqlError", (sqlError) =>
               Effect.fail(
                 toPersistenceSqlError("OrchestrationEngine.processEnvelope:transaction")(sqlError),

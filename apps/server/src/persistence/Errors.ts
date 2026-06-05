@@ -42,6 +42,30 @@ export function toPersistenceSqlError(operation: string) {
     });
 }
 
+export function isTransientSqliteLockError(cause: unknown): boolean {
+  const seen = new Set<unknown>();
+  const visit = (value: unknown): boolean => {
+    if (value === null || value === undefined || seen.has(value)) {
+      return false;
+    }
+    seen.add(value);
+    if (typeof value === "string") {
+      return /\bdatabase is locked\b/i.test(value);
+    }
+    if (value instanceof Error && visit(value.message)) {
+      return true;
+    }
+    if (typeof value !== "object") {
+      return false;
+    }
+    const record = value as Record<string, unknown>;
+    return (
+      visit(record.cause) || visit(record.reason) || visit(record.message) || visit(record.detail)
+    );
+  };
+  return visit(cause);
+}
+
 export function toPersistenceDecodeError(operation: string) {
   return (error: Schema.SchemaError): PersistenceDecodeError =>
     new PersistenceDecodeError({

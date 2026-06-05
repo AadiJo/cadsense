@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import {
   CAD_VIEWER_MODEL_SIZE_LIMIT_BYTES,
+  applyCadComponentVisibility,
+  cadOnshapeModelQueryIdentity,
   cadViewerFileName,
   formatCadModelBytes,
   getCadModelViewerBlocker,
+  shouldHandleCadAgentRequestForPanel,
 } from "./CadPanel.logic";
 
 describe("CadPanel logic", () => {
@@ -43,5 +46,145 @@ describe("CadPanel logic", () => {
   it("preserves the CAD file extension for the frame file payload", () => {
     expect(cadViewerFileName("onshape-sync/current.3mf")).toBe("current.3mf");
     expect(cadViewerFileName("onshape-sync\\bundle\\assembly.obj")).toBe("assembly.obj");
+  });
+
+  it("keys synced CAD queries by Onshape document identity", () => {
+    const baseContext = {
+      connectionId: "team-onshape",
+      entityId: "assembly-a",
+      entityKind: "assembly",
+      reference: {
+        baseUrl: "https://cad.onshape.com",
+        documentId: "document-a",
+        workspaceId: "workspace-a",
+        elementId: "element-a",
+      },
+      lastSyncedRelativePath: "onshape-sync/current.3mf",
+      lastSyncedAt: "2026-06-04T00:00:00.000Z",
+    };
+
+    expect(cadOnshapeModelQueryIdentity(baseContext)).not.toEqual(
+      cadOnshapeModelQueryIdentity({
+        ...baseContext,
+        entityId: "assembly-b",
+        reference: {
+          ...baseContext.reference,
+          documentId: "document-b",
+          elementId: "element-b",
+        },
+      }),
+    );
+  });
+
+  it("routes CAD agent requests exactly for active review panels", () => {
+    expect(
+      shouldHandleCadAgentRequestForPanel({
+        requestThreadId: "thread-active",
+        cadRoutingThreadId: "thread-active",
+        sameProjectThreadIds: ["thread-active", "thread-other"],
+        activeCadReviewThreadIds: ["thread-active", "thread-other"],
+        agentControlHost: false,
+        cadReviewInProgress: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldHandleCadAgentRequestForPanel({
+        requestThreadId: "thread-active",
+        cadRoutingThreadId: "thread-active",
+        sameProjectThreadIds: ["thread-active", "thread-other"],
+        activeCadReviewThreadIds: ["thread-active", "thread-other"],
+        agentControlHost: true,
+        cadReviewInProgress: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldHandleCadAgentRequestForPanel({
+        requestThreadId: "thread-other",
+        cadRoutingThreadId: "thread-active",
+        sameProjectThreadIds: ["thread-active", "thread-other"],
+        activeCadReviewThreadIds: ["thread-active", "thread-other"],
+        agentControlHost: true,
+        cadReviewInProgress: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("routes active review child-thread CAD requests to the visible review panel", () => {
+    expect(
+      shouldHandleCadAgentRequestForPanel({
+        requestThreadId: "thread-active:cad-review:run-1:systems_integration:child",
+        cadRoutingThreadId: "thread-active",
+        sameProjectThreadIds: ["thread-active"],
+        activeCadReviewThreadIds: ["thread-active"],
+        activeCadReviewChildThreadIds: ["thread-active:cad-review:run-1:systems_integration:child"],
+        agentControlHost: false,
+        cadReviewInProgress: true,
+      }),
+    ).toBe(true);
+  });
+
+  it("does not let inactive same-project panels answer active review requests", () => {
+    expect(
+      shouldHandleCadAgentRequestForPanel({
+        requestThreadId: "thread-active-review",
+        cadRoutingThreadId: "thread-inactive",
+        sameProjectThreadIds: ["thread-inactive", "thread-active-review"],
+        activeCadReviewThreadIds: ["thread-active-review"],
+        agentControlHost: false,
+        cadReviewInProgress: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("keeps same-project fallback for non-review CAD requests", () => {
+    expect(
+      shouldHandleCadAgentRequestForPanel({
+        requestThreadId: "thread-same-project",
+        cadRoutingThreadId: "thread-visible",
+        sameProjectThreadIds: ["thread-visible", "thread-same-project"],
+        activeCadReviewThreadIds: [],
+        agentControlHost: false,
+        cadReviewInProgress: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("applies saved CAD hierarchy visibility by component id", () => {
+    expect(
+      applyCadComponentVisibility(
+        [
+          {
+            id: "drive",
+            name: "Drive",
+            kind: "assembly",
+            hasChildren: true,
+            visible: true,
+          },
+          {
+            id: "intake",
+            name: "Intake",
+            kind: "part",
+            hasChildren: false,
+            visible: false,
+          },
+        ],
+        { drive: false, unknown: false },
+      ),
+    ).toEqual([
+      {
+        id: "drive",
+        name: "Drive",
+        kind: "assembly",
+        hasChildren: true,
+        visible: false,
+      },
+      {
+        id: "intake",
+        name: "Intake",
+        kind: "part",
+        hasChildren: false,
+        visible: false,
+      },
+    ]);
   });
 });

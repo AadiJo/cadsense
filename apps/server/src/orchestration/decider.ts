@@ -734,6 +734,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           reviewRunId: command.reviewRunId,
           ...(command.reviewPrompt ? { reviewPrompt: command.reviewPrompt } : {}),
+          ...(command.modelSelection !== undefined
+            ? { modelSelection: command.modelSelection }
+            : {}),
           createdAt: command.createdAt,
         },
       };

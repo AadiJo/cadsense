@@ -2583,9 +2583,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return;
           }
           const nextInteractionMode =
-            interactionMode === "plan" || interactionMode === "default"
-              ? DEFAULT_INTERACTION_MODE
-              : null;
+            interactionMode === "plan" || interactionMode === "default" ? interactionMode : null;
           set((state) => {
             const existing = state.draftsByThreadKey[threadKey];
             if (!existing && nextInteractionMode === null) {

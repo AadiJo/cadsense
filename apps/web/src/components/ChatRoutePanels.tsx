@@ -34,6 +34,7 @@ import { threadHasProviderWorkStarted, threadHasStarted } from "../threadLifecyc
 import { buildThreadRouteParams } from "../threadRoutes";
 import { isProjectlessChatProject } from "../projectlessChat";
 import { readEnvironmentApi } from "../environmentApi";
+import { hasRunningCadReview } from "../lib/cadReviewStatus";
 
 const THREAD_ROUTE_ID = "/_chat/$environmentId/$threadId" as const;
 const DRAFT_ROUTE_ID = "/_chat/draft/$draftId" as const;
@@ -123,6 +124,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   });
   const routeThreadExists = threadExists || draftThreadExists;
   const serverThreadStarted = threadHasStarted(serverThread);
+  const visibleThreadHasRunningCadReview = hasRunningCadReview(serverThread?.reviews);
 
   const draftSession = useComposerDraftStore((store) =>
     draftId ? store.getDraftSession(draftId) : null,
@@ -228,6 +230,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
 
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const renderCadPanel = rightPanelsEnabled;
+  const shouldRenderCadPanel = cadPanelOpen || visibleThreadHasRunningCadReview;
 
   useEffect(() => {
     if (isProjectlessRoute && cadPanelOpen) {
@@ -281,7 +284,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
           open={cadPanelOpen}
           onClose={closeCadPanel}
           onOpen={openCadPanel}
-          shouldRender={cadPanelOpen || renderCadPanel}
+          shouldRender={shouldRenderCadPanel}
         />
       </ChatRoutePanelsContext.Provider>
     );
@@ -293,7 +296,7 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
       <ChatCadSheetPanel
         open={cadPanelOpen}
         onClose={closeCadPanel}
-        shouldRender={cadPanelOpen || renderCadPanel}
+        shouldRender={shouldRenderCadPanel}
       />
     </ChatRoutePanelsContext.Provider>
   );

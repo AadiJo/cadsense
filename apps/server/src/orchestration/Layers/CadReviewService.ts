@@ -21,6 +21,7 @@ import {
   type OrchestrationThreadActivity,
 } from "@cadsense/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
@@ -38,6 +39,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import { CadReviewService, type CadReviewServiceShape } from "../Services/CadReviewService.ts";
+import type { OrchestrationDispatchError } from "../Errors.ts";
 import {
   PERSONAS,
   REVIEWER_TRAIT_SUMMARIES,
@@ -49,7 +51,20 @@ import {
 } from "./CadReviewPrompts.ts";
 
 const CAD_REVIEW_CHILD_LINK_KIND = "cad-review.child-thread.linked";
+const CAD_REVIEW_CHILD_BOOKKEEPING_ACTIVITY_KINDS = new Set([
+  CAD_REVIEW_CHILD_LINK_KIND,
+  "cad-review.child-thread.created",
+]);
 const REVIEWER_TURN_TIMEOUT = Duration.minutes(20);
+const CHILD_TURN_STARTUP_NO_PROGRESS_TIMEOUT = Duration.minutes(5);
+const CHILD_TURN_STARTUP_NO_PROGRESS_TIMEOUT_MS = Duration.toMillis(
+  CHILD_TURN_STARTUP_NO_PROGRESS_TIMEOUT,
+);
+const CHILD_TURN_STALLED_PROGRESS_TIMEOUT = Duration.minutes(3);
+const CHILD_TURN_STALLED_PROGRESS_TIMEOUT_MS = Duration.toMillis(
+  CHILD_TURN_STALLED_PROGRESS_TIMEOUT,
+);
+const CHILD_TURN_BLOCKING_RETRY_THRESHOLD_MS = Duration.toMillis(Duration.minutes(1));
 const ACTIVE_CHILD_RECOVERY_GRACE_MS = Duration.toMillis(REVIEWER_TURN_TIMEOUT);
 const CAD_REVIEW_REVIEWER_CONCURRENCY = 3;
 // Keep baseline capture fast: reviewers can request extra angles, but the automatic pass should
@@ -84,7 +99,14 @@ class CadReviewRunError extends Data.TaggedError("CadReviewRunError")<{
 
 type ChildRunResult =
   | { readonly ok: true; readonly childThread: OrchestrationThread }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly childThread?: OrchestrationThread };
+
+type ChildTurnCompletion = {
+  readonly label: string;
+  readonly isComplete: (childThread: OrchestrationThread) => boolean;
+};
+
+type CadReviewChildPhase = "planning" | "reviewing" | "deep-dive" | "synthesis";
 
 interface BaselineCaptureRecord {
   readonly result: CadScreenshotCaptureHttpResult;
@@ -92,6 +114,23 @@ interface BaselineCaptureRecord {
   readonly createdAt: string;
   readonly activity: OrchestrationThreadActivity;
 }
+
+type BaselineCaptureOperationResult = {
+  readonly artifacts: CadReviewEvidenceArtifact[];
+  readonly toolCalls: CadReviewToolCall[];
+};
+
+type BaselineCaptureResult =
+  | ({
+      readonly ok: true;
+      readonly skipped: false;
+    } & BaselineCaptureOperationResult)
+  | ({
+      readonly ok: true;
+      readonly skipped: true;
+      readonly skipReason: string;
+    } & BaselineCaptureOperationResult)
+  | { readonly ok: false; readonly error: string };
 
 function isCadReviewActive(status: CadReviewStatus): boolean {
   return CAD_REVIEW_ACTIVE_STATUSES.has(status);
@@ -124,6 +163,23 @@ function trimText(value: unknown): string | undefined {
 
 function truncate(value: string, limit = 420): string {
   return value.length > limit ? `${value.slice(0, limit - 3)}...` : value;
+}
+
+export function userVisibleErrorMessage(error: string): string {
+  const trimmed = error.trim();
+  const firstLine = trimmed.split(/\r?\n/, 1)[0]?.trim();
+  return (firstLine && firstLine.length > 0 ? firstLine : trimmed).replace(
+    /^CadReviewRunError:\s*/,
+    "",
+  );
+}
+
+function userVisibleCauseMessage(cause: Cause.Cause<unknown>): string {
+  return userVisibleErrorMessage(Cause.pretty(cause));
+}
+
+export function isUnsupportedCodexCadScreenshotExportRootError(error: string): boolean {
+  return error.toLowerCase().includes("does not expose a codex cad screenshot export root");
 }
 
 function assistantText(messages: ReadonlyArray<OrchestrationMessage>): string {
@@ -181,6 +237,58 @@ function findBalancedJsonObjectEnd(text: string, startIndex: number): number | u
   return undefined;
 }
 
+function repairIncompleteJsonObjectCandidate(candidate: string): string | undefined {
+  const stack: Array<"}" | "]"> = [];
+  let inString = false;
+  let escaped = false;
+  for (const char of candidate) {
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+    if (char === "{") {
+      stack.push("}");
+      continue;
+    }
+    if (char === "[") {
+      stack.push("]");
+      continue;
+    }
+    if (char !== "}" && char !== "]") {
+      continue;
+    }
+    const expected = stack.at(-1);
+    if (expected !== char) {
+      return undefined;
+    }
+    stack.pop();
+  }
+
+  if (stack.length === 0 && !inString) {
+    return undefined;
+  }
+
+  let repaired = candidate.trimEnd();
+  if (inString) {
+    if (escaped) {
+      repaired = repaired.slice(0, -1);
+    }
+    repaired += '"';
+  }
+  repaired = repaired.replace(/,\s*$/, "");
+  return `${repaired}${stack.toReversed().join("")}`;
+}
+
 export function extractJsonObject(text: string): Record<string, unknown> | undefined {
   const parsedCandidates: Array<Record<string, unknown>> = [];
   for (const match of text.matchAll(/```(?:json)?[^\S\r\n]*\r?\n([\s\S]*?)```/gi)) {
@@ -207,6 +315,14 @@ export function extractJsonObject(text: string): Record<string, unknown> | undef
       continue;
     }
     index = text.indexOf("{", index + 1);
+  }
+  const firstObjectStart = text.indexOf("{");
+  if (firstObjectStart !== -1) {
+    const repaired = repairIncompleteJsonObjectCandidate(text.slice(firstObjectStart));
+    const parsed = repaired ? parseJsonObjectCandidate(repaired) : undefined;
+    if (parsed) {
+      parsedCandidates.push(parsed);
+    }
   }
   return parsedCandidates.at(-1);
 }
@@ -398,6 +514,288 @@ function payloadRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+export function firstPendingInteractiveChildPrompt(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+):
+  | {
+      readonly kind: "approval" | "user-input";
+      readonly requestId: string;
+      readonly detail: string | undefined;
+    }
+  | undefined {
+  const openByRequestId = new Map<
+    string,
+    {
+      readonly kind: "approval" | "user-input";
+      readonly requestId: string;
+      readonly detail: string | undefined;
+    }
+  >();
+  const orderedActivities = [...activities].toSorted((left, right) => {
+    const leftSequence = left.sequence ?? Number.MAX_SAFE_INTEGER;
+    const rightSequence = right.sequence ?? Number.MAX_SAFE_INTEGER;
+    if (leftSequence !== rightSequence) {
+      return leftSequence - rightSequence;
+    }
+    return left.createdAt.localeCompare(right.createdAt);
+  });
+
+  for (const activity of orderedActivities) {
+    const payload = payloadRecord(activity.payload);
+    const requestId = typeof payload?.requestId === "string" ? payload.requestId : undefined;
+    if (!requestId) {
+      continue;
+    }
+    const detail = trimText(payload?.detail);
+
+    if (activity.kind === "approval.requested") {
+      openByRequestId.set(requestId, { kind: "approval", requestId, detail });
+      continue;
+    }
+    if (activity.kind === "user-input.requested") {
+      openByRequestId.set(requestId, { kind: "user-input", requestId, detail });
+      continue;
+    }
+    if (
+      activity.kind === "approval.resolved" ||
+      activity.kind === "user-input.resolved" ||
+      activity.kind === "provider.approval.respond.failed" ||
+      activity.kind === "provider.user-input.respond.failed"
+    ) {
+      openByRequestId.delete(requestId);
+    }
+  }
+
+  return openByRequestId.values().next().value;
+}
+
+function dateMs(value: string | null | undefined): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function maxDateMs(values: ReadonlyArray<string | null | undefined>): number | undefined {
+  const parsedValues = values
+    .map((value) => dateMs(value))
+    .filter((value): value is number => value !== undefined);
+  return parsedValues.length > 0 ? Math.max(...parsedValues) : undefined;
+}
+
+function childThreadHasReviewerProgress(childThread: OrchestrationThread): boolean {
+  return (
+    (childThread.messages ?? []).some(
+      (message) =>
+        message.role === "assistant" || (message.role !== "user" && message.text.trim().length > 0),
+    ) ||
+    (childThread.activities ?? []).some(
+      (activity) => !CAD_REVIEW_CHILD_BOOKKEEPING_ACTIVITY_KINDS.has(activity.kind),
+    )
+  );
+}
+
+export function childThreadHasCompletedAssistantMessage(childThread: OrchestrationThread): boolean {
+  return (childThread.messages ?? []).some(
+    (message) =>
+      message.role === "assistant" && !message.streaming && message.text.trim().length > 0,
+  );
+}
+
+function childThreadHasAssistantOutput(childThread: OrchestrationThread): boolean {
+  return (childThread.messages ?? []).some(
+    (message) => message.role === "assistant" && message.text.trim().length > 0,
+  );
+}
+
+export function childThreadHasAfterAgentHookFailure(childThread: OrchestrationThread): boolean {
+  return (childThread.activities ?? []).some((activity) => {
+    if (activity.kind !== "runtime.warning") {
+      return false;
+    }
+    const payload = payloadRecord(activity.payload);
+    const message =
+      typeof payload?.message === "string"
+        ? payload.message
+        : payload
+          ? JSON.stringify(payload)
+          : "";
+    return message.includes("after_agent hook failed; continuing");
+  });
+}
+
+function expectedStructuredKey(parsed: Record<string, unknown>, keys: ReadonlyArray<string>) {
+  return keys.some((key) => Object.hasOwn(parsed, key));
+}
+
+export function mechanismPlanOutputIsReady(text: string): boolean {
+  const parsed = extractJsonObject(text);
+  if (!parsed) {
+    return false;
+  }
+  return (
+    (trimText(parsed.summary) !== undefined || trimText(parsed.reviewScope) !== undefined) &&
+    expectedStructuredKey(parsed, [
+      "baselineRequired",
+      "baselineReason",
+      "mechanisms",
+      "reviewPriorities",
+      "reviewerSelection",
+    ])
+  );
+}
+
+export function personaReviewOutputIsReady(text: string): boolean {
+  const parsed = extractJsonObject(text);
+  if (!parsed) {
+    return false;
+  }
+  return (
+    trimText(parsed.summary) !== undefined &&
+    expectedStructuredKey(parsed, [
+      "positiveSignals",
+      "topConcerns",
+      "findings",
+      "concerns",
+      "repeatedPatterns",
+      "likelyFailureModes",
+      "recommendedChanges",
+      "missingEvidence",
+    ])
+  );
+}
+
+export function deepDiveOutputIsReady(text: string): boolean {
+  const parsed = extractJsonObject(text);
+  if (!parsed) {
+    return false;
+  }
+  return (
+    (trimText(parsed.summary) !== undefined || trimText(parsed.focus) !== undefined) &&
+    expectedStructuredKey(parsed, [
+      "sourceFindingIds",
+      "observations",
+      "specificChecks",
+      "recommendedChanges",
+      "missingEvidence",
+    ])
+  );
+}
+
+export function synthesisOutputIsReady(text: string): boolean {
+  const parsed = extractJsonObject(text);
+  if (!parsed) {
+    return false;
+  }
+  return expectedStructuredKey(parsed, [
+    "commonThemes",
+    "positiveSignals",
+    "blockingIssues",
+    "actionItems",
+    "suggestedBuildOrder",
+    "unresolvedQuestions",
+  ]);
+}
+
+function assistantOutputIsReady(
+  childThread: OrchestrationThread,
+  isReady: (text: string) => boolean,
+): boolean {
+  return (childThread.messages ?? []).some(
+    (message) => message.role === "assistant" && !message.streaming && isReady(message.text),
+  );
+}
+
+function providerRetryWarningMessage(activity: OrchestrationThreadActivity): string | undefined {
+  if (activity.kind !== "runtime.warning") {
+    return undefined;
+  }
+  const payload = payloadRecord(activity.payload);
+  const message =
+    typeof payload?.message === "string" ? payload.message : payload ? JSON.stringify(payload) : "";
+  return /\b(too many requests|quota exceeded|rate limit)\b/i.test(message) ? message : undefined;
+}
+
+export function blockingProviderRetryWarning(input: {
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly nowMs: number;
+}): string | undefined {
+  for (const activity of input.activities) {
+    const message = providerRetryWarningMessage(activity);
+    if (!message) {
+      continue;
+    }
+    const payload = payloadRecord(activity.payload);
+    const detail = payloadRecord(payload?.detail);
+    const next = typeof detail?.next === "number" ? detail.next : undefined;
+    if (next === undefined || next - input.nowMs >= CHILD_TURN_BLOCKING_RETRY_THRESHOLD_MS) {
+      return message;
+    }
+  }
+  return undefined;
+}
+
+function childThreadVisibleProgressUpdatedAtMs(
+  childThread: OrchestrationThread,
+): number | undefined {
+  return maxDateMs([
+    ...(childThread.messages ?? []).flatMap((message) =>
+      message.role === "assistant" || (message.role !== "user" && message.text.trim().length > 0)
+        ? [message.updatedAt, message.createdAt]
+        : [],
+    ),
+    ...(childThread.activities ?? []).flatMap((activity) =>
+      CAD_REVIEW_CHILD_BOOKKEEPING_ACTIVITY_KINDS.has(activity.kind) ? [] : [activity.createdAt],
+    ),
+  ]);
+}
+
+function childThreadStartupStartedAtMs(childThread: OrchestrationThread): number | undefined {
+  return maxDateMs([
+    childThread.latestTurn?.startedAt,
+    childThread.latestTurn?.requestedAt,
+    childThread.session?.updatedAt,
+    childThread.updatedAt,
+    childThread.createdAt,
+  ]);
+}
+
+function childThreadStartupNoProgressTimedOut(input: {
+  readonly childThread: OrchestrationThread;
+  readonly nowMs: number;
+}): boolean {
+  if (childThreadHasReviewerProgress(input.childThread)) {
+    return false;
+  }
+  const startedAtMs = childThreadStartupStartedAtMs(input.childThread);
+  return (
+    startedAtMs !== undefined &&
+    input.nowMs - startedAtMs >= CHILD_TURN_STARTUP_NO_PROGRESS_TIMEOUT_MS
+  );
+}
+
+function childThreadProgressStalledTimedOut(input: {
+  readonly childThread: OrchestrationThread;
+  readonly nowMs: number;
+}): boolean {
+  const progressUpdatedAtMs = childThreadVisibleProgressUpdatedAtMs(input.childThread);
+  return (
+    progressUpdatedAtMs !== undefined &&
+    input.nowMs - progressUpdatedAtMs >= CHILD_TURN_STALLED_PROGRESS_TIMEOUT_MS
+  );
+}
+
+export function reviewerConcurrencyForThread(
+  _thread: OrchestrationThread,
+  reviewerCount: number,
+): number {
+  if (reviewerCount <= 0) {
+    return 0;
+  }
+  return Math.min(CAD_REVIEW_REVIEWER_CONCURRENCY, reviewerCount);
+}
+
 function reviewChildThreadIdsFromActivities(
   thread: OrchestrationThread,
   reviewRunId: string,
@@ -430,22 +828,46 @@ function isFreshLiveChildSession(input: {
   readonly childThread: OrchestrationThread | undefined;
   readonly nowMs: number;
 }): boolean {
-  const session = input.childThread?.session;
-  if (!session || session.status === "stopped" || session.status === "error") {
+  const childThread = input.childThread;
+  const session = childThread?.session;
+  if (!childThread || !session || session.status === "stopped" || session.status === "error") {
     return false;
   }
-  const updatedAtMs = Math.max(
-    Date.parse(session.updatedAt),
-    Date.parse(input.childThread.updatedAt),
-  );
-  return (
-    Number.isFinite(updatedAtMs) && input.nowMs - updatedAtMs <= ACTIVE_CHILD_RECOVERY_GRACE_MS
-  );
+  if (
+    childThreadStartupNoProgressTimedOut({
+      childThread,
+      nowMs: input.nowMs,
+    })
+  ) {
+    return false;
+  }
+  if (
+    childThreadProgressStalledTimedOut({
+      childThread,
+      nowMs: input.nowMs,
+    })
+  ) {
+    return false;
+  }
+  if (
+    blockingProviderRetryWarning({
+      activities: childThread.activities,
+      nowMs: input.nowMs,
+    })
+  ) {
+    return false;
+  }
+  const updatedAtMs = maxDateMs([session.updatedAt, childThread.updatedAt]);
+  return updatedAtMs !== undefined && input.nowMs - updatedAtMs <= ACTIVE_CHILD_RECOVERY_GRACE_MS;
 }
 
-function isFreshActiveReview(review: CadReviewReport, nowMs: number): boolean {
-  const updatedAtMs = Math.max(Date.parse(review.updatedAt), Date.parse(review.createdAt));
-  return Number.isFinite(updatedAtMs) && nowMs - updatedAtMs <= ACTIVE_CHILD_RECOVERY_GRACE_MS;
+function isFreshActiveReview(
+  review: CadReviewReport,
+  nowMs: number,
+  maxAgeMs = ACTIVE_CHILD_RECOVERY_GRACE_MS,
+): boolean {
+  const updatedAtMs = maxDateMs([review.updatedAt, review.createdAt]);
+  return updatedAtMs !== undefined && nowMs - updatedAtMs <= maxAgeMs;
 }
 
 function hasFreshLiveChildSessionForReview(input: {
@@ -569,6 +991,75 @@ function dedupeToolCalls(toolCalls: ReadonlyArray<CadReviewToolCall>): CadReview
     }
   }
   return [...byKey.values()];
+}
+
+function activityPayloadRecord(
+  activity: OrchestrationThreadActivity,
+): Record<string, unknown> | undefined {
+  return activity.payload &&
+    typeof activity.payload === "object" &&
+    !Array.isArray(activity.payload)
+    ? (activity.payload as Record<string, unknown>)
+    : undefined;
+}
+
+function finiteNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function outputTokensFromActivities(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): number | null {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index];
+    if (!activity || activity.kind !== "context-window.updated") {
+      continue;
+    }
+    const payload = activityPayloadRecord(activity);
+    const tokens = finiteNumber(payload?.lastOutputTokens) ?? finiteNumber(payload?.outputTokens);
+    if (tokens !== null) {
+      return Math.round(tokens);
+    }
+  }
+  return null;
+}
+
+function estimateOutputTokensFromText(text: string): number | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+  return Math.max(1, Math.ceil(trimmed.length / 4));
+}
+
+export function outputTokensFromChildThread(childThread: OrchestrationThread): number | null {
+  const activityTokens = outputTokensFromActivities(childThread.activities);
+  const estimatedTokens = estimateOutputTokensFromText(assistantText(childThread.messages));
+  if (activityTokens === null) {
+    return estimatedTokens;
+  }
+  if (estimatedTokens === null) {
+    return activityTokens;
+  }
+  return Math.max(activityTokens, estimatedTokens);
+}
+
+function withChildOutputTokens(
+  review: CadReviewReport,
+  step: keyof NonNullable<CadReviewReport["outputTokensByStep"]>,
+  childThread: OrchestrationThread,
+): Pick<CadReviewReport, "outputTokensByStep"> {
+  const outputTokens = outputTokensFromChildThread(childThread);
+  if (outputTokens === null || outputTokens <= 0) {
+    return { outputTokensByStep: review.outputTokensByStep ?? {} };
+  }
+  const previousOutputTokens = review.outputTokensByStep ?? {};
+  return {
+    outputTokensByStep: {
+      ...previousOutputTokens,
+      [step]: outputTokens,
+    },
+  };
 }
 
 function toolCallsFromActivities(input: {
@@ -723,6 +1214,26 @@ function artifactIdsFromEvidenceText(input: {
   return matched.size > 0 ? [...matched] : [...input.fallback];
 }
 
+function representativeArtifactIds(
+  artifacts: ReadonlyArray<CadReviewEvidenceArtifact>,
+  maxCount = 3,
+): string[] {
+  const selected: string[] = [];
+  const seenViewNames = new Set<string>();
+  for (const artifact of artifacts) {
+    const viewName = artifact.viewName.toLowerCase();
+    if (seenViewNames.has(viewName) && selected.length < maxCount) {
+      continue;
+    }
+    selected.push(artifact.id);
+    seenViewNames.add(viewName);
+    if (selected.length >= maxCount) {
+      return selected;
+    }
+  }
+  return selected;
+}
+
 function buildPersonaReport(input: {
   readonly reviewRunId: string;
   readonly persona: Exclude<CadReviewPersona, "synthesis">;
@@ -732,7 +1243,10 @@ function buildPersonaReport(input: {
   readonly createdAt: string;
 }): CadReviewPersonaReport {
   const parsed = extractJsonObject(input.text);
-  const evidenceArtifactIds = evidenceIdsForPersona(input.artifacts, input.persona);
+  const personaEvidenceArtifactIds = evidenceIdsForPersona(input.artifacts, input.persona);
+  const fallbackEvidenceArtifactIds = representativeArtifactIds(
+    input.artifacts.filter((artifact) => artifact.persona === input.persona),
+  );
   const topConcernsRaw = objectArray(parsed?.topConcerns ?? parsed?.findings ?? parsed?.concerns);
   const topConcerns =
     topConcernsRaw.length > 0
@@ -754,7 +1268,7 @@ function buildPersonaReport(input: {
               "Reviewer reported this concern without a separate description.",
             evidenceArtifactIds: artifactIdsFromEvidenceText({
               evidenceText,
-              fallback: evidenceArtifactIds,
+              fallback: fallbackEvidenceArtifactIds,
               artifacts: input.artifacts,
             }),
             confidence: confidenceValue(entry.confidence) ?? "medium",
@@ -807,7 +1321,7 @@ function buildPersonaReport(input: {
       parsedConfidence ??
       (topConcerns.some((finding) => finding.confidence === "low") ? "low" : "medium"),
     ...(missingEvidence ? { missingEvidence } : {}),
-    evidenceArtifactIds,
+    evidenceArtifactIds: personaEvidenceArtifactIds,
     toolCallIds: input.toolCalls.map((toolCall) => toolCall.id),
     createdAt: input.createdAt,
     updatedAt: input.createdAt,
@@ -1099,128 +1613,142 @@ const make = Effect.gen(function* () {
   const captureBaselineEvidence = (input: {
     readonly thread: OrchestrationThread;
     readonly reviewRunId: string;
-  }) =>
-    cadViewScheduler.enqueue(
-      input.thread.id,
-      `${input.reviewRunId}:baseline-capture`,
-      Effect.gen(function* () {
-        const exportRoot = yield* resolveCadViewExportRootForInstance(
-          input.thread.modelSelection.instanceId,
-        ).pipe(
-          Effect.provideService(Path.Path, pathService),
-          Effect.provideService(ServerSettingsService, serverSettingsService),
-          Effect.mapError(
-            (error) =>
-              new CadReviewRunError({
-                message: error.message,
-              }),
+  }): Effect.Effect<BaselineCaptureResult, never, never> => {
+    const operation: Effect.Effect<
+      BaselineCaptureOperationResult,
+      CadReviewRunError | OrchestrationDispatchError,
+      never
+    > = Effect.gen(function* () {
+      const exportRoot = yield* resolveCadViewExportRootForInstance(
+        input.thread.modelSelection.instanceId,
+      ).pipe(
+        Effect.provideService(Path.Path, pathService),
+        Effect.provideService(ServerSettingsService, serverSettingsService),
+        Effect.mapError(
+          (error) =>
+            new CadReviewRunError({
+              message: error.message,
+            }),
+        ),
+      );
+      const captures: BaselineCaptureRecord[] = [];
+      const failureDetails: string[] = [];
+      for (const spec of BASELINE_CAPTURE_SPECS) {
+        yield* failIfReviewStopped(input.thread.id, input.reviewRunId);
+        const createdAt = yield* nowIso;
+        const captureExit = yield* Effect.exit(
+          captureCadScreenshot({
+            threadId: input.thread.id,
+            exportRoot,
+            suggestedBaseName: spec.suggestedBaseName,
+            view: spec.view,
+            fit: true,
+          }).pipe(
+            Effect.mapError(
+              (error) =>
+                new CadReviewRunError({
+                  message: `Failed to capture baseline view '${spec.view}': ${error.message}`,
+                }),
+            ),
           ),
         );
-        const captures: BaselineCaptureRecord[] = [];
-        const failureDetails: string[] = [];
-        for (const spec of BASELINE_CAPTURE_SPECS) {
-          yield* failIfReviewStopped(input.thread.id, input.reviewRunId);
-          const createdAt = yield* nowIso;
-          const captureExit = yield* Effect.exit(
-            captureCadScreenshot({
-              threadId: input.thread.id,
-              exportRoot,
-              suggestedBaseName: spec.suggestedBaseName,
-              view: spec.view,
-              fit: true,
-            }).pipe(
-              Effect.mapError(
-                (error) =>
-                  new CadReviewRunError({
-                    message: `Failed to capture baseline view '${spec.view}': ${error.message}`,
-                  }),
-              ),
-            ),
-          );
-          yield* failIfReviewStopped(input.thread.id, input.reviewRunId);
-          if (Exit.isFailure(captureExit)) {
-            const detail = Cause.pretty(captureExit.cause);
-            failureDetails.push(`${spec.view}: ${detail}`);
-            yield* appendActivity({
-              threadId: input.thread.id,
-              tone: "error",
-              kind: "cad-review.baseline.capture-failed",
-              summary: `Baseline CAD view '${spec.view}' failed`,
-              payload: {
-                reviewRunId: input.reviewRunId,
-                phase: "baseline",
-                view: spec.view,
-                detail,
-              },
-              createdAt,
-            });
-            if (captures.length === 0 && SCREENSHOT_TIMEOUT_RE.test(detail)) {
-              break;
-            }
-            continue;
-          }
-          const result = captureExit.value;
-          const activity = baselineToolActivity({
-            threadId: input.thread.id,
-            view: spec.view,
-            suggestedBaseName: spec.suggestedBaseName,
-            result,
-            createdAt,
-          });
+        yield* failIfReviewStopped(input.thread.id, input.reviewRunId);
+        if (Exit.isFailure(captureExit)) {
+          const detail = userVisibleCauseMessage(captureExit.cause);
+          failureDetails.push(`${spec.view}: ${detail}`);
           yield* appendActivity({
             threadId: input.thread.id,
-            tone: activity.tone,
-            kind: activity.kind,
-            summary: activity.summary,
-            payload: activity.payload as Record<string, unknown>,
+            tone: "error",
+            kind: "cad-review.baseline.capture-failed",
+            summary: `Baseline CAD view '${spec.view}' failed`,
+            payload: {
+              reviewRunId: input.reviewRunId,
+              phase: "baseline",
+              view: spec.view,
+              detail,
+            },
             createdAt,
           });
-          captures.push({ result, view: spec.view, createdAt, activity });
+          if (captures.length === 0 && SCREENSHOT_TIMEOUT_RE.test(detail)) {
+            break;
+          }
+          continue;
         }
-        if (captures.length === 0) {
-          return yield* new CadReviewRunError({
-            message:
-              failureDetails.length > 0
-                ? `No baseline CAD screenshots were captured. ${failureDetails.join("; ")}`
-                : "No baseline CAD screenshots were captured.",
-          });
-        }
-        const artifacts = captures.map((capture, index) =>
-          baselineArtifactFromCapture({
-            reviewRunId: input.reviewRunId,
-            index,
-            view: capture.view,
-            absolutePath: capture.result.absolutePath,
-            createdAt: capture.createdAt,
-          }),
-        );
-        const toolCalls = toolCallsFromActivities({
-          reviewRunId: input.reviewRunId,
-          persona: "synthesis",
-          phase: "baseline",
-          activities: captures.map((capture) => capture.activity),
-          artifacts,
+        const result = captureExit.value;
+        const activity = baselineToolActivity({
+          threadId: input.thread.id,
+          view: spec.view,
+          suggestedBaseName: spec.suggestedBaseName,
+          result,
+          createdAt,
         });
-        return { artifacts, toolCalls };
-      }).pipe(
-        Effect.matchCauseEffect({
-          onFailure: (cause) =>
-            Effect.succeed({
+        yield* appendActivity({
+          threadId: input.thread.id,
+          tone: activity.tone,
+          kind: activity.kind,
+          summary: activity.summary,
+          payload: activity.payload as Record<string, unknown>,
+          createdAt,
+        });
+        captures.push({ result, view: spec.view, createdAt, activity });
+      }
+      if (captures.length === 0) {
+        return yield* new CadReviewRunError({
+          message:
+            failureDetails.length > 0
+              ? `No baseline CAD screenshots were captured. ${failureDetails.join("; ")}`
+              : "No baseline CAD screenshots were captured.",
+        });
+      }
+      const artifacts = captures.map((capture, index) =>
+        baselineArtifactFromCapture({
+          reviewRunId: input.reviewRunId,
+          index,
+          view: capture.view,
+          absolutePath: capture.result.absolutePath,
+          createdAt: capture.createdAt,
+        }),
+      );
+      const toolCalls = toolCallsFromActivities({
+        reviewRunId: input.reviewRunId,
+        persona: "synthesis",
+        phase: "baseline",
+        activities: captures.map((capture) => capture.activity),
+        artifacts,
+      });
+      return { artifacts, toolCalls };
+    });
+
+    return cadViewScheduler.enqueue(
+      input.thread.id,
+      `${input.reviewRunId}:baseline-capture`,
+      Effect.exit(operation).pipe(
+        Effect.map((exit): BaselineCaptureResult => {
+          if (Exit.isFailure(exit)) {
+            const error = userVisibleCauseMessage(exit.cause);
+            if (isUnsupportedCodexCadScreenshotExportRootError(error)) {
+              return {
+                ok: true,
+                skipped: true,
+                skipReason: error,
+                artifacts: [],
+                toolCalls: [],
+              };
+            }
+            return {
               ok: false,
-              error: Cause.pretty(cause),
-            } satisfies { readonly ok: false; readonly error: string }),
-          onSuccess: (result) =>
-            Effect.succeed({
-              ok: true,
-              ...result,
-            } satisfies {
-              readonly ok: true;
-              readonly artifacts: CadReviewEvidenceArtifact[];
-              readonly toolCalls: CadReviewToolCall[];
-            }),
+              error,
+            };
+          }
+          return {
+            ok: true,
+            skipped: false,
+            ...exit.value,
+          };
         }),
       ),
     );
+  };
 
   const upsertReview = (threadId: OrchestrationThread["id"], review: CadReviewReport) =>
     orchestrationEngine.dispatch({
@@ -1235,6 +1763,7 @@ const make = Effect.gen(function* () {
     readonly parentThread: OrchestrationThread;
     readonly reviewRunId: string;
     readonly persona: CadReviewPersona;
+    readonly phase: CadReviewChildPhase;
     readonly title: string;
     readonly interactionMode?: OrchestrationThread["interactionMode"];
     readonly createdAt: string;
@@ -1268,6 +1797,7 @@ const make = Effect.gen(function* () {
           parentThreadId: input.parentThread.id,
           reviewRunId: input.reviewRunId,
           persona: input.persona,
+          phase: input.phase,
         },
         createdAt: input.createdAt,
       });
@@ -1279,6 +1809,7 @@ const make = Effect.gen(function* () {
         payload: {
           reviewRunId: input.reviewRunId,
           persona: input.persona,
+          phase: input.phase,
           childThreadId,
         },
         createdAt: input.createdAt,
@@ -1357,6 +1888,7 @@ const make = Effect.gen(function* () {
 
   const waitForChildTurn = (
     childThreadId: ThreadId,
+    completion: ChildTurnCompletion,
   ): Effect.Effect<OrchestrationThread, CadReviewRunError> =>
     Effect.gen(function* () {
       const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(childThreadId).pipe(
@@ -1373,35 +1905,81 @@ const make = Effect.gen(function* () {
         });
       }
       const childThread = threadOption.value;
-      const hasAssistantMessage = childThread.messages.some(
-        (message) => message.role === "assistant" && !message.streaming,
-      );
+      const hasCompleteStructuredOutput = completion.isComplete(childThread);
+      const hasAssistantMessage = childThreadHasCompletedAssistantMessage(childThread);
+      const hasAssistantOutput = childThreadHasAssistantOutput(childThread);
       const sessionStatus = childThread.session?.status;
-      if (
-        hasAssistantMessage &&
-        (sessionStatus === "ready" || sessionStatus === "stopped" || sessionStatus === "error")
-      ) {
+      const pendingInteractivePrompt = firstPendingInteractiveChildPrompt(childThread.activities);
+      if (pendingInteractivePrompt) {
+        return yield* new CadReviewRunError({
+          message: `Child reviewer '${childThreadId}' requested ${pendingInteractivePrompt.kind} '${pendingInteractivePrompt.requestId}'${
+            pendingInteractivePrompt.detail ? ` (${pendingInteractivePrompt.detail})` : ""
+          }. Hidden CAD review child threads cannot wait for interactive prompts.`,
+        });
+      }
+      if (hasCompleteStructuredOutput) {
         return childThread;
       }
       if (sessionStatus === "error" && childThread.session?.lastError) {
         return yield* new CadReviewRunError({ message: childThread.session.lastError });
       }
-      if (sessionStatus === "interrupted" || sessionStatus === "stopped") {
+      if (sessionStatus === "ready" && hasAssistantMessage) {
+        return yield* new CadReviewRunError({
+          message: `Child reviewer '${childThreadId}' finished without complete ${completion.label} structured output.`,
+        });
+      }
+      if (
+        sessionStatus === "error" ||
+        sessionStatus === "interrupted" ||
+        sessionStatus === "stopped"
+      ) {
         return yield* new CadReviewRunError({
           message: `Child reviewer '${childThreadId}' was ${sessionStatus}.`,
         });
       }
+      const nowMs = yield* Clock.currentTimeMillis;
+      const blockingRetry = blockingProviderRetryWarning({
+        activities: childThread.activities,
+        nowMs,
+      });
+      if (!hasAssistantOutput && blockingRetry) {
+        return yield* new CadReviewRunError({
+          message: `Child reviewer '${childThreadId}' is blocked by provider retry: ${blockingRetry}`,
+        });
+      }
+      if (
+        childThreadStartupNoProgressTimedOut({
+          childThread,
+          nowMs,
+        })
+      ) {
+        return yield* new CadReviewRunError({
+          message: `Child reviewer '${childThreadId}' produced no visible output or tool activity within 5 minutes.`,
+        });
+      }
+      if (
+        childThreadProgressStalledTimedOut({
+          childThread,
+          nowMs,
+        })
+      ) {
+        return yield* new CadReviewRunError({
+          message: `Child reviewer '${childThreadId}' stopped producing output or tool activity for 3 minutes.`,
+        });
+      }
       yield* Effect.sleep(Duration.seconds(1));
-      return yield* waitForChildTurn(childThreadId);
+      return yield* waitForChildTurn(childThreadId, completion);
     });
 
   const runChildReviewer = (input: {
     readonly parentThread: OrchestrationThread;
     readonly reviewRunId: string;
     readonly persona: CadReviewPersona;
+    readonly phase: CadReviewChildPhase;
     readonly title: string;
     readonly prompt: string;
     readonly interactionMode?: OrchestrationThread["interactionMode"];
+    readonly completion: ChildTurnCompletion;
     readonly createdAt: string;
   }) =>
     Effect.gen(function* () {
@@ -1427,7 +2005,7 @@ const make = Effect.gen(function* () {
           titleSeed: childReviewThreadInitialTitle(input.title),
           createdAt: input.createdAt,
         });
-        const completed = yield* waitForChildTurn(childThreadId).pipe(
+        const completedExit = yield* waitForChildTurn(childThreadId, input.completion).pipe(
           Effect.timeoutOption(REVIEWER_TURN_TIMEOUT),
           Effect.flatMap((option) =>
             Option.match(option, {
@@ -1440,7 +2018,31 @@ const make = Effect.gen(function* () {
               onSome: (childThread) => Effect.succeed(childThread),
             }),
           ),
+          Effect.exit,
         );
+        if (Exit.isFailure(completedExit)) {
+          const childThreadOption = yield* projectionSnapshotQuery
+            .getThreadDetailById(childThreadId)
+            .pipe(Effect.exit);
+          return {
+            ok: false,
+            error: userVisibleCauseMessage(completedExit.cause),
+            ...(Exit.isSuccess(childThreadOption) && Option.isSome(childThreadOption.value)
+              ? { childThread: childThreadOption.value.value }
+              : {}),
+          } satisfies ChildRunResult;
+        }
+        const completed = completedExit.value;
+        if (completed.session?.status === "running") {
+          yield* orchestrationEngine
+            .dispatch({
+              type: "thread.session.stop",
+              commandId: serverCommandId("cad-review-completed-child-stop"),
+              threadId: childThreadId,
+              createdAt: yield* nowIso,
+            })
+            .pipe(Effect.ignore);
+        }
         yield* failIfReviewStopped(input.parentThread.id, input.reviewRunId);
         return { ok: true, childThread: completed } satisfies ChildRunResult;
       }).pipe(
@@ -1451,7 +2053,7 @@ const make = Effect.gen(function* () {
         onFailure: (cause) =>
           Effect.succeed({
             ok: false,
-            error: Cause.pretty(cause),
+            error: userVisibleCauseMessage(cause),
           } satisfies ChildRunResult),
         onSuccess: (result) => Effect.succeed(result),
       }),
@@ -1510,7 +2112,7 @@ const make = Effect.gen(function* () {
         if (!activeThreadForFailure || !activeReviewForFailure) {
           return;
         }
-        const detail = Cause.pretty(cause);
+        const detail = userVisibleCauseMessage(cause);
         const failedAt = yield* nowIso;
         const failedReview: CadReviewReport = {
           ...activeReviewForFailure,
@@ -1541,7 +2143,9 @@ const make = Effect.gen(function* () {
       if (Option.isNone(threadOption)) {
         return;
       }
-      const thread = threadOption.value;
+      const thread = event.payload.modelSelection
+        ? { ...threadOption.value, modelSelection: event.payload.modelSelection }
+        : threadOption.value;
       activeThreadForFailure = thread;
       getActiveReview(thread.id, event.payload.reviewRunId).stopped = false;
       const snapshot = yield* projectionSnapshotQuery.getCommandReadModel();
@@ -1574,6 +2178,7 @@ const make = Effect.gen(function* () {
           mechanical_robustness: [],
           synthesis: [],
         },
+        outputTokensByStep: {},
         createdAt,
         updatedAt,
       };
@@ -1617,6 +2222,7 @@ const make = Effect.gen(function* () {
         parentThread: thread,
         reviewRunId: review.id,
         persona: "synthesis",
+        phase: "planning",
         title: `${review.title} - mechanism planning`,
         interactionMode: "plan",
         prompt: buildMechanismPlanningPrompt({
@@ -1624,6 +2230,11 @@ const make = Effect.gen(function* () {
           reviewPrompt,
           baselineArtifacts,
         }),
+        completion: {
+          label: "mechanism planning JSON",
+          isComplete: (childThread) =>
+            assistantOutputIsReady(childThread, mechanismPlanOutputIsReady),
+        },
         createdAt: updatedAt,
       });
       const planningAt = yield* nowIso;
@@ -1650,6 +2261,7 @@ const make = Effect.gen(function* () {
             ...review.toolCallsByReviewer,
             synthesis: [...review.toolCallsByReviewer.synthesis, ...planningToolCalls],
           },
+          ...withChildOutputTokens(review, "planning", planningChild.childThread),
           updatedAt: planningAt,
         });
       }
@@ -1695,19 +2307,23 @@ const make = Effect.gen(function* () {
             },
             updatedAt,
           });
+          const baselineSkipped = baselineCapture.skipped;
+          const baselineSummary = baselineSkipped
+            ? "Baseline CAD capture skipped"
+            : baselineCapture.artifacts.length > 0
+              ? "Baseline CAD views captured"
+              : "Baseline capture completed without screenshot artifacts";
           yield* appendActivity({
             threadId: thread.id,
             tone: "info",
-            kind: "cad-review.baseline.completed",
-            summary:
-              baselineCapture.artifacts.length > 0
-                ? "Baseline CAD views captured"
-                : "Baseline capture completed without screenshot artifacts",
+            kind: baselineSkipped ? "cad-review.baseline.skipped" : "cad-review.baseline.completed",
+            summary: baselineSummary,
             payload: {
               reviewRunId: review.id,
               phase: "baseline",
               agent: "Server baseline capture",
               artifactCount: baselineCapture.artifacts.length,
+              ...(baselineSkipped ? { reason: baselineCapture.skipReason } : {}),
             },
             createdAt: updatedAt,
           });
@@ -1809,6 +2425,7 @@ const make = Effect.gen(function* () {
             parentThread: thread,
             reviewRunId: review.id,
             persona,
+            phase: "reviewing",
             title: `${review.title} - ${personaLabel(persona)}`,
             prompt: buildReviewerPrompt({
               persona,
@@ -1817,9 +2434,14 @@ const make = Effect.gen(function* () {
               baselineArtifacts: reviewerBaselineArtifacts,
               reviewPlan: review.reviewPlan,
             }),
+            completion: {
+              label: `${personaLabel(persona)} reviewer JSON`,
+              isComplete: (childThread) =>
+                assistantOutputIsReady(childThread, personaReviewOutputIsReady),
+            },
             createdAt: startedAt,
           }).pipe(Effect.map((personaChild) => ({ persona, personaChild }))),
-        { concurrency: Math.min(CAD_REVIEW_REVIEWER_CONCURRENCY, reviewerStarts.length) },
+        { concurrency: reviewerConcurrencyForThread(thread, reviewerStarts.length) },
       );
       yield* failIfReviewStopped(thread.id, review.id);
 
@@ -1857,22 +2479,61 @@ const make = Effect.gen(function* () {
               [persona]: [...review.toolCallsByReviewer[persona], ...toolCalls],
             },
             personaReports: [...review.personaReports, report],
+            ...withChildOutputTokens(review, persona, personaChild.childThread),
             updatedAt: reportAt,
           });
         } else {
-          Object.assign(review, {
-            status: "partial",
-            personaReports: [
-              ...review.personaReports,
-              failedPersonaReport({
-                reviewRunId: review.id,
-                persona,
-                error: personaChild.error,
-                createdAt: reportAt,
-              }),
-            ],
-            updatedAt: reportAt,
-          });
+          const failedChildThread =
+            "childThread" in personaChild ? personaChild.childThread : undefined;
+          if (failedChildThread && extractJsonObject(assistantText(failedChildThread.messages))) {
+            const personaArtifacts = artifactsFromChild({
+              reviewRunId: review.id,
+              childThread: failedChildThread,
+              scope: "persona",
+              persona,
+              createdAt: reportAt,
+            });
+            const nextArtifacts = [...review.evidenceArtifacts, ...personaArtifacts];
+            const toolCalls = toolCallsFromActivities({
+              reviewRunId: review.id,
+              persona,
+              phase: "reviewing",
+              activities: failedChildThread.activities,
+              artifacts: nextArtifacts,
+            });
+            const report = buildPersonaReport({
+              reviewRunId: review.id,
+              persona,
+              text: assistantText(failedChildThread.messages),
+              artifacts: nextArtifacts,
+              toolCalls,
+              createdAt: reportAt,
+            });
+            Object.assign(review, {
+              evidenceArtifacts: nextArtifacts,
+              toolCallsByReviewer: {
+                ...review.toolCallsByReviewer,
+                [persona]: [...review.toolCallsByReviewer[persona], ...toolCalls],
+              },
+              personaReports: [...review.personaReports, report],
+              ...withChildOutputTokens(review, persona, failedChildThread),
+              updatedAt: reportAt,
+            });
+          } else {
+            Object.assign(review, {
+              status: "partial",
+              personaReports: [
+                ...review.personaReports,
+                failedPersonaReport({
+                  reviewRunId: review.id,
+                  persona,
+                  error: personaChild.error,
+                  createdAt: reportAt,
+                }),
+              ],
+              updatedAt: reportAt,
+            });
+          }
         }
         yield* appendActivity({
           threadId: thread.id,
@@ -1918,6 +2579,7 @@ const make = Effect.gen(function* () {
           parentThread: thread,
           reviewRunId: review.id,
           persona: "synthesis",
+          phase: "deep-dive",
           title: `${review.title} - focused deep dive`,
           prompt: buildDeepDivePrompt({
             subject,
@@ -1928,6 +2590,10 @@ const make = Effect.gen(function* () {
               (artifact) => artifact.scope === "baseline",
             ),
           }),
+          completion: {
+            label: "focused deep-dive JSON",
+            isComplete: (childThread) => assistantOutputIsReady(childThread, deepDiveOutputIsReady),
+          },
           createdAt: updatedAt,
         });
         const deepDiveAt = yield* nowIso;
@@ -1963,6 +2629,12 @@ const make = Effect.gen(function* () {
               ...review.toolCallsByReviewer,
               synthesis: [...review.toolCallsByReviewer.synthesis, ...deepDiveToolCalls],
             },
+            ...withChildOutputTokens(review, "deep_diving", deepDiveChild.childThread),
+            updatedAt: deepDiveAt,
+          });
+        } else if ("childThread" in deepDiveChild && deepDiveChild.childThread) {
+          Object.assign(review, {
+            ...withChildOutputTokens(review, "deep_diving", deepDiveChild.childThread),
             updatedAt: deepDiveAt,
           });
         }
@@ -1998,6 +2670,7 @@ const make = Effect.gen(function* () {
               parentThread: thread,
               reviewRunId: review.id,
               persona: "synthesis",
+              phase: "synthesis",
               title: `${review.title} - synthesis`,
               prompt: buildSynthesisPrompt({
                 subject,
@@ -2014,6 +2687,11 @@ const make = Effect.gen(function* () {
                   confidence: report.confidence,
                 })),
               }),
+              completion: {
+                label: "synthesis JSON",
+                isComplete: (childThread) =>
+                  assistantOutputIsReady(childThread, synthesisOutputIsReady),
+              },
               createdAt: updatedAt,
             })
           : null;
@@ -2064,6 +2742,9 @@ const make = Effect.gen(function* () {
           ...review.toolCallsByReviewer,
           synthesis: [...review.toolCallsByReviewer.synthesis, ...synthesisToolCalls],
         },
+        ...(synthesisChild?.ok
+          ? withChildOutputTokens(review, "synthesizing", synthesisChild.childThread)
+          : {}),
         updatedAt,
       });
       yield* appendActivity({
@@ -2220,16 +2901,25 @@ const make = Effect.gen(function* () {
           const currentReview =
             (currentThread.reviews ?? []).find((entry) => entry.id === review.id) ?? review;
           const failedAtMs = Date.parse(failedAt);
+          const childThreadIds = reviewChildThreadIdsFromActivities(currentThread, review.id);
+          const hasChildThreads = childThreadIds.length > 0;
+          const hasFreshLiveChildSession = hasFreshLiveChildSessionForReview({
+            thread: currentThread,
+            reviewRunId: review.id,
+            threadById,
+            now: failedAt,
+          });
           if (
             !isCadReviewActive(currentReview.status) ||
             hasInterruptedRecoveryActivity(currentThread, review.id) ||
-            (Number.isFinite(failedAtMs) && isFreshActiveReview(currentReview, failedAtMs)) ||
-            hasFreshLiveChildSessionForReview({
-              thread: currentThread,
-              reviewRunId: review.id,
-              threadById,
-              now: failedAt,
-            })
+            (Number.isFinite(failedAtMs) &&
+              !hasChildThreads &&
+              isFreshActiveReview(
+                currentReview,
+                failedAtMs,
+                CHILD_TURN_STARTUP_NO_PROGRESS_TIMEOUT_MS,
+              )) ||
+            hasFreshLiveChildSession
           ) {
             continue;
           }

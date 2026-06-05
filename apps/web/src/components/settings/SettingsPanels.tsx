@@ -282,9 +282,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.displayCadReviewWorkLog !== DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog
         ? ["CAD review work log"]
         : []),
-      ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
-        ? ["Assistant output"]
-        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -300,7 +297,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
       settings.displayCadReviewWorkLog,
-      settings.enableAssistantStreaming,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       theme,
@@ -322,7 +318,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       displayCadReviewWorkLog: DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
-      enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -424,33 +419,6 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
-          }
-        />
-
-        <SettingsRow
-          title="Assistant output"
-          description="Show token-by-token output while a response is in progress."
-          resetAction={
-            settings.enableAssistantStreaming !==
-            DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
-              <SettingResetButton
-                label="assistant output"
-                onClick={() =>
-                  updateSettings({
-                    enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.enableAssistantStreaming}
-              onCheckedChange={(checked) =>
-                updateSettings({ enableAssistantStreaming: Boolean(checked) })
-              }
-              aria-label="Stream assistant messages"
-            />
           }
         />
 

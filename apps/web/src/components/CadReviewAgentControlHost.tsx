@@ -1,27 +1,14 @@
-import {
-  EnvironmentId,
-  type CadReviewStatus,
-  type ScopedThreadRef,
-  ThreadId,
-} from "@cadsense/contracts";
+import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@cadsense/contracts";
 import { scopeThreadRef } from "@cadsense/client-runtime";
 import { useParams } from "@tanstack/react-router";
 import { useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { getThreadFromEnvironmentState } from "../threadDerivation";
+import { hasRunningCadReview } from "../lib/cadReviewStatus";
 import { type AppState, useStore } from "../store";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import CadPanel from "./CadPanel";
-
-const ACTIVE_CAD_REVIEW_STATUSES = new Set<CadReviewStatus>([
-  "requested",
-  "planning",
-  "capturing-baseline",
-  "reviewing",
-  "deep-diving",
-  "synthesizing",
-]);
 
 const THREAD_REF_KEY_SEPARATOR = "\0";
 
@@ -45,7 +32,7 @@ function selectActiveCadReviewThreadKeys(state: AppState): string[] {
       if (!thread) {
         continue;
       }
-      if ((thread.reviews ?? []).some((review) => ACTIVE_CAD_REVIEW_STATUSES.has(review.status))) {
+      if (hasRunningCadReview(thread.reviews)) {
         keys.push(threadRefKey(scopeThreadRef(thread.environmentId, thread.id)));
       }
     }
