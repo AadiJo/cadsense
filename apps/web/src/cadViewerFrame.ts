@@ -1027,6 +1027,11 @@ function applyThreeCadView(state: ThreeViewerState, view: CadView, fit: boolean)
   applyThreeCadCamera(state, direction, up, undefined, fit, cadViewIsCloseUp(view));
 }
 
+function applyThreeCadViewImmediately(state: ThreeViewerState, view: CadView, fit: boolean): void {
+  const { direction, up } = cadInteractiveViewVector(view);
+  applyThreeCadCamera(state, direction, up, undefined, fit, cadViewIsCloseUp(view), false);
+}
+
 function syncThreeOrbitControlsToCamera(state: ThreeViewerState): void {
   state.controls.update();
   state.controls.saveState();
@@ -1039,6 +1044,7 @@ function applyThreeCadCamera(
   requestedDistance: number | undefined,
   fit: boolean,
   closeUp: boolean,
+  animate = true,
 ): void {
   cancelCadViewFollowUp();
   if (cadViewAnimationFrame !== 0) {
@@ -1087,6 +1093,19 @@ function applyThreeCadCamera(
   const targetUp = new three.Vector3(cameraUp[0], cameraUp[1], cameraUp[2]).normalize();
   const startedAt = performance.now();
   suppressThreeCameraChangePosts = true;
+
+  if (!animate) {
+    camera.position.copy(targetPosition);
+    controls.target.copy(targetTarget);
+    camera.up.copy(targetUp);
+    camera.lookAt(controls.target);
+    syncThreeOrbitControlsToCamera(state);
+    renderThreeViewer(state);
+    setTimeout(() => {
+      suppressThreeCameraChangePosts = false;
+    }, 0);
+    return;
+  }
 
   const step = () => {
     const elapsed = performance.now() - startedAt;
@@ -1571,7 +1590,7 @@ async function capturePngBase64(input: {
       const previousNear = state.camera.near;
       const previousFar = state.camera.far;
       const previousAspect = state.camera.aspect;
-      applyThreeCadView(state, input.view, input.fit);
+      applyThreeCadViewImmediately(state, input.view, input.fit);
       renderThreeViewer(state);
       const pngBase64 = await canvasToPngBase64(state.renderer.domElement);
       state.camera.position.copy(previousPosition);
