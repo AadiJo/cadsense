@@ -1207,7 +1207,7 @@ export function deriveTimelineEntries(
     createdAt: proposedPlan.createdAt,
     proposedPlan,
   }));
-  const reviewRows: TimelineEntry[] = filterSupersededCadReviews(reviews).map((review) => ({
+  const reviewRows: TimelineEntry[] = reviews.map((review) => ({
     id: review.id,
     kind: "cad-review",
     createdAt: review.createdAt,
@@ -1221,20 +1221,6 @@ export function deriveTimelineEntries(
   }));
   return [...messageRows, ...proposedPlanRows, ...reviewRows, ...workRows].toSorted((a, b) =>
     a.createdAt.localeCompare(b.createdAt),
-  );
-}
-
-function filterSupersededCadReviews(reviews: ReadonlyArray<CadReviewReport>): CadReviewReport[] {
-  const latestCreatedAt = reviews
-    .map((review) => review.createdAt)
-    .filter((createdAt) => !Number.isNaN(Date.parse(createdAt)))
-    .toSorted()
-    .at(-1);
-  if (!latestCreatedAt) {
-    return [...reviews];
-  }
-  return reviews.filter(
-    (review) => review.status !== "failed" || review.createdAt.localeCompare(latestCreatedAt) >= 0,
   );
 }
 

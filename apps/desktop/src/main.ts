@@ -4,11 +4,16 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as Electron from "electron";
 
 import * as NetService from "@cadsense/shared/Net";
+import { resolveRemoteCadSenseCliPackageSpec } from "@cadsense/ssh/command";
+import type { RemoteCadSenseRunnerOptions } from "@cadsense/ssh/tunnel";
+import serverPackageJson from "../../server/package.json" with { type: "json" };
 
+import type { DesktopSettings as DesktopSettingsValue } from "./settings/DesktopAppSettings.ts";
 import * as DesktopIpc from "./ipc/DesktopIpc.ts";
 import * as ElectronApp from "./electron/ElectronApp.ts";
 import * as ElectronDialog from "./electron/ElectronDialog.ts";
@@ -33,6 +38,9 @@ import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
+import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
+import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
+import * as DesktopSshRemoteApi from "./ssh/DesktopSshRemoteApi.ts";
 import * as DesktopState from "./app/DesktopState.ts";
 import * as DesktopUpdates from "./updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./window/DesktopWindow.ts";
@@ -48,6 +56,39 @@ const desktopEnvironmentLayer = Layer.unwrap(
       platform: process.platform,
       processArch: process.arch,
       ...metadata,
+    });
+  }),
+);
+
+const resolveDesktopSshCliRunner = (
+  environment: DesktopEnvironment.DesktopEnvironmentShape,
+  settings: DesktopSettingsValue,
+): RemoteCadSenseRunnerOptions => {
+  const devRemoteEntryPath = Option.getOrUndefined(environment.devRemoteCadSenseServerEntryPath);
+  if (environment.isDevelopment && devRemoteEntryPath !== undefined) {
+    return {
+      nodeScriptPath: devRemoteEntryPath,
+      nodeEngineRange: serverPackageJson.engines.node,
+    };
+  }
+  return {
+    packageSpec: resolveRemoteCadSenseCliPackageSpec({
+      appVersion: environment.appVersion,
+      updateChannel: settings.updateChannel,
+      isDevelopment: environment.isDevelopment,
+    }),
+    nodeEngineRange: serverPackageJson.engines.node,
+  };
+};
+
+const desktopSshEnvironmentLayer = Layer.unwrap(
+  Effect.gen(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const settings = yield* DesktopAppSettings.DesktopAppSettings;
+    return DesktopSshEnvironment.layer({
+      resolveCliRunner: settings.get.pipe(
+        Effect.map((currentSettings) => resolveDesktopSshCliRunner(environment, currentSettings)),
+      ),
     });
   }),
 );
@@ -75,6 +116,10 @@ const desktopFoundationLayer = Layer.mergeAll(
   DesktopObservability.layer,
 ).pipe(Layer.provideMerge(desktopEnvironmentLayer));
 
+const desktopSshLayer = Layer.mergeAll(desktopSshEnvironmentLayer, DesktopSshRemoteApi.layer).pipe(
+  Layer.provideMerge(DesktopSshPasswordPrompts.layer()),
+);
+
 const desktopServerExposureLayer = DesktopServerExposure.layer.pipe(
   Layer.provideMerge(DesktopServerExposure.networkInterfacesLayer),
   Layer.provideMerge(desktopFoundationLayer),
@@ -92,6 +137,7 @@ const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
   DesktopShellEnvironment.layer,
+  desktopSshLayer,
 ).pipe(Layer.provideMerge(DesktopUpdates.layer), Layer.provideMerge(desktopBackendLayer));
 
 const desktopRuntimeLayer = ElectronProtocol.layerSchemePrivileges.pipe(

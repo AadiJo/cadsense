@@ -11,8 +11,13 @@ import { sharedServerCommandFlags } from "./cli/config.ts";
 import { mcpCommand } from "./cli/mcp.ts";
 import { projectCommand } from "./cli/project.ts";
 import { runServerCommand, serveCommand, startCommand } from "./cli/server.ts";
+import { TerminalManagerDisabledLive } from "./terminal/Services/Manager.ts";
 
-const CliRuntimeLayer = Layer.mergeAll(NodeServices.layer, NetService.layer);
+const CliRuntimeLayer = Layer.mergeAll(
+  NodeServices.layer,
+  NetService.layer,
+  TerminalManagerDisabledLive,
+);
 
 export const cli = Command.make("cadsense", { ...sharedServerCommandFlags }).pipe(
   Command.withDescription("Run the CadSense server."),

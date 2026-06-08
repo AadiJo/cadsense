@@ -11,7 +11,9 @@ import {
   ProviderInstanceId,
   type ServerConfig,
   type ServerProvider,
+  type SourceControlDiscoveryResult,
 } from "@cadsense/contracts";
+import * as Option from "effect/Option";
 import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -25,10 +27,11 @@ import {
 } from "@tanstack/react-router";
 
 import { __resetLocalApiForTests } from "../../localApi";
-import { AppAtomRegistryProvider } from "../../rpc/atomRegistry";
+import { AppAtomRegistryProvider, resetAppAtomRegistryForTests } from "../../rpc/atomRegistry";
 import { resetServerStateForTests, setServerConfigSnapshot } from "../../rpc/serverState";
 import { useUiStateStore } from "../../uiStateStore";
 import { GeneralSettingsPanel, ProviderSettingsPanel } from "./SettingsPanels";
+import { SourceControlSettingsPanel } from "./SourceControlSettings";
 
 function renderWithTestRouter(children: ReactNode) {
   const rootRoute = createRootRoute({
@@ -136,6 +139,8 @@ const authAccessHarness = vi.hoisted(() => {
   };
 });
 
+const mockConnectDesktopSshEnvironment = vi.hoisted(() => vi.fn());
+
 vi.mock("../../environments/runtime", () => {
   const primaryConnection = {
     kind: "primary" as const,
@@ -173,6 +178,7 @@ vi.mock("../../environments/runtime", () => {
       new URL(path, "http://localhost:3000").toString(),
     waitForSavedEnvironmentRegistryHydration: async () => undefined,
     addSavedEnvironment: vi.fn(),
+    connectDesktopSshEnvironment: mockConnectDesktopSshEnvironment,
     disconnectSavedEnvironment: vi.fn(),
     ensureEnvironmentConnectionBootstrapped: async () => undefined,
     getPrimaryEnvironmentConnection: () => primaryConnection,
@@ -266,6 +272,7 @@ describe("GeneralSettingsPanel observability", () => {
     localStorage.clear();
     useUiStateStore.setState({ defaultAdvertisedEndpointKey: null });
     authAccessHarness.reset();
+    mockConnectDesktopSshEnvironment.mockReset();
   });
 
   afterEach(async () => {
@@ -399,5 +406,191 @@ describe("GeneralSettingsPanel observability", () => {
       expect(viewportRect.right).toBeLessThanOrEqual(popupRect.right + 0.5);
       expect(scrollViewport!.scrollWidth).toBeGreaterThan(scrollViewport!.clientWidth);
     });
+  });
+});
+
+describe("SourceControlSettingsPanel discovery states", () => {
+  let mounted:
+    | (Awaited<ReturnType<typeof render>> & {
+        cleanup?: () => Promise<void>;
+        unmount?: () => Promise<void>;
+      })
+    | null = null;
+
+  beforeEach(async () => {
+    resetAppAtomRegistryForTests();
+    await __resetLocalApiForTests();
+    document.body.innerHTML = "";
+  });
+
+  afterEach(async () => {
+    if (mounted) {
+      const teardown = mounted.cleanup ?? mounted.unmount;
+      await teardown?.call(mounted).catch(() => {});
+    }
+    mounted = null;
+    Reflect.deleteProperty(window, "nativeApi");
+    document.body.innerHTML = "";
+    await __resetLocalApiForTests();
+    resetAppAtomRegistryForTests();
+  });
+
+  function setSourceControlDiscoveryStub(
+    discoverSourceControl: () => Promise<SourceControlDiscoveryResult>,
+  ) {
+    window.nativeApi = {
+      server: {
+        discoverSourceControl,
+      },
+    } as LocalApi;
+  }
+
+  it("shows skeleton sections while the first source control scan is pending", async () => {
+    setSourceControlDiscoveryStub(() => new Promise(() => {}));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Version Control")).toBeInTheDocument();
+    await expect.element(page.getByText("Source Control Providers")).toBeInTheDocument();
+    await expect
+      .element(page.getByRole("button", { name: "Rescan server environment" }))
+      .toBeDisabled();
+    await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
+  });
+
+  it("uses the shared empty state when discovery completes without tools", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByText("Nothing detected yet")).toBeInTheDocument();
+    await expect
+      .element(
+        page.getByText(
+          "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan.",
+        ),
+      )
+      .toBeInTheDocument();
+    await expect.element(page.getByRole("button", { name: "Scan" })).toBeInTheDocument();
+  });
+
+  it("keeps discovered rows instead of showing the empty state", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [
+        {
+          kind: "git",
+          label: "Git",
+          executable: "git",
+          implemented: true,
+          status: "available",
+          version: Option.some("git version 2.50.0"),
+          installHint: "Install Git.",
+          detail: Option.none(),
+        },
+      ],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
+    await expect.element(page.getByText("Nothing detected yet")).not.toBeInTheDocument();
+  });
+
+  it("shows Git fetch interval settings inside the Git details dropdown", async () => {
+    setSourceControlDiscoveryStub(async () => ({
+      versionControlSystems: [
+        {
+          kind: "git",
+          label: "Git",
+          executable: "git",
+          implemented: true,
+          status: "available",
+          version: Option.some("git version 2.50.0"),
+          installHint: "Install Git.",
+          detail: Option.none(),
+        },
+      ],
+      sourceControlProviders: [],
+    }));
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    const toggle = page.getByRole("button", { name: "Toggle Git details" });
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "false");
+
+    await toggle.click();
+
+    await expect.element(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect
+      .element(page.getByLabelText("Automatic Git fetch interval in seconds"))
+      .toBeVisible();
+    await expect
+      .element(page.getByText("Automatic Git fetches run every 30 seconds"))
+      .not.toBeInTheDocument();
+  });
+
+  it("does not rescan on remount while the discovery atom is fresh", async () => {
+    let calls = 0;
+    setSourceControlDiscoveryStub(async () => {
+      calls += 1;
+      return {
+        versionControlSystems: [
+          {
+            kind: "git",
+            label: "Git",
+            executable: "git",
+            implemented: true,
+            status: "available",
+            version: Option.some("git version 2.50.0"),
+            installHint: "Install Git.",
+            detail: Option.none(),
+          },
+        ],
+        sourceControlProviders: [],
+      };
+    });
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
+    expect(calls).toBe(1);
+
+    const teardown = mounted.cleanup ?? mounted.unmount;
+    await teardown?.call(mounted).catch(() => {});
+    mounted = null;
+    document.body.innerHTML = "";
+
+    mounted = await render(
+      <AppAtomRegistryProvider>
+        <SourceControlSettingsPanel />
+      </AppAtomRegistryProvider>,
+    );
+
+    await expect.element(page.getByRole("switch", { name: "Git availability" })).toBeDisabled();
+    expect(calls).toBe(1);
   });
 });

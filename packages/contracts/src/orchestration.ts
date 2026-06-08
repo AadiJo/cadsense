@@ -402,15 +402,6 @@ export const CadReviewPersonaReport = Schema.Struct({
 });
 export type CadReviewPersonaReport = typeof CadReviewPersonaReport.Type;
 
-const CadReviewOutputTokensByStep = Schema.Struct({
-  planning: Schema.optional(NonNegativeInt),
-  systems_integration: Schema.optional(NonNegativeInt),
-  program_readiness: Schema.optional(NonNegativeInt),
-  mechanical_robustness: Schema.optional(NonNegativeInt),
-  deep_diving: Schema.optional(NonNegativeInt),
-  synthesizing: Schema.optional(NonNegativeInt),
-});
-
 export const CadReviewReport = Schema.Struct({
   id: CadReviewId,
   threadId: ThreadId,
@@ -428,9 +419,6 @@ export const CadReviewReport = Schema.Struct({
   mergedActionItems: Schema.Array(CadReviewActionItem),
   evidenceArtifacts: Schema.Array(CadReviewEvidenceArtifact),
   toolCallsByReviewer: Schema.Record(CadReviewPersona, Schema.Array(CadReviewToolCall)),
-  outputTokensByStep: Schema.optional(
-    CadReviewOutputTokensByStep.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  ),
   error: Schema.optional(Schema.String),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -857,7 +845,6 @@ export const ThreadReviewGenerateCommand = Schema.Struct({
   threadId: ThreadId,
   reviewRunId: CadReviewId,
   reviewPrompt: Schema.optionalKey(Schema.String),
-  modelSelection: Schema.optional(ModelSelection),
   createdAt: IsoDateTime,
 });
 export type ThreadReviewGenerateCommand = typeof ThreadReviewGenerateCommand.Type;
@@ -1199,7 +1186,6 @@ export const ThreadReviewRequestedPayload = Schema.Struct({
   threadId: ThreadId,
   reviewRunId: CadReviewId,
   reviewPrompt: Schema.optionalKey(Schema.String),
-  modelSelection: Schema.optional(ModelSelection),
   createdAt: IsoDateTime,
 });
 export type ThreadReviewRequestedPayload = typeof ThreadReviewRequestedPayload.Type;

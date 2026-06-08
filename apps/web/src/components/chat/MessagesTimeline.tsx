@@ -97,6 +97,7 @@ interface TimelineRowSharedState {
   activeThreadEnvironmentId: EnvironmentId;
   onRevertUserMessage: (messageId: MessageId) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }
 
 interface TimelineRowActivityState {
@@ -131,6 +132,7 @@ interface MessagesTimelineProps {
   completionSummary: string | null;
   turnDiffSummaryByAssistantMessageId: Map<MessageId, TurnDiffSummary>;
   routeThreadKey: string;
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
   revertTurnCountByUserMessageId: Map<MessageId, number>;
   onRevertUserMessage: (messageId: MessageId) => void;
   isRevertingCheckpoint: boolean;
@@ -162,6 +164,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   completionSummary,
   turnDiffSummaryByAssistantMessageId,
   routeThreadKey,
+  onOpenTurnDiff,
   revertTurnCountByUserMessageId,
   onRevertUserMessage,
   isRevertingCheckpoint,
@@ -294,6 +297,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
+      onOpenTurnDiff,
     }),
     [
       timestampFormat,
@@ -308,6 +312,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeThreadEnvironmentId,
       onRevertUserMessage,
       onImageExpand,
+      onOpenTurnDiff,
     ],
   );
   const activityState = useMemo<TimelineRowActivityState>(
@@ -576,6 +581,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
           turnSummary={row.assistantTurnDiffSummary}
           routeThreadKey={ctx.routeThreadKey}
           resolvedTheme={ctx.resolvedTheme}
+          onOpenTurnDiff={ctx.onOpenTurnDiff}
         />
         <div className="mt-1.5 flex items-center gap-2">
           <p className="text-[10px] text-muted-foreground/30">
@@ -1040,7 +1046,7 @@ function cadReviewArtifactPreviewUrl(artifact: CadReviewEvidenceArtifact): strin
   if (/^https:\/\/api-frcrag-v2\.johari-dev\.com\//i.test(artifact.artifactUri)) {
     return `/api/mechbase/artifact?artifactUrl=${encodeURIComponent(artifact.artifactUri)}`;
   }
-  return `/api/cad/review-artifact?artifactUri=${encodeURIComponent(artifact.artifactUri)}&artifactId=${encodeURIComponent(artifact.id)}`;
+  return `/api/cad/review-artifact?artifactUri=${encodeURIComponent(artifact.artifactUri)}`;
 }
 
 function isPreviewableCadReviewArtifact(artifact: CadReviewEvidenceArtifact): boolean {
@@ -1320,7 +1326,7 @@ function CadReviewActionEvidenceCarousel({
       (artifact): artifact is CadReviewEvidenceArtifact =>
         artifact !== undefined && isPreviewableCadReviewArtifact(artifact),
     )
-    .slice(0, 3);
+    .slice(0, 6);
   if (artifacts.length === 0) {
     return null;
   }
@@ -1708,10 +1714,12 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   turnSummary,
   routeThreadKey,
   resolvedTheme,
+  onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary | undefined;
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   if (!turnSummary) return null;
   const checkpointFiles = turnSummary.files;
@@ -1723,6 +1731,7 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
       checkpointFiles={checkpointFiles}
       routeThreadKey={routeThreadKey}
       resolvedTheme={resolvedTheme}
+      onOpenTurnDiff={onOpenTurnDiff}
     />
   );
 });
@@ -1734,11 +1743,13 @@ function AssistantChangedFilesSectionInner({
   checkpointFiles,
   routeThreadKey,
   resolvedTheme,
+  onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary;
   checkpointFiles: TurnDiffSummary["files"];
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
   const allDirectoriesExpanded = useUiStateStore(
     (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.turnId] ?? true,
@@ -1769,13 +1780,23 @@ function AssistantChangedFilesSectionInner({
           >
             {allDirectoriesExpanded ? "Collapse all" : "Expand all"}
           </Button>
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            onClick={() => onOpenTurnDiff(turnSummary.turnId, checkpointFiles[0]?.path)}
+          >
+            View diff
+          </Button>
         </div>
       </div>
       <ChangedFilesTree
         key={`changed-files-tree:${turnSummary.turnId}`}
+        turnId={turnSummary.turnId}
         files={checkpointFiles}
         allDirectoriesExpanded={allDirectoriesExpanded}
         resolvedTheme={resolvedTheme}
+        onOpenTurnDiff={onOpenTurnDiff}
       />
     </div>
   );

@@ -180,6 +180,8 @@ describe("DesktopServerExposure", () => {
           mode: "network-accessible",
           endpointUrl: "http://192.168.1.20:4173",
           advertisedHost: "192.168.1.20",
+          tailscaleServeEnabled: false,
+          tailscaleServePort: 443,
         });
 
         const backendConfig = yield* serverExposure.backendConfig;
@@ -188,6 +190,37 @@ describe("DesktopServerExposure", () => {
 
         const persisted = yield* settings.get;
         assert.equal(persisted.serverExposureMode, "network-accessible");
+      }),
+    ),
+  );
+
+  it.effect("persists tailscale serve preferences atomically and reports no-op updates", () =>
+    withHarness(
+      emptyNetworkInterfaces,
+      Effect.gen(function* () {
+        const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+        const settings = yield* DesktopAppSettings.DesktopAppSettings;
+
+        yield* settings.load;
+        yield* serverExposure.configureFromSettings({ port: 4173 });
+
+        const changed = yield* serverExposure.setTailscaleServeEnabled({
+          enabled: true,
+          port: 8443,
+        });
+        assert.equal(changed.requiresRelaunch, true);
+        assert.equal(changed.state.tailscaleServeEnabled, true);
+        assert.equal(changed.state.tailscaleServePort, 8443);
+
+        const unchanged = yield* serverExposure.setTailscaleServeEnabled({
+          enabled: true,
+          port: 8443,
+        });
+        assert.equal(unchanged.requiresRelaunch, false);
+
+        const persisted = yield* settings.get;
+        assert.equal(persisted.tailscaleServeEnabled, true);
+        assert.equal(persisted.tailscaleServePort, 8443);
       }),
     ),
   );
@@ -203,7 +236,7 @@ describe("DesktopServerExposure", () => {
         const endpoints = yield* serverExposure.getAdvertisedEndpoints;
         assert.deepEqual(
           endpoints.map((endpoint) => endpoint.httpBaseUrl),
-          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/"],
+          ["http://127.0.0.1:4173/", "http://192.168.1.20:4173/", "http://100.90.1.2:4173/"],
         );
       }),
     ),

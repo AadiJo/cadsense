@@ -17,7 +17,6 @@ import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
-import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -28,7 +27,7 @@ import {
   orchestrationCommandsTotal,
   orchestrationCommandDuration,
 } from "../../observability/Metrics.ts";
-import { isTransientSqliteLockError, toPersistenceSqlError } from "../../persistence/Errors.ts";
+import { toPersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepository } from "../../persistence/Services/OrchestrationCommandReceipts.ts";
 import {
@@ -49,8 +48,6 @@ const isOrchestrationCommandPreviouslyRejectedError = Schema.is(
   OrchestrationCommandPreviouslyRejectedError,
 );
 const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvariantError);
-const ORCHESTRATION_COMMAND_QUEUE_CAPACITY = 1024;
-const ORCHESTRATION_EVENT_PUBSUB_CAPACITY = 4096;
 
 interface CommandEnvelope {
   command: OrchestrationCommand;
@@ -88,10 +85,8 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
 
-  const commandQueue = yield* Queue.bounded<CommandEnvelope>(ORCHESTRATION_COMMAND_QUEUE_CAPACITY);
-  const eventPubSub = yield* PubSub.bounded<OrchestrationEvent>(
-    ORCHESTRATION_EVENT_PUBSUB_CAPACITY,
-  );
+  const commandQueue = yield* Queue.unbounded<CommandEnvelope>();
+  const eventPubSub = yield* PubSub.unbounded<OrchestrationEvent>();
 
   const projectEventsOntoReadModel = (
     baseReadModel: OrchestrationReadModel,
@@ -197,11 +192,6 @@ const makeOrchestrationEngine = Effect.gen(function* () {
             }),
           )
           .pipe(
-            Effect.retry({
-              schedule: Schedule.spaced(Duration.millis(50)),
-              times: 5,
-              while: isTransientSqliteLockError,
-            }),
             Effect.catchTag("SqlError", (sqlError) =>
               Effect.fail(
                 toPersistenceSqlError("OrchestrationEngine.processEnvelope:transaction")(sqlError),

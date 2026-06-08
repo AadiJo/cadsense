@@ -545,25 +545,17 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
 
   it.effect("allows OpenCode MCP permissions without prompting in restricted modes", () =>
     Effect.sync(() => {
-      assert.deepEqual(buildOpenCodePermissionRules("approval-required").slice(0, 8), [
+      assert.deepEqual(buildOpenCodePermissionRules("approval-required").slice(0, 4), [
         { permission: "mcp", pattern: "*", action: "allow" },
         { permission: "cadsense-*", pattern: "*", action: "allow" },
         { permission: "cadsense_*", pattern: "*", action: "allow" },
         { permission: "question", pattern: "*", action: "allow" },
-        { permission: "read", pattern: "*", action: "allow" },
-        { permission: "list", pattern: "*", action: "allow" },
-        { permission: "glob", pattern: "*", action: "allow" },
-        { permission: "grep", pattern: "*", action: "allow" },
       ]);
-      assert.deepEqual(buildOpenCodePermissionRules("read-only").slice(0, 8), [
+      assert.deepEqual(buildOpenCodePermissionRules("read-only").slice(0, 4), [
         { permission: "mcp", pattern: "*", action: "allow" },
         { permission: "cadsense-*", pattern: "*", action: "allow" },
         { permission: "cadsense_*", pattern: "*", action: "allow" },
         { permission: "question", pattern: "*", action: "allow" },
-        { permission: "read", pattern: "*", action: "allow" },
-        { permission: "list", pattern: "*", action: "allow" },
-        { permission: "glob", pattern: "*", action: "allow" },
-        { permission: "grep", pattern: "*", action: "allow" },
       ]);
     }),
   );

@@ -26,6 +26,7 @@ export type SettingsSectionPath =
   | "/settings/cad-review"
   | "/settings/keybindings"
   | "/settings/providers"
+  | "/settings/source-control"
   | "/settings/connections"
   | "/settings/archived";
 

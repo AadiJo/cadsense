@@ -7,7 +7,6 @@ export type CadAgentViewCommand = Extract<CadViewCommand, { type: "set-view" | "
 export interface CadAgentViewState {
   readonly viewCommand?: CadAgentViewCommand;
   readonly exploded?: boolean;
-  readonly componentVisibilityById?: Record<string, boolean>;
   readonly updatedAt: string;
 }
 
@@ -181,29 +180,15 @@ function sanitizePersistedCadAgentViewState(
       continue;
     }
     const viewCommand = state.viewCommand;
-    const hasViewCommand = viewCommand?.type === "set-view" || viewCommand?.type === "set-camera";
-    const componentVisibilityById = sanitizeComponentVisibilityById(state.componentVisibilityById);
-    if (!hasViewCommand && state.exploded === undefined && !componentVisibilityById) {
+    if (viewCommand?.type !== "set-view" && viewCommand?.type !== "set-camera") {
       continue;
     }
     nextState[threadId] = {
-      ...(hasViewCommand ? { viewCommand } : {}),
-      ...(typeof state.exploded === "boolean" ? { exploded: state.exploded } : {}),
-      ...(componentVisibilityById ? { componentVisibilityById } : {}),
+      viewCommand,
       updatedAt: state.updatedAt,
     };
   }
   return nextState;
-}
-
-function sanitizeComponentVisibilityById(value: unknown): Record<string, boolean> | undefined {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-  const entries = Object.entries(value).filter(
-    (entry): entry is [string, boolean] => entry[0].length > 0 && typeof entry[1] === "boolean",
-  );
-  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
 export function hydratePersistedProjectState(parsed: PersistedUiState): void {
@@ -720,7 +705,6 @@ interface UiStateStore extends UiState {
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
   setCadExploded: (threadId: string, exploded: boolean) => void;
   recordCadAgentViewCommand: (threadId: string, command: CadViewCommand) => void;
-  setCadComponentVisibility: (threadId: string, componentId: string, visible: boolean) => void;
   requestCadZoomToFit: (threadId: string) => void;
   setLocalCadFiles: (scopeKey: string, files: readonly LocalCadFile[]) => void;
   clearLocalCadFiles: (scopeKey: string) => void;
@@ -779,8 +763,7 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
       if (
         previous?.updatedAt === next.updatedAt &&
         previous?.viewCommand?.commandId === next.viewCommand?.commandId &&
-        previous?.exploded === next.exploded &&
-        previous?.componentVisibilityById === next.componentVisibilityById
+        previous?.exploded === next.exploded
       ) {
         return state;
       }
@@ -789,32 +772,6 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
         cadAgentViewStateByThreadId: {
           ...state.cadAgentViewStateByThreadId,
           [threadId]: next,
-        },
-      };
-    }),
-  setCadComponentVisibility: (threadId, componentId, visible) =>
-    set((state) => {
-      if (!threadId || !componentId) {
-        return state;
-      }
-      const previous = state.cadAgentViewStateByThreadId[threadId];
-      const previousVisibility = previous?.componentVisibilityById ?? {};
-      if (previousVisibility[componentId] === visible) {
-        return state;
-      }
-      const updatedAt = new Date().toISOString();
-      return {
-        ...state,
-        cadAgentViewStateByThreadId: {
-          ...state.cadAgentViewStateByThreadId,
-          [threadId]: {
-            ...previous,
-            componentVisibilityById: {
-              ...previousVisibility,
-              [componentId]: visible,
-            },
-            updatedAt,
-          },
         },
       };
     }),

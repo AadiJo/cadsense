@@ -72,8 +72,6 @@ const ProviderRollbackConversationInput = Schema.Struct({
   numTurns: NonNegativeInt,
 });
 
-const PROVIDER_RUNTIME_EVENT_PUBSUB_CAPACITY = 4096;
-
 function toValidationError(
   operation: string,
   issue: string,
@@ -212,9 +210,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const registry = yield* ProviderAdapterRegistry;
   const directory = yield* ProviderSessionDirectory;
-  const runtimeEventPubSub = yield* PubSub.bounded<ProviderRuntimeEvent>(
-    PROVIDER_RUNTIME_EVENT_PUBSUB_CAPACITY,
-  );
+  const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
   const publishRuntimeEvent = (event: ProviderRuntimeEvent): Effect.Effect<void> =>

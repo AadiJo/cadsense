@@ -50,7 +50,7 @@ export function getProviderInteractionModeToggle(
   providers: ReadonlyArray<ServerProvider>,
   provider: ProviderDriverKind,
 ): boolean {
-  return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? false;
+  return getProviderSnapshot(providers, provider)?.showInteractionModeToggle ?? true;
 }
 
 export function isProviderEnabled(

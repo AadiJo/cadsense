@@ -1,5 +1,6 @@
 import {
   ApprovalRequestId,
+  type AssistantDeliveryMode,
   CommandId,
   MessageId,
   type OrchestrationEvent,
@@ -35,6 +36,7 @@ import {
   ProviderRuntimeIngestionService,
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
+import { ServerSettingsService } from "../../serverSettings.ts";
 
 const providerTurnKey = (threadId: ThreadId, turnId: TurnId) => `${threadId}:${turnId}`;
 const providerCommandId = (event: ProviderRuntimeEvent, tag: string): CommandId =>
@@ -52,6 +54,7 @@ const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_CACHE_CAPACITY = 20_000;
 const BUFFERED_MESSAGE_TEXT_BY_MESSAGE_ID_TTL = Duration.minutes(120);
 const BUFFERED_PROPOSED_PLAN_BY_ID_CACHE_CAPACITY = 10_000;
 const BUFFERED_PROPOSED_PLAN_BY_ID_TTL = Duration.minutes(120);
+const MAX_BUFFERED_ASSISTANT_CHARS = 24_000;
 const STRICT_PROVIDER_LIFECYCLE_GUARD =
   process.env.CADSENSE_STRICT_PROVIDER_LIFECYCLE_GUARD !== "0";
 
@@ -609,6 +612,7 @@ const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const providerService = yield* ProviderService;
   const projectionTurnRepository = yield* ProjectionTurnRepository;
+  const serverSettingsService = yield* ServerSettingsService;
 
   const turnMessageIdsByTurnKey = yield* Cache.make<string, Set<MessageId>>({
     capacity: TURN_MESSAGE_IDS_BY_TURN_CACHE_CAPACITY,
@@ -770,6 +774,26 @@ const make = Effect.gen(function* () {
       });
     });
 
+  const appendBufferedAssistantText = (messageId: MessageId, delta: string) =>
+    Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
+      Effect.flatMap((existingText) =>
+        Effect.gen(function* () {
+          const nextText = Option.match(existingText, {
+            onNone: () => delta,
+            onSome: (text) => `${text}${delta}`,
+          });
+          if (nextText.length <= MAX_BUFFERED_ASSISTANT_CHARS) {
+            yield* Cache.set(bufferedAssistantTextByMessageId, messageId, nextText);
+            return "";
+          }
+
+          // Safety valve: flush full buffered text as an assistant delta to cap memory.
+          yield* Cache.invalidate(bufferedAssistantTextByMessageId, messageId);
+          return nextText;
+        }),
+      ),
+    );
+
   const takeBufferedAssistantText = (messageId: MessageId) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
       Effect.flatMap((existingText) =>
@@ -808,6 +832,65 @@ const make = Effect.gen(function* () {
 
   const clearAssistantMessageState = (messageId: MessageId) =>
     clearBufferedAssistantText(messageId);
+
+  const flushBufferedAssistantMessage = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    messageId: MessageId;
+    turnId?: TurnId;
+    createdAt: string;
+    commandTag: string;
+  }) =>
+    Effect.gen(function* () {
+      const bufferedText = yield* takeBufferedAssistantText(input.messageId);
+      if (!hasRenderableAssistantText(bufferedText)) {
+        return false;
+      }
+
+      yield* orchestrationEngine.dispatch({
+        type: "thread.message.assistant.delta",
+        commandId: providerCommandId(input.event, input.commandTag),
+        threadId: input.threadId,
+        messageId: input.messageId,
+        delta: bufferedText,
+        ...(input.turnId ? { turnId: input.turnId } : {}),
+        createdAt: input.createdAt,
+      });
+      return true;
+    });
+
+  const flushBufferedAssistantMessagesForTurn = (input: {
+    event: ProviderRuntimeEvent;
+    threadId: ThreadId;
+    turnId: TurnId;
+    createdAt: string;
+    commandTag: string;
+  }) =>
+    Effect.gen(function* () {
+      const assistantMessageIds = yield* getAssistantMessageIdsForTurn(
+        input.threadId,
+        input.turnId,
+      );
+      const flushedMessageIds = new Set<MessageId>();
+      yield* Effect.forEach(
+        assistantMessageIds,
+        (messageId) =>
+          flushBufferedAssistantMessage({
+            event: input.event,
+            threadId: input.threadId,
+            messageId,
+            turnId: input.turnId,
+            createdAt: input.createdAt,
+            commandTag: input.commandTag,
+          }).pipe(
+            Effect.tap((flushed) =>
+              flushed ? Effect.sync(() => flushedMessageIds.add(messageId)) : Effect.void,
+            ),
+          ),
+        { concurrency: 1 },
+      ).pipe(Effect.asVoid);
+      return flushedMessageIds;
+    });
 
   const finalizeAssistantMessage = (input: {
     event: ProviderRuntimeEvent;
@@ -1268,15 +1351,34 @@ const make = Effect.gen(function* () {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
 
-        yield* orchestrationEngine.dispatch({
-          type: "thread.message.assistant.delta",
-          commandId: providerCommandId(event, "assistant-delta"),
-          threadId: thread.id,
-          messageId: assistantMessageId,
-          delta: assistantDelta,
-          ...(turnId ? { turnId } : {}),
-          createdAt: now,
-        });
+        const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
+          serverSettingsService.getSettings,
+          (settings) => (settings.enableAssistantStreaming ? "streaming" : "buffered"),
+        );
+        if (assistantDeliveryMode === "buffered") {
+          const spillChunk = yield* appendBufferedAssistantText(assistantMessageId, assistantDelta);
+          if (spillChunk.length > 0) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.message.assistant.delta",
+              commandId: providerCommandId(event, "assistant-delta-buffer-spill"),
+              threadId: thread.id,
+              messageId: assistantMessageId,
+              delta: spillChunk,
+              ...(turnId ? { turnId } : {}),
+              createdAt: now,
+            });
+          }
+        } else {
+          yield* orchestrationEngine.dispatch({
+            type: "thread.message.assistant.delta",
+            commandId: providerCommandId(event, "assistant-delta"),
+            threadId: thread.id,
+            messageId: assistantMessageId,
+            delta: assistantDelta,
+            ...(turnId ? { turnId } : {}),
+            createdAt: now,
+          });
+        }
       }
 
       const pauseForUserTurnId =
@@ -1285,7 +1387,23 @@ const make = Effect.gen(function* () {
           : undefined;
       if (pauseForUserTurnId) {
         const detailedThread = yield* getLoadedThreadDetail();
-        const flushedMessageIds = new Set<MessageId>();
+        const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
+          serverSettingsService.getSettings,
+          (settings) => (settings.enableAssistantStreaming ? "streaming" : "buffered"),
+        );
+        const flushedMessageIds =
+          assistantDeliveryMode === "buffered"
+            ? yield* flushBufferedAssistantMessagesForTurn({
+                event,
+                threadId: thread.id,
+                turnId: pauseForUserTurnId,
+                createdAt: now,
+                commandTag:
+                  event.type === "request.opened"
+                    ? "assistant-delta-flush-on-request-opened"
+                    : "assistant-delta-flush-on-user-input-requested",
+              })
+            : new Set<MessageId>();
         yield* finalizeActiveAssistantSegmentForTurn({
           event,
           threadId: thread.id,

@@ -12,6 +12,7 @@ import {
 } from "@cadsense/contracts";
 import { scopeThreadRef } from "@cadsense/client-runtime";
 import { DEFAULT_UNIFIED_SETTINGS } from "@cadsense/contracts/settings";
+import * as Duration from "effect/Duration";
 import * as Equal from "effect/Equal";
 import { APP_VERSION, HOSTED_APP_CHANNEL } from "../../branding";
 import {
@@ -279,8 +280,18 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
+      ...(settings.displayGitUi !== DEFAULT_UNIFIED_SETTINGS.displayGitUi
+        ? ["Display Git UI"]
+        : []),
       ...(settings.displayCadReviewWorkLog !== DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog
         ? ["CAD review work log"]
+        : []),
+      ...(settings.enableAssistantStreaming !== DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming
+        ? ["Assistant output"]
+        : []),
+      ...(Duration.toMillis(settings.automaticGitFetchInterval) !==
+      Duration.toMillis(DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval)
+        ? ["Automatic Git fetch interval"]
         : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
@@ -297,6 +308,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.addProjectBaseDirectory,
       settings.displayCadReviewWorkLog,
+      settings.displayGitUi,
+      settings.automaticGitFetchInterval,
+      settings.enableAssistantStreaming,
       settings.sidebarThreadPreviewCount,
       settings.timestampFormat,
       theme,
@@ -316,8 +330,11 @@ export function useSettingsRestore(onRestored?: () => void) {
     setTheme("system");
     updateSettings({
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+      displayGitUi: DEFAULT_UNIFIED_SETTINGS.displayGitUi,
       displayCadReviewWorkLog: DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+      enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+      automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -419,6 +436,33 @@ export function GeneralSettingsPanel() {
                 </SelectItem>
               </SelectPopup>
             </Select>
+          }
+        />
+
+        <SettingsRow
+          title="Assistant output"
+          description="Show token-by-token output while a response is in progress."
+          resetAction={
+            settings.enableAssistantStreaming !==
+            DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming ? (
+              <SettingResetButton
+                label="assistant output"
+                onClick={() =>
+                  updateSettings({
+                    enableAssistantStreaming: DEFAULT_UNIFIED_SETTINGS.enableAssistantStreaming,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.enableAssistantStreaming}
+              onCheckedChange={(checked) =>
+                updateSettings({ enableAssistantStreaming: Boolean(checked) })
+              }
+              aria-label="Stream assistant messages"
+            />
           }
         />
 

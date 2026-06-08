@@ -33,11 +33,14 @@ import { projectScriptCwd } from "@cadsense/shared/projectScripts";
 import { truncate } from "@cadsense/shared/String";
 import { Debouncer } from "@tanstack/react-pacer";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import { useShallow } from "zustand/react/shallow";
+import { useGitStatus } from "~/lib/gitStatusState";
 import { usePrimaryEnvironmentId } from "../environments/primary";
 import { readEnvironmentApi } from "../environmentApi";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
+import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
 import {
   collapseExpandedComposerCursor,
   parseStandaloneComposerSlashCommand,
@@ -67,7 +70,7 @@ import {
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
 } from "../pendingUserInput";
-import { useStore } from "../store";
+import { selectProjectsAcrossEnvironments, useStore } from "../store";
 import { createProjectSelectorByRef, createThreadSelectorByRef } from "../storeSelectors";
 import { useUiStateStore } from "../uiStateStore";
 import {
@@ -77,6 +80,7 @@ import {
 } from "../proposedPlan";
 import {
   DEFAULT_INTERACTION_MODE,
+  DEFAULT_RUNTIME_MODE,
   type ChatMessage,
   type SessionPhase,
   type Thread,
@@ -84,9 +88,13 @@ import {
 } from "../types";
 import { useTheme } from "../hooks/useTheme";
 import { useCommandPaletteStore } from "../commandPaletteStore";
-import { resolveShortcutCommand } from "../keybindings";
+import { buildTemporaryWorktreeBranchName } from "@cadsense/shared/git";
+import { useMediaQuery } from "../hooks/useMediaQuery";
+import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../rightPanelLayout";
+import { BranchToolbar } from "./BranchToolbar";
+import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
+import PlanSidebar from "./PlanSidebar";
 import {
-  ArrowDownIcon,
   CheckIcon,
   ChevronDownIcon,
   BanIcon,
@@ -103,19 +111,31 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { formatCaughtErrorMessage, newCommandId, newMessageId, newThreadId } from "~/lib/utils";
+import {
+  formatCaughtErrorMessage,
+  newCommandId,
+  newDraftId,
+  newMessageId,
+  newThreadId,
+} from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useSettings, useUpdateSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
+import {
+  deriveLogicalProjectKeyFromSettings,
+  selectProjectGroupingSettings,
+} from "../logicalProject";
 import { isProjectlessChatProject } from "../projectlessChat";
 import {
   reconnectSavedEnvironment,
   useSavedEnvironmentRegistryStore,
   useSavedEnvironmentRuntimeStore,
 } from "../environments/runtime";
+import { buildDraftThreadRouteParams } from "../threadRoutes";
 import {
   type ComposerImageAttachment,
   type ComposerSubmitMode,
+  type DraftThreadEnvMode,
   useComposerDraftStore,
   type DraftId,
 } from "../composerDraftStore";
@@ -124,18 +144,15 @@ import {
   formatTerminalContextLabel,
   type TerminalContextDraft,
 } from "../lib/terminalContext";
-import {
-  cadReviewChildThreadIdsForActiveReviews,
-  deriveCadReviewChildActivitySummaries,
-  type CadReviewChildActivitySummary,
-} from "../lib/cadAgentViewState";
+import { deriveCadReviewChildActivitySummaries } from "../lib/cadAgentViewState";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
+import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import { ChatHeader } from "./chat/ChatHeader";
 import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
-import { resolveEnvironmentOptionLabel } from "../environmentOptionLabel";
+import { resolveEffectiveEnvMode, resolveEnvironmentOptionLabel } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
@@ -149,9 +166,11 @@ import {
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
   type LocalDispatchSnapshot,
+  PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
   readFileAsDataUrl,
+  resolveSendEnvMode,
   revokeBlobPreviewUrl,
   revokeUserMessagePreviewUrls,
   shouldWriteThreadErrorToCurrentServerThread,
@@ -159,7 +178,7 @@ import {
   waitForProjectedServerThread,
   threadHasStarted,
 } from "./ChatView.logic";
-import { useChatRoutePanelsState } from "./ChatRoutePanels";
+import { useChatRoutePanelsMarkOpened } from "./ChatRoutePanels";
 import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useComposerHandleContext } from "../composerHandleContext";
 import {
@@ -169,6 +188,7 @@ import {
 } from "~/rpc/serverState";
 import { sanitizeThreadErrorMessage } from "~/rpc/transportError";
 import { retainThreadDetailSubscription } from "../environments/runtime/service";
+import { RightPanelSheet } from "./RightPanelSheet";
 import { Button } from "./ui/button";
 import {
   buildVersionMismatchDismissalKey,
@@ -186,7 +206,6 @@ const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_CAD_REVIEW_CHILD_ACTIVITY_BY_REVIEW_ID = {};
 const CAD_REVIEW_PANEL_PREWARM_MS = 1_000;
-const NOOP_SET_CAD_PANEL_OPEN = () => undefined;
 type EnvironmentUnavailableState = {
   readonly environmentId: EnvironmentId;
   readonly label: string;
@@ -321,7 +340,6 @@ interface CadReviewOverlayStep {
   label: string;
   state: CadReviewOverlayStepState;
   substeps: string[];
-  outputTokens: number | null;
 }
 
 const CAD_REVIEW_ACTIVE_STATUSES = new Set<CadReviewStatus>([
@@ -331,7 +349,6 @@ const CAD_REVIEW_ACTIVE_STATUSES = new Set<CadReviewStatus>([
   "reviewing",
   "deep-diving",
   "synthesizing",
-  "failed",
 ]);
 
 const CAD_REVIEW_PROGRESS_ORDER: CadReviewStatus[] = [
@@ -374,7 +391,6 @@ function isCadReviewWorkLogEntry(entry: WorkLogEntry): boolean {
 function deriveCadReviewOverlaySteps(
   reviews: ReadonlyArray<CadReviewReport>,
   cadReviewWorkLogEntries: ReadonlyArray<WorkLogEntry>,
-  childActivityByReviewId: Readonly<Record<string, CadReviewChildActivitySummary>>,
 ): CadReviewOverlayStep[] {
   const activeReview = [...reviews]
     .filter((review) => CAD_REVIEW_ACTIVE_STATUSES.has(review.status))
@@ -386,33 +402,12 @@ function deriveCadReviewOverlaySteps(
   const status = activeReview.status;
   const failed = status === "failed";
   const entries = cadReviewWorkLogEntries.filter((entry) => entry.label.trim().length > 0);
-  const childActivity = childActivityByReviewId[activeReview.id];
-  const liveOutputTokensByStep =
-    childActivity?.reviewRunId === activeReview.id ? childActivity.outputTokensByStep : {};
-  const outputTokensByStep = activeReview.outputTokensByStep ?? {};
-  const outputTokensForStep = (
-    step: keyof NonNullable<CadReviewReport["outputTokensByStep"]>,
-  ): number | null => {
-    const tokens = outputTokensByStep[step];
-    return typeof tokens === "number" && Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
-  };
-  const liveOutputTokensForStep = (
-    step: keyof NonNullable<CadReviewReport["outputTokensByStep"]>,
-  ): number | null => {
-    const persistedTokens = outputTokensForStep(step);
-    const liveTokens = liveOutputTokensByStep[step];
-    if (typeof liveTokens === "number" && Number.isFinite(liveTokens) && liveTokens > 0) {
-      return Math.max(persistedTokens ?? 0, liveTokens);
-    }
-    return persistedTokens;
-  };
 
   const requestedStep = buildCadReviewStep({
     id: "requested",
     label: "Review requested",
     state: statusStateForCadReviewStatus(status, "requested", failed),
     substeps: latestCadReviewSubsteps(entries, ["requested", "created"], ["Preparing review run"]),
-    outputTokens: null,
   });
   const planningStep = buildCadReviewStep({
     id: "planning",
@@ -423,7 +418,6 @@ function deriveCadReviewOverlaySteps(
       ["planning", "plan"],
       ["Mapping mechanisms", "Choosing review priorities"],
     ),
-    outputTokens: liveOutputTokensForStep("planning"),
   });
   const baselineSkipped =
     activeReview.reviewPlan?.baselineRequired === false &&
@@ -447,7 +441,6 @@ function deriveCadReviewOverlaySteps(
             `${activeReview.evidenceArtifacts.filter((artifact) => artifact.scope === "baseline").length} views captured`,
           ],
         ),
-    outputTokens: null,
   });
   const reviewerSelection = activeReview.reviewPlan?.reviewerSelection ?? [];
   const enabledReviewerPersonas =
@@ -464,7 +457,6 @@ function deriveCadReviewOverlaySteps(
     ({ persona }) => !enabledReviewerPersonas || enabledReviewerPersonas.has(persona),
   ).map(({ persona, label }) => {
     const report = activeReview.personaReports.find((entry) => entry.persona === persona);
-    const personaOutputTokens = liveOutputTokensForStep(persona);
     const isActive =
       status === "reviewing" &&
       (!activeReview.activePersona ||
@@ -484,10 +476,9 @@ function deriveCadReviewOverlaySteps(
               : statusStateAfter("reviewing", status),
       substeps: latestCadReviewSubsteps(
         entries,
-        [persona, label.toLowerCase()],
+        [persona, label.toLowerCase(), "reviewer"],
         ["Inspecting geometry", "Attributing tool calls"],
       ),
-      outputTokens: personaOutputTokens,
     });
   });
   const deepDiveStep = buildCadReviewStep({
@@ -502,7 +493,6 @@ function deriveCadReviewOverlaySteps(
         `${activeReview.deepDiveReports?.length ?? 0} deep dives drafted`,
       ],
     ),
-    outputTokens: liveOutputTokensForStep("deep_diving"),
   });
   const synthesisStep = buildCadReviewStep({
     id: "synthesizing",
@@ -513,7 +503,6 @@ function deriveCadReviewOverlaySteps(
       ["synthesis", "synthesizing"],
       ["Merging reviewer findings", "Writing action items"],
     ),
-    outputTokens: liveOutputTokensForStep("synthesizing"),
   });
 
   return [
@@ -531,26 +520,12 @@ function deriveCadReviewOverlaySteps(
           label: step.label,
           state: step.state,
           substeps: [],
-          outputTokens: step.outputTokens,
         },
   );
 }
 
 function buildCadReviewStep(step: CadReviewOverlayStep): CadReviewOverlayStep {
-  const substeps: string[] = [];
-  const seen = new Set<string>();
-  for (const substep of step.substeps) {
-    const normalized = substep.trim().toLowerCase();
-    if (!normalized || seen.has(normalized)) {
-      continue;
-    }
-    seen.add(normalized);
-    substeps.push(substep);
-    if (substeps.length >= 2) {
-      break;
-    }
-  }
-  return { ...step, substeps };
+  return { ...step, substeps: step.substeps.slice(0, 2) };
 }
 
 function statusStateForCadReviewStatus(
@@ -579,56 +554,15 @@ function latestCadReviewSubsteps(
   fallback: ReadonlyArray<string>,
 ): string[] {
   const normalizedNeedles = needles.map((needle) => needle.toLowerCase());
-  const matches = entries.filter((entry) => {
-    const haystack =
-      `${entry.activityKind ?? ""} ${entry.label} ${entry.detail ?? ""}`.toLowerCase();
-    return normalizedNeedles.some((needle) => haystack.includes(needle));
-  });
-  const latestDistinctMatches: string[] = [];
-  const seenProgressKeys = new Set<string>();
-  for (let index = matches.length - 1; index >= 0; index -= 1) {
-    const label = matches[index]?.label;
-    if (!label) {
-      continue;
-    }
-    const progressKey = cadReviewSubstepProgressKey(label);
-    if (seenProgressKeys.has(progressKey)) {
-      continue;
-    }
-    seenProgressKeys.add(progressKey);
-    latestDistinctMatches.unshift(label);
-    if (latestDistinctMatches.length >= 2) {
-      break;
-    }
-  }
-  return latestDistinctMatches.length > 0 ? latestDistinctMatches : [...fallback];
-}
-
-function cadReviewSubstepProgressKey(label: string): string {
-  return label
-    .toLowerCase()
-    .replace(
-      /\b(started|starting|running|completed|complete|failed|failing|skipped|requested|created)\b/g,
-      "",
-    )
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function formatCadReviewOutputTokens(tokens: number | null): string | null {
-  if (tokens === null || !Number.isFinite(tokens) || tokens < 0) {
-    return null;
-  }
-  if (tokens < 1_000) {
-    return `${Math.round(tokens)}`;
-  }
-  if (tokens < 10_000) {
-    return `${(tokens / 1_000).toFixed(1).replace(/\.0$/, "")}k`;
-  }
-  if (tokens < 1_000_000) {
-    return `${Math.round(tokens / 1_000)}k`;
-  }
-  return `${(tokens / 1_000_000).toFixed(1).replace(/\.0$/, "")}m`;
+  const matches = entries
+    .filter((entry) => {
+      const haystack =
+        `${entry.activityKind ?? ""} ${entry.label} ${entry.detail ?? ""}`.toLowerCase();
+      return normalizedNeedles.some((needle) => haystack.includes(needle));
+    })
+    .slice(-2)
+    .map((entry) => entry.label);
+  return matches.length > 0 ? matches : [...fallback];
 }
 
 function CadReviewProgressOverlay({ steps }: { steps: ReadonlyArray<CadReviewOverlayStep> }) {
@@ -650,7 +584,6 @@ function CadReviewProgressOverlay({ steps }: { steps: ReadonlyArray<CadReviewOve
 }
 
 function CadReviewProgressStep({ step, isLast }: { step: CadReviewOverlayStep; isLast: boolean }) {
-  const outputTokenLabel = formatCadReviewOutputTokens(step.outputTokens);
   return (
     <div className="grid grid-cols-[22px_1fr] gap-x-2.5">
       <div className="relative flex justify-center">
@@ -686,23 +619,15 @@ function CadReviewProgressStep({ step, isLast }: { step: CadReviewOverlayStep; i
         ) : null}
       </div>
       <div className="min-w-0 pb-2">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <p
-            className={cn(
-              "min-w-0 truncate text-xs font-medium leading-5",
-              step.state === "pending" ? "text-muted-foreground/55" : "text-foreground",
-              step.state === "skipped" && "text-yellow-700 dark:text-yellow-300",
-            )}
-          >
-            {step.label}
-          </p>
-          {outputTokenLabel ? (
-            <span className="inline-flex shrink-0 items-center gap-0.5 rounded border border-border/70 bg-muted/40 px-1 py-0 text-[10px] font-medium leading-4 text-muted-foreground">
-              {outputTokenLabel}
-              <ArrowDownIcon aria-label="output tokens" className="size-2.5" />
-            </span>
-          ) : null}
-        </div>
+        <p
+          className={cn(
+            "truncate text-xs font-medium leading-5",
+            step.state === "pending" ? "text-muted-foreground/55" : "text-foreground",
+            step.state === "skipped" && "text-yellow-700 dark:text-yellow-300",
+          )}
+        >
+          {step.label}
+        </p>
         {step.substeps.length > 0 ? (
           <div
             key={step.substeps.join("\u001f")}
@@ -735,12 +660,14 @@ type ChatViewProps =
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
+      onDiffPanelOpen?: () => void;
       routeKind: "server";
       draftId?: never;
     }
   | {
       environmentId: EnvironmentId;
       threadId: ThreadId;
+      onDiffPanelOpen?: () => void;
       routeKind: "draft";
       draftId: DraftId;
     };
@@ -857,10 +784,9 @@ function useLocalDispatchState(input: {
 }
 
 export default function ChatView(props: ChatViewProps) {
-  const { environmentId, threadId, routeKind } = props;
-  const routePanelsState = useChatRoutePanelsState();
-  const cadPanelOpen = routePanelsState?.cadPanelOpen ?? false;
-  const setCadPanelOpen = routePanelsState?.setCadPanelOpen ?? NOOP_SET_CAD_PANEL_OPEN;
+  const { environmentId, threadId, routeKind, onDiffPanelOpen } = props;
+  const markDiffOpenedFromRoutePanels = useChatRoutePanelsMarkOpened();
+  const notifyDiffPanelOpened = onDiffPanelOpen ?? markDiffOpenedFromRoutePanels;
   const draftId = routeKind === "draft" ? props.draftId : null;
   const routeThreadRef = useMemo(
     () => scopeThreadRef(environmentId, threadId),
@@ -889,6 +815,10 @@ export default function ChatView(props: ChatViewProps) {
   const autoOpenPlanSidebar = settings.autoOpenPlanSidebar;
   const displayCadReviewWorkLog = settings.displayCadReviewWorkLog;
   const navigate = useNavigate();
+  const rawSearch = useSearch({
+    strict: false,
+    select: (params) => parseDiffRouteSearch(params),
+  });
   const { resolvedTheme } = useTheme();
   // Granular store selectors — avoid subscribing to prompt changes.
   const composerActiveProvider = useComposerDraftStore(
@@ -910,6 +840,13 @@ export default function ChatView(props: ChatViewProps) {
   const setComposerDraftSubmitMode = useComposerDraftStore((store) => store.setSubmitMode);
   const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
   const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
+  const getDraftSessionByLogicalProjectKey = useComposerDraftStore(
+    (store) => store.getDraftSessionByLogicalProjectKey,
+  );
+  const getDraftSession = useComposerDraftStore((store) => store.getDraftSession);
+  const setLogicalProjectDraftThreadId = useComposerDraftStore(
+    (store) => store.setLogicalProjectDraftThreadId,
+  );
   const draftThread = useComposerDraftStore((store) =>
     routeKind === "server"
       ? store.getDraftSessionByRef(routeThreadRef)
@@ -944,14 +881,20 @@ export default function ChatView(props: ChatViewProps) {
     useState<Record<string, number>>({});
   const [planSidebarOpen, setPlanSidebarOpen] = useState(false);
   const [onshapeSyncingProjectIds, setOnshapeSyncingProjectIds] = useState(() => new Set<string>());
+  const shouldUsePlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   // Tracks whether the user explicitly dismissed the sidebar for the active turn.
   const planSidebarDismissedForTurnRef = useRef<string | null>(null);
   // When set, the thread-change reset effect will open the sidebar instead of closing it.
   // Used by "Implement in a new thread" to carry the sidebar-open intent across navigation.
   const planSidebarOpenOnNextThreadRef = useRef(false);
+  const [pullRequestDialogState, setPullRequestDialogState] =
+    useState<PullRequestDialogState | null>(null);
   const [attachmentPreviewHandoffByMessageId, setAttachmentPreviewHandoffByMessageId] = useState<
     Record<string, string[]>
   >({});
+  const [pendingServerThreadEnvMode, setPendingServerThreadEnvMode] =
+    useState<DraftThreadEnvMode | null>(null);
+  const [pendingServerThreadBranch, setPendingServerThreadBranch] = useState<string | null>();
   const [lastInvokedScriptByProjectId, setLastInvokedScriptByProjectId] = useLocalStorage(
     LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
     {},
@@ -991,6 +934,8 @@ export default function ChatView(props: ChatViewProps) {
   const activeThread = isServerThread ? serverThread : localDraftThread;
   const interactionMode = DEFAULT_INTERACTION_MODE;
   const isLocalDraftThread = !isServerThread && localDraftThread !== undefined;
+  const canCheckoutPullRequestIntoThread = isLocalDraftThread;
+  const diffOpen = rawSearch.diff === "1";
   const activeThreadId = activeThread?.id ?? null;
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const activeThreadStartedForUi = Boolean(
@@ -1079,24 +1024,10 @@ export default function ChatView(props: ChatViewProps) {
     }
     return retainThreadDetailSubscription(environmentId, threadId);
   }, [environmentId, routeKind, threadId]);
-  const activeCadReviewChildThreadIds = useMemo(
-    () => (activeThread ? cadReviewChildThreadIdsForActiveReviews(activeThread) : []),
-    [activeThread],
-  );
-  useEffect(() => {
-    if (routeKind !== "server" || activeCadReviewChildThreadIds.length === 0) {
-      return;
-    }
-    const releases = activeCadReviewChildThreadIds.map((childThreadId) =>
-      retainThreadDetailSubscription(environmentId, childThreadId),
-    );
-    return () => {
-      for (const release of releases) {
-        release();
-      }
-    };
-  }, [activeCadReviewChildThreadIds, environmentId, routeKind]);
 
+  // Compute the list of environments this logical project spans, used to
+  // drive the environment picker in BranchToolbar.
+  const allProjects = useStore(useShallow(selectProjectsAcrossEnvironments));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedEnvironmentRegistry = useSavedEnvironmentRegistryStore((s) => s.byId);
   const savedEnvironmentRuntimeById = useSavedEnvironmentRuntimeStore((s) => s.byId);
@@ -1172,6 +1103,160 @@ export default function ChatView(props: ChatViewProps) {
     },
     [],
   );
+  const projectGroupingSettings = useSettings(selectProjectGroupingSettings);
+  const logicalProjectEnvironments = useMemo(() => {
+    if (!activeProject) return [];
+    const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
+    const memberProjects = allProjects.filter(
+      (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
+    );
+    const seen = new Set<string>();
+    const envs: Array<{
+      environmentId: EnvironmentId;
+      projectId: ProjectId;
+      label: string;
+      isPrimary: boolean;
+    }> = [];
+    for (const p of memberProjects) {
+      if (seen.has(p.environmentId)) continue;
+      seen.add(p.environmentId);
+      const isPrimary = p.environmentId === primaryEnvironmentId;
+      const savedRecord = savedEnvironmentRegistry[p.environmentId];
+      const runtimeState = savedEnvironmentRuntimeById[p.environmentId];
+      const label = resolveEnvironmentOptionLabel({
+        isPrimary,
+        environmentId: p.environmentId,
+        runtimeLabel: runtimeState?.descriptor?.label ?? null,
+        savedLabel: savedRecord?.label ?? null,
+      });
+      envs.push({
+        environmentId: p.environmentId,
+        projectId: p.id,
+        label,
+        isPrimary,
+      });
+    }
+    // Sort: primary first, then alphabetical
+    envs.sort((a, b) => {
+      if (a.isPrimary !== b.isPrimary) return a.isPrimary ? -1 : 1;
+      return a.label.localeCompare(b.label);
+    });
+    return envs;
+  }, [
+    activeProject,
+    allProjects,
+    projectGroupingSettings,
+    primaryEnvironmentId,
+    savedEnvironmentRegistry,
+    savedEnvironmentRuntimeById,
+  ]);
+  const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
+
+  const openPullRequestDialog = useCallback(
+    (reference?: string) => {
+      if (!canCheckoutPullRequestIntoThread) {
+        return;
+      }
+      setPullRequestDialogState({
+        initialReference: reference ?? null,
+        key: Date.now(),
+      });
+    },
+    [canCheckoutPullRequestIntoThread],
+  );
+
+  const closePullRequestDialog = useCallback(() => {
+    setPullRequestDialogState(null);
+  }, []);
+
+  const openOrReuseProjectDraftThread = useCallback(
+    async (input: { branch: string; worktreePath: string | null; envMode: DraftThreadEnvMode }) => {
+      if (!activeProject) {
+        throw new Error("No active project is available for this pull request.");
+      }
+      const activeProjectRef = scopeProjectRef(activeProject.environmentId, activeProject.id);
+      const logicalProjectKey = deriveLogicalProjectKeyFromSettings(
+        activeProject,
+        projectGroupingSettings,
+      );
+      const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey);
+      if (storedDraftSession) {
+        setDraftThreadContext(storedDraftSession.draftId, input);
+        setLogicalProjectDraftThreadId(
+          logicalProjectKey,
+          activeProjectRef,
+          storedDraftSession.draftId,
+          {
+            threadId: storedDraftSession.threadId,
+            ...input,
+          },
+        );
+        if (routeKind !== "draft" || draftId !== storedDraftSession.draftId) {
+          await navigate({
+            to: "/draft/$draftId",
+            params: buildDraftThreadRouteParams(storedDraftSession.draftId),
+          });
+        }
+        return storedDraftSession.threadId;
+      }
+
+      const activeDraftSession = routeKind === "draft" && draftId ? getDraftSession(draftId) : null;
+      if (
+        !isServerThread &&
+        activeDraftSession?.logicalProjectKey === logicalProjectKey &&
+        draftId
+      ) {
+        setDraftThreadContext(draftId, input);
+        setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, draftId, {
+          threadId: activeDraftSession.threadId,
+          createdAt: activeDraftSession.createdAt,
+          runtimeMode: activeDraftSession.runtimeMode,
+          interactionMode: activeDraftSession.interactionMode,
+          ...input,
+        });
+        return activeDraftSession.threadId;
+      }
+
+      const nextDraftId = newDraftId();
+      const nextThreadId = newThreadId();
+      setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
+        threadId: nextThreadId,
+        createdAt: new Date().toISOString(),
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        ...input,
+      });
+      await navigate({
+        to: "/draft/$draftId",
+        params: buildDraftThreadRouteParams(nextDraftId),
+      });
+      return nextThreadId;
+    },
+    [
+      activeProject,
+      draftId,
+      getDraftSession,
+      getDraftSessionByLogicalProjectKey,
+      isServerThread,
+      navigate,
+      projectGroupingSettings,
+      routeKind,
+      setDraftThreadContext,
+      setLogicalProjectDraftThreadId,
+    ],
+  );
+
+  const handlePreparedPullRequestThread = useCallback(
+    async (input: { branch: string; worktreePath: string | null }) => {
+      await openOrReuseProjectDraftThread({
+        branch: input.branch,
+        worktreePath: input.worktreePath,
+        envMode: input.worktreePath ? "worktree" : "local",
+      });
+    },
+    [openOrReuseProjectDraftThread],
+  );
+
   useEffect(() => {
     if (!serverThread?.id) return;
     if (!latestTurnSettled) return;
@@ -1423,7 +1508,7 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveActivePlanState(threadActivities, activeLatestTurn?.turnId ?? undefined),
     [activeLatestTurn?.turnId, threadActivities],
   );
-  const planSidebarLabel = "Tasks";
+  const planSidebarLabel = sidebarProposedPlan || interactionMode === "plan" ? "Plan" : "Tasks";
   const showPlanFollowUpPrompt =
     pendingUserInputs.length === 0 &&
     interactionMode === "plan" &&
@@ -1663,13 +1748,8 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread?.proposedPlans, activeThread?.reviews, timelineMessages, timelineWorkLogEntries],
   );
   const turnDiffSummaryByAssistantMessageId = useMemo(
-    () =>
-      new Map<MessageId, TurnDiffSummary>(
-        (activeThread?.turnDiffSummaries ?? []).flatMap((summary) =>
-          summary.assistantMessageId ? [[summary.assistantMessageId, summary] as const] : [],
-        ),
-      ),
-    [activeThread?.turnDiffSummaries],
+    () => new Map<MessageId, TurnDiffSummary>(),
+    [],
   );
   const revertTurnCountByUserMessageId = useMemo(() => {
     const byUserMessageId = new Map<MessageId, number>();
@@ -1728,6 +1808,11 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const displayGitUi = settings.displayGitUi;
+  const gitStatusQuery = useGitStatus({
+    environmentId,
+    cwd: displayGitUi ? gitCwd : null,
+  });
   const keybindings = useServerKeybindings();
   const availableEditors = useServerAvailableEditors();
   // Prefer an instance-id match so a custom Codex instance (e.g.
@@ -1751,14 +1836,89 @@ export default function ChatView(props: ChatViewProps) {
   const activeProjectCwd = activeProject?.cwd ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
-  const onToggleCadPanel = useCallback(
-    (open: boolean) => {
+  // Default true while loading to avoid toolbar flicker.
+  const isGitRepo = displayGitUi ? (gitStatusQuery.data?.isRepo ?? true) : true;
+  const diffPanelShortcutLabel = useMemo(
+    () => shortcutLabelForCommand(keybindings, "diff.toggle"),
+    [keybindings],
+  );
+  const onToggleDiff = useCallback(
+    (open?: boolean) => {
       if (isProjectlessChat) {
         return;
       }
-      setCadPanelOpen(open);
+      if (!isServerThread && routeKind !== "draft") {
+        return;
+      }
+      const nextDiffOpen = open ?? !diffOpen;
+      if (nextDiffOpen === diffOpen) {
+        return;
+      }
+      if (nextDiffOpen) {
+        notifyDiffPanelOpened?.();
+      }
+      if (routeKind === "server") {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: {
+            environmentId,
+            threadId,
+          },
+          replace: true,
+          search: (previous) => {
+            const rest = stripDiffSearchParams(previous);
+            return nextDiffOpen ? { ...rest, diff: "1" } : { ...rest, diff: undefined };
+          },
+        });
+        return;
+      }
+      if (routeKind === "draft" && draftId) {
+        void navigate({
+          to: "/draft/$draftId",
+          params: buildDraftThreadRouteParams(draftId),
+          replace: true,
+          search: (previous) => {
+            const rest = stripDiffSearchParams(previous);
+            return nextDiffOpen ? { ...rest, diff: "1" } : { ...rest, diff: undefined };
+          },
+        });
+      }
     },
-    [isProjectlessChat, setCadPanelOpen],
+    [
+      diffOpen,
+      draftId,
+      environmentId,
+      isProjectlessChat,
+      isServerThread,
+      navigate,
+      notifyDiffPanelOpened,
+      routeKind,
+      threadId,
+    ],
+  );
+
+  const envLocked = Boolean(
+    activeThread &&
+    (activeThread.messages.length > 0 ||
+      optimisticUserMessages.length > 0 ||
+      (activeThread.session !== null && activeThread.session.status !== "closed")),
+  );
+
+  // Handle environment change for draft threads.  When the user picks a
+  // different environment we update the draft context to point at the physical
+  // project in that environment while keeping the same logical project.
+  const onEnvironmentChange = useCallback(
+    (nextEnvironmentId: EnvironmentId) => {
+      if (envLocked || !draftId) return;
+      const target = logicalProjectEnvironments.find(
+        (env) => env.environmentId === nextEnvironmentId,
+      );
+      if (!target) return;
+      setDraftThreadContext(draftId, {
+        projectRef: scopeProjectRef(target.environmentId, target.projectId),
+      });
+    },
+    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
   );
 
   const setThreadError = useCallback(
@@ -1805,15 +1965,63 @@ export default function ChatView(props: ChatViewProps) {
         if (current[activeProject.id] === script.id) return current;
         return { ...current, [activeProject.id]: script.id };
       });
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Project scripts unavailable",
-          description: "The integrated terminal has been removed.",
-        }),
-      );
+      const api = readEnvironmentApi(environmentId);
+      if (!api) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Unable to run script",
+            description: "The environment connection is unavailable.",
+          }),
+        );
+        return;
+      }
+
+      const cwd = projectScriptCwd({
+        project: { cwd: activeProject.cwd },
+        worktreePath: activeThreadWorktreePath,
+      });
+      const env = activeThreadWorktreePath
+        ? {
+            CADSENSE_PROJECT_ROOT: activeProject.cwd,
+            CADSENSE_WORKTREE_PATH: activeThreadWorktreePath,
+          }
+        : {
+            CADSENSE_PROJECT_ROOT: activeProject.cwd,
+          };
+      const terminalId = `script-${script.id}`;
+
+      try {
+        await api.terminal.open({
+          threadId: targetThreadId,
+          terminalId,
+          cwd,
+          worktreePath: activeThreadWorktreePath,
+          env,
+        });
+        await api.terminal.write({
+          threadId: targetThreadId,
+          terminalId,
+          data: `${script.command}\r`,
+        });
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Script failed to start",
+            description: error instanceof Error ? error.message : `Could not run "${script.name}".`,
+          }),
+        );
+      }
     },
-    [activeProject, activeThreadId, setLastInvokedScriptByProjectId, threadId],
+    [
+      activeProject,
+      activeThreadId,
+      activeThreadWorktreePath,
+      environmentId,
+      setLastInvokedScriptByProjectId,
+      threadId,
+    ],
   );
 
   const persistProjectScripts = useCallback(
@@ -2050,11 +2258,11 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const handleInteractionModeChange = useCallback(
-    (_mode: ProviderInteractionMode) => {
-      if (interactionMode === DEFAULT_INTERACTION_MODE) return;
-      setComposerDraftInteractionMode(composerDraftTarget, DEFAULT_INTERACTION_MODE);
+    (mode: ProviderInteractionMode) => {
+      if (mode === interactionMode) return;
+      setComposerDraftInteractionMode(composerDraftTarget, mode);
       if (isLocalDraftThread) {
-        setDraftThreadContext(composerDraftTarget, { interactionMode: DEFAULT_INTERACTION_MODE });
+        setDraftThreadContext(composerDraftTarget, { interactionMode: mode });
       }
       scheduleComposerFocus();
     },
@@ -2068,8 +2276,8 @@ export default function ChatView(props: ChatViewProps) {
     ],
   );
   const toggleInteractionMode = useCallback(() => {
-    handleInteractionModeChange(DEFAULT_INTERACTION_MODE);
-  }, [handleInteractionModeChange]);
+    handleInteractionModeChange(interactionMode === "plan" ? "default" : "plan");
+  }, [handleInteractionModeChange, interactionMode]);
   const handleSubmitModeChange = useCallback(
     (mode: ComposerSubmitMode) => {
       if (mode === composerSubmitMode) return;
@@ -2088,6 +2296,12 @@ export default function ChatView(props: ChatViewProps) {
       return !open;
     });
   }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+  const closePlanSidebar = useCallback(() => {
+    setPlanSidebarOpen(false);
+    planSidebarDismissedForTurnRef.current =
+      activePlan?.turnId ?? sidebarProposedPlan?.turnId ?? "__dismissed__";
+  }, [activePlan?.turnId, sidebarProposedPlan?.turnId]);
+
   const persistThreadSettingsForNextTurn = useCallback(
     async (input: {
       threadId: ThreadId;
@@ -2129,12 +2343,12 @@ export default function ChatView(props: ChatViewProps) {
         });
       }
 
-      if (serverThread.interactionMode !== DEFAULT_INTERACTION_MODE) {
+      if (input.interactionMode !== serverThread.interactionMode) {
         await api.orchestration.dispatchCommand({
           type: "thread.interaction-mode.set",
           commandId: newCommandId(),
           threadId: input.threadId,
-          interactionMode: DEFAULT_INTERACTION_MODE,
+          interactionMode: input.interactionMode,
           createdAt: input.createdAt,
         });
       }
@@ -2208,6 +2422,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [showScrollToBottom]);
 
   useEffect(() => {
+    setPullRequestDialogState(null);
     isAtEndRef.current = true;
     showScrollDebouncer.current.cancel();
     setShowScrollToBottom(false);
@@ -2287,6 +2502,45 @@ export default function ChatView(props: ChatViewProps) {
     setExpandedImage(null);
   }, []);
 
+  const activeWorktreePath = activeThread?.worktreePath ?? null;
+  const derivedEnvMode: DraftThreadEnvMode = resolveEffectiveEnvMode({
+    activeWorktreePath,
+    hasServerThread: isServerThread,
+    draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
+  });
+  const canOverrideServerThreadEnvMode = Boolean(
+    isServerThread &&
+    activeThread &&
+    activeThread.messages.length === 0 &&
+    optimisticUserMessages.length === 0 &&
+    activeThread.worktreePath === null &&
+    !envLocked,
+  );
+  const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
+    ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
+    : derivedEnvMode;
+  const activeThreadBranch =
+    canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
+      ? pendingServerThreadBranch
+      : (activeThread?.branch ?? null);
+  const sendEnvMode = resolveSendEnvMode({
+    requestedEnvMode: envMode,
+    isGitRepo,
+  });
+
+  useEffect(() => {
+    setPendingServerThreadEnvMode(null);
+    setPendingServerThreadBranch(undefined);
+  }, [activeThread?.id]);
+
+  useEffect(() => {
+    if (canOverrideServerThreadEnvMode) {
+      return;
+    }
+    setPendingServerThreadEnvMode(null);
+    setPendingServerThreadBranch(undefined);
+  }, [canOverrideServerThreadEnvMode]);
+
   useEffect(() => {
     const handler = (event: globalThis.KeyboardEvent) => {
       if (!activeThreadId || useCommandPaletteStore.getState().open || event.defaultPrevented) {
@@ -2300,6 +2554,13 @@ export default function ChatView(props: ChatViewProps) {
         context: shortcutContext,
       });
       if (!command) return;
+
+      if (command === "diff.toggle") {
+        event.preventDefault();
+        event.stopPropagation();
+        onToggleDiff();
+        return;
+      }
 
       if (command === "modelPicker.toggle") {
         event.preventDefault();
@@ -2319,7 +2580,7 @@ export default function ChatView(props: ChatViewProps) {
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- composerRef is a stable ref; .current must not be a dep
-  }, [activeProject, activeThreadId, runProjectScript, keybindings]);
+  }, [activeProject, activeThreadId, runProjectScript, keybindings, onToggleDiff]);
 
   const onRevertToTurnCount = useCallback(
     async (turnCount: number) => {
@@ -2441,7 +2702,7 @@ export default function ChatView(props: ChatViewProps) {
       if (standaloneSlashCommand === "ask" || standaloneSlashCommand === "review") {
         handleSubmitModeChange(standaloneSlashCommand);
       } else {
-        handleInteractionModeChange(DEFAULT_INTERACTION_MODE);
+        handleInteractionModeChange(standaloneSlashCommand);
       }
       promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
@@ -2454,21 +2715,13 @@ export default function ChatView(props: ChatViewProps) {
         promptForSend,
         sendableComposerTerminalContexts,
       ).trim();
-      const generatedReviewThreadTitle = reviewPrompt
-        ? truncate(reviewPrompt)
-        : "Review my CAD from all angles";
-      const activeThreadTitle = activeThread.title.trim();
-      const contextualReviewTitle =
-        activeThreadTitle.length > 0 && activeThreadTitle.toLowerCase() !== "new thread"
-          ? activeThreadTitle
-          : generatedReviewThreadTitle;
       const contextualReviewPrompt =
-        contextualReviewTitle.length > 0
-          ? `Review the CAD for this thread: ${contextualReviewTitle}. Use the thread title and current CAD context to choose the scope; only run a holistic review if the title asks for one.`
+        activeThread.title.trim().length > 0
+          ? `Review the CAD for this thread: ${activeThread.title}. Use the thread title and current CAD context to choose the scope; only run a holistic review if the title asks for one.`
           : "Review the CAD using the current CAD context. Choose a focused scope when the visible mechanism is specific; only run a holistic review when the scope is broad or unclear.";
       const started = await onGenerateCadReview({
         reviewPrompt: reviewPrompt || contextualReviewPrompt,
-        threadTitle: generatedReviewThreadTitle,
+        threadTitle: reviewPrompt ? truncate(reviewPrompt) : "Review my CAD from all angles",
         selectedModelSelection: ctxSelectedModelSelection,
       });
       if (started) {
@@ -2498,9 +2751,22 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeProject) return;
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
+    const baseBranchForWorktree =
+      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath
+        ? activeThreadBranch
+        : null;
+
+    // In worktree mode, require an explicit base branch so we don't silently
+    // fall back to local execution when branch selection is missing.
+    const shouldCreateWorktree =
+      isFirstMessage && sendEnvMode === "worktree" && !activeThread.worktreePath;
+    if (shouldCreateWorktree && !activeThreadBranch) {
+      setThreadError(threadIdForSend, "Select a base branch before sending in New worktree mode.");
+      return;
+    }
 
     sendInFlightRef.current = true;
-    beginLocalDispatch({ preparingWorktree: false });
+    beginLocalDispatch({ preparingWorktree: Boolean(baseBranchForWorktree) });
 
     const composerImagesSnapshot = [...composerImages];
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
@@ -2621,28 +2887,43 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const turnAttachments = await turnAttachmentsPromise;
-      const bootstrap = isLocalDraftThread
-        ? {
-            createThread: {
-              projectId: activeProject.id,
-              title,
-              ...(activeProject.externalContext?.provider === "onshape"
+      const bootstrap =
+        isLocalDraftThread || baseBranchForWorktree
+          ? {
+              ...(isLocalDraftThread
                 ? {
-                    externalContext: {
-                      provider: "onshape" as const,
-                      onshape: activeProject.externalContext.onshape,
+                    createThread: {
+                      projectId: activeProject.id,
+                      title,
+                      ...(activeProject.externalContext?.provider === "onshape"
+                        ? {
+                            externalContext: {
+                              provider: "onshape" as const,
+                              onshape: activeProject.externalContext.onshape,
+                            },
+                          }
+                        : {}),
+                      modelSelection: threadCreateModelSelection,
+                      runtimeMode,
+                      interactionMode,
+                      branch: activeThreadBranch,
+                      worktreePath: activeThread.worktreePath,
+                      createdAt: activeThread.createdAt,
                     },
                   }
                 : {}),
-              modelSelection: threadCreateModelSelection,
-              runtimeMode,
-              interactionMode,
-              branch: null,
-              worktreePath: null,
-              createdAt: activeThread.createdAt,
-            },
-          }
-        : undefined;
+              ...(baseBranchForWorktree
+                ? {
+                    prepareWorktree: {
+                      projectCwd: activeProject.cwd,
+                      baseBranch: baseBranchForWorktree,
+                      branch: buildTemporaryWorktreeBranchName(),
+                    },
+                    runSetupScript: true,
+                  }
+                : {}),
+            }
+          : undefined;
       beginLocalDispatch({ preparingWorktree: false });
       await api.orchestration.dispatchCommand({
         type: "thread.turn.start",
@@ -3000,7 +3281,10 @@ export default function ChatView(props: ChatViewProps) {
         // Optimistically open the plan sidebar when implementing (not refining).
         // "default" mode here means the agent is executing the plan, which produces
         // step-tracking activities that the sidebar will display.
-        planSidebarDismissedForTurnRef.current = null;
+        if (nextInteractionMode === "default" && autoOpenPlanSidebar) {
+          planSidebarDismissedForTurnRef.current = null;
+          setPlanSidebarOpen(true);
+        }
         sendInFlightRef.current = false;
       } catch (err) {
         setOptimisticUserMessages((existing) =>
@@ -3092,8 +3376,8 @@ export default function ChatView(props: ChatViewProps) {
         modelSelection: nextThreadModelSelection,
         runtimeMode,
         interactionMode: "default",
-        branch: null,
-        worktreePath: null,
+        branch: activeThreadBranch,
+        worktreePath: activeThread.worktreePath,
         createdAt,
       })
       .then(() => {
@@ -3123,7 +3407,7 @@ export default function ChatView(props: ChatViewProps) {
       })
       .then(() => {
         // Signal that the plan sidebar should open on the new thread when enabled.
-        planSidebarOpenOnNextThreadRef.current = false;
+        planSidebarOpenOnNextThreadRef.current = autoOpenPlanSidebar;
         return navigate({
           to: "/$environmentId/$threadId",
           params: {
@@ -3156,6 +3440,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     activeProject,
     activeProposedPlan,
+    activeThreadBranch,
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,
@@ -3229,9 +3514,57 @@ export default function ChatView(props: ChatViewProps) {
       settings,
     ],
   );
+  const onEnvModeChange = useCallback(
+    (mode: DraftThreadEnvMode) => {
+      if (canOverrideServerThreadEnvMode) {
+        setPendingServerThreadEnvMode(mode);
+        scheduleComposerFocus();
+        return;
+      }
+      if (isLocalDraftThread) {
+        setDraftThreadContext(composerDraftTarget, {
+          envMode: mode,
+          ...(mode === "worktree" && draftThread?.worktreePath ? { worktreePath: null } : {}),
+        });
+      }
+      scheduleComposerFocus();
+    },
+    [
+      canOverrideServerThreadEnvMode,
+      composerDraftTarget,
+      draftThread?.worktreePath,
+      isLocalDraftThread,
+      setPendingServerThreadEnvMode,
+      scheduleComposerFocus,
+      setDraftThreadContext,
+    ],
+  );
+
   const onExpandTimelineImage = useCallback((preview: ExpandedImagePreview) => {
     setExpandedImage(preview);
   }, []);
+  const onOpenTurnDiff = useCallback(
+    (turnId: TurnId, filePath?: string) => {
+      if (!isServerThread) {
+        return;
+      }
+      notifyDiffPanelOpened?.();
+      void navigate({
+        to: "/$environmentId/$threadId",
+        params: {
+          environmentId,
+          threadId,
+        },
+        search: (previous) => {
+          const rest = stripDiffSearchParams(previous);
+          return filePath
+            ? { ...rest, diff: "1", diffTurnId: turnId, diffFilePath: filePath }
+            : { ...rest, diff: "1", diffTurnId: turnId };
+        },
+      });
+    },
+    [environmentId, isServerThread, navigate, notifyDiffPanelOpened, threadId],
+  );
   // Both the Map and the revert handler are read from refs at call-time so
   // the callback reference is fully stable and never busts context identity.
   const revertTurnCountRef = useRef(revertTurnCountByUserMessageId);
@@ -3267,6 +3600,10 @@ export default function ChatView(props: ChatViewProps) {
       localCadFileCount > 0),
   );
   const showSubmitModeToggle = !isProjectlessChat;
+  const cadReviewOverlaySteps = useMemo(
+    () => deriveCadReviewOverlaySteps(activeThread.reviews ?? [], cadReviewWorkLogEntries),
+    [activeThread.reviews, cadReviewWorkLogEntries],
+  );
   const cadReviewChildActivityByReviewId = useStore(
     useMemo(() => {
       let previousEnvironmentState: unknown = null;
@@ -3288,15 +3625,6 @@ export default function ChatView(props: ChatViewProps) {
       };
     }, [activeThread]),
   );
-  const cadReviewOverlaySteps = useMemo(
-    () =>
-      deriveCadReviewOverlaySteps(
-        activeThread.reviews ?? [],
-        cadReviewWorkLogEntries,
-        cadReviewChildActivityByReviewId,
-      ),
-    [activeThread.reviews, cadReviewChildActivityByReviewId, cadReviewWorkLogEntries],
-  );
   const onGenerateCadReview = async (input: {
     reviewPrompt: string;
     threadTitle: string;
@@ -3316,10 +3644,10 @@ export default function ChatView(props: ChatViewProps) {
     const reviewRunId = CadReviewId.make(`cad-review-${crypto.randomUUID()}`);
     sendInFlightRef.current = true;
     setThreadError(reviewThreadId, null);
-    if (!cadPanelOpen) {
+    if (!diffOpen) {
       // CAD review screenshots are browser-mediated; mount the CAD panel before the server
       // publishes baseline capture requests so the first request is not lost.
-      setCadPanelOpen(true);
+      onToggleDiff();
       await sleep(CAD_REVIEW_PANEL_PREWARM_MS);
     }
     try {
@@ -3341,17 +3669,9 @@ export default function ChatView(props: ChatViewProps) {
           modelSelection: input.selectedModelSelection,
           runtimeMode,
           interactionMode,
-          branch: null,
-          worktreePath: null,
+          branch: activeThreadBranch,
+          worktreePath: activeThread.worktreePath,
           createdAt,
-        });
-      } else {
-        await persistThreadSettingsForNextTurn({
-          threadId: reviewThreadId,
-          createdAt,
-          modelSelection: input.selectedModelSelection,
-          runtimeMode,
-          interactionMode,
         });
       }
       await api.orchestration.dispatchCommand({
@@ -3360,7 +3680,6 @@ export default function ChatView(props: ChatViewProps) {
         threadId: reviewThreadId,
         reviewRunId,
         reviewPrompt: input.reviewPrompt,
-        modelSelection: input.selectedModelSelection,
         createdAt,
       });
       if (!isServerThread) {
@@ -3375,6 +3694,10 @@ export default function ChatView(props: ChatViewProps) {
             threadId: reviewThreadId,
           },
           replace: true,
+          search: (previous) => {
+            const rest = stripDiffSearchParams(previous);
+            return { ...rest, diff: "1" };
+          },
         });
       }
       return true;
@@ -3401,6 +3724,8 @@ export default function ChatView(props: ChatViewProps) {
       >
         <ChatHeader
           activeThreadEnvironmentId={activeThread.environmentId}
+          activeThreadId={activeThread.id}
+          {...(routeKind === "draft" && draftId ? { draftId } : {})}
           activeThreadTitle={
             isProjectlessChat && !activeThreadStartedForUi ? "New chat" : activeThread.title
           }
@@ -3411,6 +3736,7 @@ export default function ChatView(props: ChatViewProps) {
               ? activeProject.externalContext.onshape
               : null
           }
+          isGitRepo={isGitRepo}
           openInCwd={gitCwd}
           activeProjectScripts={activeProject?.scripts}
           preferredScriptId={
@@ -3418,7 +3744,9 @@ export default function ChatView(props: ChatViewProps) {
           }
           keybindings={keybindings}
           availableEditors={availableEditors}
-          cadPanelOpen={cadPanelOpen}
+          diffToggleShortcutLabel={diffPanelShortcutLabel}
+          gitCwd={gitCwd}
+          diffOpen={diffOpen}
           onshapeSyncing={
             activeProject !== undefined && onshapeSyncingProjectIds.has(activeProject.id)
           }
@@ -3427,7 +3755,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
-          onToggleCadPanel={onToggleCadPanel}
+          onToggleDiff={onToggleDiff}
           onSyncOnshape={syncOnshapeProject}
           onToggleCadExploded={toggleCadExploded}
           onZoomCadToFit={zoomCadToFit}
@@ -3460,6 +3788,7 @@ export default function ChatView(props: ChatViewProps) {
               turnDiffSummaryByAssistantMessageId={turnDiffSummaryByAssistantMessageId}
               activeThreadEnvironmentId={activeThread.environmentId}
               routeThreadKey={routeThreadKey}
+              onOpenTurnDiff={onOpenTurnDiff}
               revertTurnCountByUserMessageId={revertTurnCountByUserMessageId}
               onRevertUserMessage={onRevertUserMessage}
               isRevertingCheckpoint={isRevertingCheckpoint}
@@ -3499,7 +3828,9 @@ export default function ChatView(props: ChatViewProps) {
           <div
             className={cn(
               "chat-input-dock pointer-events-none absolute inset-x-0 bottom-0 z-20 pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pt-3 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pt-4",
-              "pb-[calc(env(safe-area-inset-bottom)+0.75rem)]",
+              isGitRepo
+                ? "pb-[calc(env(safe-area-inset-bottom)+0.75rem)]"
+                : "pb-[calc(env(safe-area-inset-bottom)+1.25rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1.5rem)]",
             )}
           >
             <div className="pointer-events-auto relative isolate">
@@ -3585,11 +3916,83 @@ export default function ChatView(props: ChatViewProps) {
                 />
               </div>
             </div>
+            {displayGitUi && isGitRepo && (
+              <div className="pointer-events-auto">
+                <BranchToolbar
+                  environmentId={activeThread.environmentId}
+                  threadId={activeThread.id}
+                  {...(routeKind === "draft" && draftId ? { draftId } : {})}
+                  onEnvModeChange={onEnvModeChange}
+                  {...(canOverrideServerThreadEnvMode ? { effectiveEnvModeOverride: envMode } : {})}
+                  {...(canOverrideServerThreadEnvMode
+                    ? {
+                        activeThreadBranchOverride: activeThreadBranch,
+                        onActiveThreadBranchOverrideChange: setPendingServerThreadBranch,
+                      }
+                    : {})}
+                  envLocked={envLocked}
+                  onComposerFocusRequest={scheduleComposerFocus}
+                  {...(canCheckoutPullRequestIntoThread
+                    ? { onCheckoutPullRequestRequest: openPullRequestDialog }
+                    : {})}
+                  {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                  availableEnvironments={logicalProjectEnvironments}
+                />
+              </div>
+            )}
           </div>
+
+          {pullRequestDialogState ? (
+            <PullRequestThreadDialog
+              key={pullRequestDialogState.key}
+              open
+              environmentId={activeThread.environmentId}
+              threadId={activeThread.id}
+              cwd={activeProject?.cwd ?? null}
+              initialReference={pullRequestDialogState.initialReference}
+              onOpenChange={(open) => {
+                if (!open) {
+                  closePullRequestDialog();
+                }
+              }}
+              onPrepared={handlePreparedPullRequestThread}
+            />
+          ) : null}
         </div>
         {/* end chat column */}
+
+        {/* Plan sidebar */}
+        {planSidebarOpen && !shouldUsePlanSidebarSheet ? (
+          <PlanSidebar
+            activePlan={activePlan}
+            activeProposedPlan={sidebarProposedPlan}
+            label={planSidebarLabel}
+            environmentId={environmentId}
+            markdownCwd={gitCwd ?? undefined}
+            workspaceRoot={activeWorkspaceRoot}
+            timestampFormat={timestampFormat}
+            mode="sidebar"
+            onClose={closePlanSidebar}
+          />
+        ) : null}
       </div>
       {/* end horizontal flex container */}
+
+      {shouldUsePlanSidebarSheet ? (
+        <RightPanelSheet open={planSidebarOpen} onClose={closePlanSidebar}>
+          <PlanSidebar
+            activePlan={activePlan}
+            activeProposedPlan={sidebarProposedPlan}
+            label={planSidebarLabel}
+            environmentId={environmentId}
+            markdownCwd={gitCwd ?? undefined}
+            workspaceRoot={activeWorkspaceRoot}
+            timestampFormat={timestampFormat}
+            mode="sheet"
+            onClose={closePlanSidebar}
+          />
+        </RightPanelSheet>
+      ) : null}
 
       {expandedImage && (
         <ExpandedImageDialog preview={expandedImage} onClose={closeExpandedImage} />

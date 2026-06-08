@@ -1,3 +1,4 @@
+import { type TurnId } from "@cadsense/contracts";
 import { memo, useCallback, useMemo, useState } from "react";
 import { type TurnDiffFileChange } from "../../types";
 import { buildTurnDiffTree, type TurnDiffTreeNode } from "../../lib/turnDiffTree";
@@ -9,11 +10,13 @@ import { VscodeEntryIcon } from "./VscodeEntryIcon";
 const EMPTY_DIRECTORY_OVERRIDES: Record<string, boolean> = {};
 
 export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
+  turnId: TurnId;
   files: ReadonlyArray<TurnDiffFileChange>;
   allDirectoriesExpanded: boolean;
   resolvedTheme: "light" | "dark";
+  onOpenTurnDiff: (turnId: TurnId, filePath?: string) => void;
 }) {
-  const { files, allDirectoriesExpanded, resolvedTheme } = props;
+  const { files, allDirectoriesExpanded, onOpenTurnDiff, resolvedTheme, turnId } = props;
   const treeNodes = useMemo(() => buildTurnDiffTree(files), [files]);
   const directoryPathsKey = useMemo(
     () => collectDirectoryPaths(treeNodes).join("\u0000"),
@@ -92,10 +95,12 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
     }
 
     return (
-      <div
+      <button
         key={`file:${node.path}`}
-        className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left"
+        type="button"
+        className="group flex w-full items-center gap-1.5 rounded-md py-1 pr-2 text-left hover:bg-background/80"
         style={{ paddingLeft: `${leftPadding}px` }}
+        onClick={() => onOpenTurnDiff(turnId, node.path)}
       >
         <span aria-hidden="true" className="size-3.5 shrink-0" />
         <VscodeEntryIcon
@@ -112,7 +117,7 @@ export const ChangedFilesTree = memo(function ChangedFilesTree(props: {
             <DiffStatLabel additions={node.stat.additions} deletions={node.stat.deletions} />
           </span>
         )}
-      </div>
+      </button>
     );
   };
 

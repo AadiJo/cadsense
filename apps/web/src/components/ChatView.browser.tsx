@@ -199,6 +199,7 @@ function createMockEnvironmentApi(input: {
   dispatchCommand: EnvironmentApi["orchestration"]["dispatchCommand"];
 }): EnvironmentApi {
   return {
+    terminal: {} as EnvironmentApi["terminal"],
     projects: {} as EnvironmentApi["projects"],
     filesystem: {
       browse: input.browse,
@@ -991,7 +992,7 @@ function resolveWsRpc(body: NormalizedWsRpcRequestBody): unknown {
   if (tag === WS_METHODS.shellOpenInEditor) {
     return null;
   }
-  if (tag === "terminal.open") {
+  if (tag === WS_METHODS.terminalOpen) {
     return {
       threadId: typeof body.threadId === "string" ? body.threadId : THREAD_ID,
       terminalId: typeof body.terminalId === "string" ? body.terminalId : "default",
@@ -1788,7 +1789,9 @@ describe("ChatView timeline estimator parity (full app)", () => {
     try {
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === "terminal.open") as
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalOpen,
+          ) as
             | {
                 _tag: string;
                 cwd?: string;
@@ -1797,7 +1800,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
               }
             | undefined;
           expect(openRequest).toMatchObject({
-            _tag: "terminal.open",
+            _tag: WS_METHODS.terminalOpen,
             cwd: "/repo/project",
             worktreePath: null,
             env: {
@@ -2110,9 +2113,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === "terminal.open");
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalOpen,
+          );
           expect(openRequest).toMatchObject({
-            _tag: "terminal.open",
+            _tag: WS_METHODS.terminalOpen,
             threadId: THREAD_ID,
             cwd: "/repo/project",
             env: {
@@ -2125,9 +2130,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const writeRequest = wsRequests.find((request) => request._tag === "terminal.write");
+          const writeRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalWrite,
+          );
           expect(writeRequest).toMatchObject({
-            _tag: "terminal.write",
+            _tag: WS_METHODS.terminalWrite,
             threadId: THREAD_ID,
             data: "bun run lint\r",
           });
@@ -2185,9 +2192,11 @@ describe("ChatView timeline estimator parity (full app)", () => {
 
       await vi.waitFor(
         () => {
-          const openRequest = wsRequests.find((request) => request._tag === "terminal.open");
+          const openRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.terminalOpen,
+          );
           expect(openRequest).toMatchObject({
-            _tag: "terminal.open",
+            _tag: WS_METHODS.terminalOpen,
             threadId: THREAD_ID,
             cwd: "/repo/worktrees/feature-draft",
             env: {
@@ -2875,102 +2884,6 @@ describe("ChatView timeline estimator parity (full app)", () => {
             threadId: THREAD_ID,
             reviewRunId,
           });
-        },
-        { timeout: 8_000, interval: 16 },
-      );
-    } finally {
-      await mounted.cleanup();
-    }
-  });
-
-  it("passes the selected model when starting a CAD review on an existing thread", async () => {
-    const snapshot = createSnapshotForTargetUser({
-      targetMessageId: "msg-user-cad-review-model-selection" as MessageId,
-      targetText: "cad review model selection target",
-    });
-    const onshapeContext = {
-      provider: "onshape" as const,
-      onshape: {
-        connectionId: "onshape_conn",
-        entityId: "onshape_entity",
-        entityKind: "assembly" as const,
-        name: "Drive base",
-        breadcrumb: ["Robot", "Drive base"],
-        reference: {
-          baseUrl: "https://cad.onshape.com",
-          documentId: "doc",
-          wvmKind: "w" as const,
-          wvmId: "workspace",
-          elementId: "element",
-          url: "https://cad.onshape.com/documents/doc/w/workspace/e/element",
-        },
-        lastSyncedRelativePath: "onshape-sync/current.3mf",
-      },
-    };
-    const cadSnapshot: OrchestrationReadModel = {
-      ...snapshot,
-      projects: snapshot.projects.map((project) =>
-        project.id === PROJECT_ID
-          ? Object.assign({}, project, { externalContext: onshapeContext })
-          : project,
-      ),
-      threads: snapshot.threads.map((thread) =>
-        thread.id === THREAD_ID
-          ? Object.assign({}, thread, { title: "New thread", externalContext: onshapeContext })
-          : thread,
-      ),
-    };
-    const mounted = await mountChatView({
-      viewport: DEFAULT_VIEWPORT,
-      snapshot: cadSnapshot,
-      resolveRpc: (body) => {
-        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
-          return { sequence: fixture.snapshot.snapshotSequence + 1 };
-        }
-        return undefined;
-      },
-    });
-
-    try {
-      const selectedModelSelection = createModelSelection(
-        ProviderInstanceId.make("codex"),
-        "gpt-5.4",
-        [
-          { id: "reasoningEffort", value: "low" },
-          { id: "fastMode", value: true },
-        ],
-      );
-      useComposerDraftStore.getState().setSubmitMode(THREAD_REF, "review");
-      useComposerDraftStore.getState().setModelSelection(THREAD_REF, selectedModelSelection);
-      await waitForLayout();
-
-      const startReviewButton = await waitForElement(
-        () => document.querySelector<HTMLButtonElement>('button[aria-label="Start CAD review"]'),
-        "Unable to find start CAD review composer button.",
-      );
-      startReviewButton.click();
-
-      await vi.waitFor(
-        () => {
-          const reviewRequest = wsRequests.find(
-            (request) =>
-              request._tag === ORCHESTRATION_WS_METHODS.dispatchCommand &&
-              request.type === "thread.review.generate",
-          );
-          expect(reviewRequest).toMatchObject({
-            type: "thread.review.generate",
-            threadId: THREAD_ID,
-            modelSelection: {
-              instanceId: selectedModelSelection.instanceId,
-              model: selectedModelSelection.model,
-            },
-          });
-          expect(String((reviewRequest as { reviewPrompt?: unknown })?.reviewPrompt)).toContain(
-            "Review my CAD from all angles",
-          );
-          expect(String((reviewRequest as { reviewPrompt?: unknown })?.reviewPrompt)).not.toContain(
-            "New thread",
-          );
         },
         { timeout: 8_000, interval: 16 },
       );
@@ -3891,6 +3804,130 @@ describe("ChatView timeline estimator parity (full app)", () => {
         mounted.router,
         (path) => UUID_ROUTE_RE.test(path),
         "Route should have changed to a new draft thread after adding a project with Enter.",
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("shows clone destination controls after resolving an add project repository", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-command-palette-add-project-remote" as MessageId,
+        targetText: "command palette add project remote",
+      }),
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          keybindings: [
+            {
+              command: "commandPalette.toggle",
+              shortcut: {
+                key: "k",
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+              whenAst: {
+                type: "not",
+                node: { type: "identifier", name: "terminalFocus" },
+              },
+            },
+          ],
+        };
+      },
+      resolveRpc: (body) => {
+        if (body._tag === WS_METHODS.filesystemBrowse) {
+          return {
+            parentPath: "~/",
+            entries: [{ name: "Development", fullPath: "~/Development" }],
+          };
+        }
+
+        if (body._tag === WS_METHODS.sourceControlLookupRepository) {
+          return {
+            provider: "github",
+            nameWithOwner: "Cadsense-oss/Cadsense-env",
+            url: "https://github.com/Cadsense-oss/Cadsense-env",
+            sshUrl: "git@github.com:Cadsense-oss/Cadsense-env.git",
+          };
+        }
+
+        if (body._tag === WS_METHODS.sourceControlCloneRepository) {
+          return {
+            cwd: body.destinationPath,
+            remoteUrl: body.remoteUrl,
+            repository: null,
+          };
+        }
+
+        if (body._tag === ORCHESTRATION_WS_METHODS.dispatchCommand) {
+          return {
+            sequence: fixture.snapshot.snapshotSequence + 1,
+          };
+        }
+
+        return undefined;
+      },
+    });
+
+    try {
+      await Promise.all([waitForServerConfigToApply(), waitForCommandPaletteShortcutLabel()]);
+      const palette = page.getByTestId("command-palette");
+      await openCommandPaletteFromTrigger();
+
+      await expect.element(palette).toBeInTheDocument();
+      await palette.getByText("Add project", { exact: true }).click();
+      await palette.getByText("GitHub repository", { exact: true }).click();
+
+      const repositoryInput = await waitForCommandPaletteInput(
+        "Enter GitHub repository (owner/repo)",
+      );
+      await page
+        .getByPlaceholder("Enter GitHub repository (owner/repo)")
+        .fill("Cadsense-oss/Cadsense-env");
+      await dispatchInputKey(repositoryInput, { key: "Enter" });
+
+      await vi.waitFor(
+        () => {
+          const clonePathInput = document.querySelector<HTMLInputElement>(
+            'input[placeholder="Enter path (e.g. ~/projects/my-app)"]',
+          );
+          expect(clonePathInput?.value).toBe("~/");
+          expect(document.body.textContent).toContain("Repository");
+          expect(document.body.textContent).toContain("Cadsense-oss/Cadsense-env");
+          expect(document.body.textContent).toContain(
+            "https://github.com/Cadsense-oss/Cadsense-env",
+          );
+          expect(document.body.textContent).toContain("Select where to clone");
+          expect(document.body.textContent).toContain("Development");
+          expect(document.body.textContent).toContain("Clone");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+
+      await page
+        .getByPlaceholder("Enter path (e.g. ~/projects/my-app)")
+        .fill("~/Development/Cadsense-env");
+      const clonePathInput = await waitForCommandPaletteInput(
+        "Enter path (e.g. ~/projects/my-app)",
+      );
+      await dispatchInputKey(clonePathInput, { key: "Enter" });
+
+      await vi.waitFor(
+        () => {
+          const cloneRequest = wsRequests.find(
+            (request) => request._tag === WS_METHODS.sourceControlCloneRepository,
+          ) as { destinationPath?: string; remoteUrl?: string } | undefined;
+          expect(cloneRequest).toMatchObject({
+            remoteUrl: "git@github.com:Cadsense-oss/Cadsense-env.git",
+            destinationPath: "~/Development/Cadsense-env",
+          });
+        },
+        { timeout: 8_000, interval: 16 },
       );
     } finally {
       await mounted.cleanup();

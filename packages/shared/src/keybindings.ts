@@ -19,6 +19,7 @@ type WhenToken =
   | { type: "rparen" };
 
 export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
+  { key: "mod+d", command: "diff.toggle" },
   { key: "mod+k", command: "commandPalette.toggle" },
   { key: "mod+n", command: "chat.new" },
   { key: "mod+shift+o", command: "chat.new" },

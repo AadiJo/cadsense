@@ -69,6 +69,18 @@ export const logWebSocketEventsFlag = Flag.boolean("log-websocket-events").pipe(
   Flag.withAlias("log-ws-events"),
   Flag.optional,
 );
+export const tailscaleServeFlag = Flag.boolean("tailscale-serve").pipe(
+  Flag.withDescription(
+    "Configure Tailscale Serve to expose this backend over HTTPS on the Tailnet.",
+  ),
+  Flag.optional,
+);
+export const tailscaleServePortFlag = Flag.integer("tailscale-serve-port").pipe(
+  Flag.withSchema(PortSchema),
+  Flag.withDescription("HTTPS port for Tailscale Serve when --tailscale-serve is enabled."),
+  Flag.optional,
+);
+
 const EnvServerConfig = Config.all({
   logLevel: Config.logLevel("CADSENSE_LOG_LEVEL").pipe(Config.withDefault("Info")),
   traceMinLevel: Config.logLevel("CADSENSE_TRACE_MIN_LEVEL").pipe(Config.withDefault("Info")),
@@ -123,6 +135,14 @@ const EnvServerConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  tailscaleServeEnabled: Config.boolean("CADSENSE_TAILSCALE_SERVE").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
+  tailscaleServePort: Config.port("CADSENSE_TAILSCALE_SERVE_PORT").pipe(
+    Config.option,
+    Config.map(Option.getOrUndefined),
+  ),
 });
 
 export interface CliServerFlags {
@@ -136,6 +156,8 @@ export interface CliServerFlags {
   readonly bootstrapFd: Option.Option<number>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
+  readonly tailscaleServeEnabled: Option.Option<boolean>;
+  readonly tailscaleServePort: Option.Option<number>;
 }
 
 export interface CliAuthLocationFlags {
@@ -168,6 +190,8 @@ export const sharedServerCommandFlags = {
   bootstrapFd: bootstrapFdFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
+  tailscaleServeEnabled: tailscaleServeFlag,
+  tailscaleServePort: tailscaleServePortFlag,
 } as const;
 
 export const authLocationFlags = sharedServerLocationFlags;
@@ -211,6 +235,8 @@ export const resolveServerConfig = (
       bootstrapFd: flags.bootstrapFd ?? Option.none(),
       autoBootstrapProjectFromCwd: flags.autoBootstrapProjectFromCwd ?? Option.none(),
       logWebSocketEvents: flags.logWebSocketEvents ?? Option.none(),
+      tailscaleServeEnabled: flags.tailscaleServeEnabled ?? Option.none(),
+      tailscaleServePort: flags.tailscaleServePort ?? Option.none(),
     } satisfies CliServerFlags;
     const bootstrapFd = Option.getOrUndefined(normalizedFlags.bootstrapFd) ?? env.bootstrapFd;
     const bootstrapEnvelope =
@@ -295,6 +321,22 @@ export const resolveServerConfig = (
       ),
       () => Boolean(devUrl),
     );
+    const tailscaleServeEnabled = Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.tailscaleServeEnabled,
+        Option.fromUndefinedOr(env.tailscaleServeEnabled),
+        Option.fromUndefinedOr(bootstrap?.tailscaleServeEnabled),
+      ),
+      () => false,
+    );
+    const tailscaleServePort = Option.getOrElse(
+      resolveOptionPrecedence(
+        normalizedFlags.tailscaleServePort,
+        Option.fromUndefinedOr(env.tailscaleServePort),
+        Option.fromUndefinedOr(bootstrap?.tailscaleServePort),
+      ),
+      () => 443,
+    );
     const staticDir = devUrl ? undefined : yield* resolveStaticDir();
     const host = Option.getOrElse(
       resolveOptionPrecedence(
@@ -337,6 +379,8 @@ export const resolveServerConfig = (
       desktopBootstrapToken,
       autoBootstrapProjectFromCwd,
       logWebSocketEvents,
+      tailscaleServeEnabled,
+      tailscaleServePort,
     };
 
     return config;
@@ -358,6 +402,8 @@ export const resolveCliAuthConfig = (
       bootstrapFd: Option.none(),
       autoBootstrapProjectFromCwd: Option.none(),
       logWebSocketEvents: Option.none(),
+      tailscaleServeEnabled: Option.none(),
+      tailscaleServePort: Option.none(),
     },
     cliLogLevel,
   );

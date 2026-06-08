@@ -94,6 +94,7 @@ import {
   XIcon,
 } from "lucide-react";
 import { proposedPlanTitle } from "../../proposedPlan";
+import { getProviderInteractionModeToggle } from "../../providerModels";
 import {
   deriveProviderInstanceEntries,
   resolveProviderDriverKindForInstanceSelection,
@@ -591,10 +592,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     respondingRequestIds,
     showPlanFollowUpPrompt,
     activeProposedPlan,
+    activePlan,
+    sidebarProposedPlan,
     planSidebarLabel,
     planSidebarOpen,
     runtimeMode,
     showRuntimeModeControl,
+    interactionMode,
     submitMode,
     canGenerateCadReview,
     showSubmitModeToggle,
@@ -627,6 +631,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     handleRuntimeModeChange,
     handleInteractionModeChange,
     handleSubmitModeChange,
+    togglePlanSidebar,
     focusComposer,
     scheduleComposerFocus,
     setThreadError,
@@ -809,6 +814,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const selectedPromptEffort = composerProviderState.promptEffort;
   const selectedModelOptionsForDispatch = composerProviderState.modelOptionsForDispatch;
+  const composerProviderControls = useMemo(
+    () => ({
+      showInteractionModeToggle: getProviderInteractionModeToggle(
+        providerStatuses,
+        selectedProvider,
+      ),
+    }),
+    [providerStatuses, selectedProvider],
+  );
   const selectedModelSelection = useMemo<ModelSelection>(
     () => createModelSelection(selectedInstanceId, selectedModel, selectedModelOptionsForDispatch),
     [selectedInstanceId, selectedModel, selectedModelOptionsForDispatch],
@@ -1060,6 +1074,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const isComposerRunning = phase === "running" || isCadReviewInProgress;
 
   const composerFooterHasWideActions = showPlanFollowUpPrompt || activePendingProgress !== null;
+  const showPlanSidebarToggle = Boolean(activePlan || sidebarProposedPlan || planSidebarOpen);
   const composerFooterActionLayoutKey = useMemo(() => {
     if (activePendingProgress) {
       return `pending:${activePendingProgress.questionIndex}:${activePendingProgress.isLastQuestion}:${activePendingIsResponding}`;
@@ -1635,8 +1650,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         if (item.command === "prompt" || item.command === "review") {
           handleSubmitModeChange(item.command === "prompt" ? "ask" : "review");
-        } else if (item.command === "build" || item.command === "default") {
-          void handleInteractionModeChange("default");
+        } else {
+          void handleInteractionModeChange(item.command === "plan" ? "plan" : "default");
         }
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
@@ -2505,7 +2520,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 {isComposerFooterCompact ? (
                   <>
                     <CompactComposerControlsMenu
-                      activePlan={false}
+                      activePlan={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
                       runtimeMode={runtimeMode}
@@ -2516,7 +2531,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       traitsMenuContent={providerTraitsMenuContent}
                       onRuntimeModeChange={handleRuntimeModeChange}
                       onSubmitModeChange={handleSubmitModeChange}
-                      onTogglePlanSidebar={() => {}}
+                      onTogglePlanSidebar={togglePlanSidebar}
                     />
                   </>
                 ) : (
@@ -2528,20 +2543,20 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </>
                     ) : null}
                     <ComposerFooterModeControls
-                      showInteractionModeToggle={false}
-                      interactionMode="default"
+                      showInteractionModeToggle={composerProviderControls.showInteractionModeToggle}
+                      interactionMode={interactionMode}
                       runtimeMode={runtimeMode}
                       showRuntimeModeControl={showRuntimeModeControl}
                       submitMode={submitMode}
                       showSubmitModeToggle={showSubmitModeToggle}
                       canGenerateCadReview={canGenerateCadReview}
-                      showPlanToggle={false}
+                      showPlanToggle={showPlanSidebarToggle}
                       planSidebarLabel={planSidebarLabel}
                       planSidebarOpen={planSidebarOpen}
-                      onToggleInteractionMode={() => {}}
+                      onToggleInteractionMode={toggleInteractionMode}
                       onRuntimeModeChange={handleRuntimeModeChange}
                       onSubmitModeChange={handleSubmitModeChange}
-                      onTogglePlanSidebar={() => {}}
+                      onTogglePlanSidebar={togglePlanSidebar}
                     />
                   </>
                 )}

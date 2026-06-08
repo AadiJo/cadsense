@@ -10,6 +10,7 @@ import {
   ProviderInstanceId,
   type ServerConfig,
   type ServerProvider,
+  type TerminalEvent,
   ThreadId,
 } from "@cadsense/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -31,11 +32,23 @@ function registerListener<T>(listeners: Set<(event: T) => void>, listener: (even
   };
 }
 
+const terminalEventListeners = new Set<(event: TerminalEvent) => void>();
 const shellStreamListeners = new Set<(event: OrchestrationShellStreamItem) => void>();
 const gitStatusListeners = new Set<(event: VcsStatusResult) => void>();
 
 const rpcClientMock = {
   dispose: vi.fn(),
+  terminal: {
+    open: vi.fn(),
+    write: vi.fn(),
+    resize: vi.fn(),
+    clear: vi.fn(),
+    restart: vi.fn(),
+    close: vi.fn(),
+    onEvent: vi.fn((listener: (event: TerminalEvent) => void) =>
+      registerListener(terminalEventListeners, listener),
+    ),
+  },
   projects: {
     ensureProjectlessChat: vi.fn(),
     searchEntries: vi.fn(),
@@ -167,15 +180,45 @@ function makeDesktopBridge(overrides: Partial<DesktopBridge> = {}): DesktopBridg
     getSavedEnvironmentSecret: async () => null,
     setSavedEnvironmentSecret: async () => true,
     removeSavedEnvironmentSecret: async () => undefined,
+    discoverSshHosts: async () => [],
+    ensureSshEnvironment: async () => {
+      throw new Error("ensureSshEnvironment not implemented in test");
+    },
+    disconnectSshEnvironment: async () => undefined,
+    fetchSshEnvironmentDescriptor: async () => {
+      throw new Error("fetchSshEnvironmentDescriptor not implemented in test");
+    },
+    bootstrapSshBearerSession: async () => {
+      throw new Error("bootstrapSshBearerSession not implemented in test");
+    },
+    fetchSshSessionState: async () => {
+      throw new Error("fetchSshSessionState not implemented in test");
+    },
+    issueSshWebSocketToken: async () => {
+      throw new Error("issueSshWebSocketToken not implemented in test");
+    },
+    onSshPasswordPrompt: () => () => undefined,
+    resolveSshPasswordPrompt: async () => undefined,
     getServerExposureState: async () => ({
       mode: "local-only",
       endpointUrl: null,
       advertisedHost: null,
+      tailscaleServeEnabled: false,
+      tailscaleServePort: 443,
     }),
     setServerExposureMode: async () => ({
       mode: "local-only",
       endpointUrl: null,
       advertisedHost: null,
+      tailscaleServeEnabled: false,
+      tailscaleServePort: 443,
+    }),
+    setTailscaleServeEnabled: async (input) => ({
+      mode: "local-only",
+      endpointUrl: null,
+      advertisedHost: null,
+      tailscaleServeEnabled: input.enabled,
+      tailscaleServePort: input.port ?? 443,
     }),
     getAdvertisedEndpoints: async () => [],
     pickFolder: async () => null,
@@ -273,6 +316,7 @@ beforeEach(() => {
   vi.resetModules();
   vi.clearAllMocks();
   showContextMenuFallbackMock.mockReset();
+  terminalEventListeners.clear();
   shellStreamListeners.clear();
   gitStatusListeners.clear();
   const testWindow = getWindowForTest();
@@ -300,13 +344,24 @@ describe("wsApi", () => {
     expect(rpcClientMock.server.subscribeLifecycle).not.toHaveBeenCalled();
   });
 
-  it("forwards shell stream events", async () => {
+  it("forwards terminal and shell stream events", async () => {
     const { createEnvironmentApi } = await import("./environmentApi");
 
     const api = createEnvironmentApi(rpcClientMock as never);
+    const onTerminalEvent = vi.fn();
     const onShellEvent = vi.fn();
 
+    api.terminal.onEvent(onTerminalEvent);
     api.orchestration.subscribeShell(onShellEvent);
+
+    const terminalEvent = {
+      threadId: "thread-1",
+      terminalId: "terminal-1",
+      createdAt: "2026-02-24T00:00:00.000Z",
+      type: "output",
+      data: "hello",
+    } as const;
+    emitEvent(terminalEventListeners, terminalEvent);
 
     const shellEvent = {
       kind: "project-upserted" as const,
@@ -326,6 +381,7 @@ describe("wsApi", () => {
     } satisfies OrchestrationShellStreamItem;
     emitEvent(shellStreamListeners, shellEvent);
 
+    expect(onTerminalEvent).toHaveBeenCalledWith(terminalEvent);
     expect(onShellEvent).toHaveBeenCalledWith(shellEvent);
   });
 

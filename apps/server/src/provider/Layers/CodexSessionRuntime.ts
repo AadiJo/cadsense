@@ -58,8 +58,6 @@ const BENIGN_ERROR_LOG_SNIPPETS = [
   "state db record_discrepancy: find_thread_path_by_id_str_in_subdir, falling_back",
 ];
 const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds" as const;
-const CODEX_SESSION_EVENT_QUEUE_CAPACITY = 4096;
-const CODEX_SERVER_NOTIFICATION_QUEUE_CAPACITY = 4096;
 const RECOVERABLE_THREAD_RESUME_ERROR_SNIPPETS = [
   "not found",
   "missing thread",
@@ -788,7 +786,7 @@ export const makeCodexSessionRuntime = (
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     const runtimeScope = yield* Scope.Scope;
-    const events = yield* Queue.bounded<ProviderEvent>(CODEX_SESSION_EVENT_QUEUE_CAPACITY);
+    const events = yield* Queue.unbounded<ProviderEvent>();
     const pendingApprovalsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingApproval>());
     const approvalCorrelationsRef = yield* Ref.make(new Map<string, ApprovalCorrelation>());
     const pendingUserInputsRef = yield* Ref.make(new Map<ApprovalRequestId, PendingUserInput>());
@@ -832,9 +830,7 @@ export const makeCodexSessionRuntime = (
     const client = yield* Effect.service(CodexClient.CodexAppServerClient).pipe(
       Effect.provide(clientContext),
     );
-    const serverNotifications = yield* Queue.bounded<CodexServerNotification>(
-      CODEX_SERVER_NOTIFICATION_QUEUE_CAPACITY,
-    );
+    const serverNotifications = yield* Queue.unbounded<CodexServerNotification>();
     const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
     const sessionCreatedAt = yield* nowIso;

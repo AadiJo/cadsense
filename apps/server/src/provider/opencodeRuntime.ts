@@ -221,10 +221,6 @@ export function buildOpenCodePermissionRules(runtimeMode: RuntimeMode): Permissi
     { permission: "cadsense-*", pattern: "*", action: "allow" },
     { permission: "cadsense_*", pattern: "*", action: "allow" },
     { permission: "question", pattern: "*", action: "allow" },
-    { permission: "read", pattern: "*", action: "allow" },
-    { permission: "list", pattern: "*", action: "allow" },
-    { permission: "glob", pattern: "*", action: "allow" },
-    { permission: "grep", pattern: "*", action: "allow" },
   ] satisfies PermissionRuleset;
 
   if (runtimeMode === "read-only") {

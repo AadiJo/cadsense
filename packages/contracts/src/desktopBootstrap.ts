@@ -9,6 +9,8 @@ export const DesktopBackendBootstrap = Schema.Struct({
   cadsenseHome: Schema.String,
   host: Schema.String,
   desktopBootstrapToken: Schema.String,
+  tailscaleServeEnabled: Schema.Boolean,
+  tailscaleServePort: PortSchema,
   otlpTracesUrl: Schema.optional(Schema.String),
   otlpMetricsUrl: Schema.optional(Schema.String),
 });

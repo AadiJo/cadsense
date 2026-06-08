@@ -3,7 +3,6 @@ import {
   MessageId,
   ThreadId,
   TurnId,
-  type CadReviewReport,
   type OrchestrationThreadActivity,
 } from "@cadsense/contracts";
 import { describe, expect, it } from "vitest";
@@ -44,19 +43,6 @@ function makeActivity(overrides: {
     turnId: overrides.turnId ? TurnId.make(overrides.turnId) : null,
     ...(overrides.sequence !== undefined ? { sequence: overrides.sequence } : {}),
   };
-}
-
-function makeCadReview(
-  id: string,
-  status: CadReviewReport["status"],
-  createdAt: string,
-): CadReviewReport {
-  return {
-    id,
-    status,
-    createdAt,
-    updatedAt: createdAt,
-  } as CadReviewReport;
 }
 
 describe("derivePendingApprovals", () => {
@@ -1322,20 +1308,6 @@ describe("deriveTimelineEntries", () => {
         implementationThreadId: null,
       },
     });
-  });
-
-  it("omits failed CAD reviews superseded by a newer review", () => {
-    const entries = deriveTimelineEntries(
-      [],
-      [],
-      [
-        makeCadReview("failed-review", "failed", "2026-02-23T00:00:01.000Z"),
-        makeCadReview("completed-review", "completed", "2026-02-23T00:00:02.000Z"),
-      ],
-      [],
-    );
-
-    expect(entries.map((entry) => entry.id)).toEqual(["completed-review"]);
   });
 
   it("anchors the completion divider to latestTurn.assistantMessageId before timestamp fallback", () => {

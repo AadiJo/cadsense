@@ -1556,7 +1556,6 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
 
       yield* sql.withTransaction(
         projector.apply(event, attachmentSideEffects).pipe(
-          Effect.flatMap(() => runAttachmentSideEffects(attachmentSideEffects)),
           Effect.flatMap(() =>
             projectionStateRepository.upsert({
               projector: projector.name,
@@ -1564,6 +1563,17 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               updatedAt: event.occurredAt,
             }),
           ),
+        ),
+      );
+
+      yield* runAttachmentSideEffects(attachmentSideEffects).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("failed to apply projected attachment side-effects", {
+            projector: projector.name,
+            sequence: event.sequence,
+            eventType: event.type,
+            cause,
+          }),
         ),
       );
     });

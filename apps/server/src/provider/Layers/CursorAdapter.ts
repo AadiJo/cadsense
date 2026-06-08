@@ -67,8 +67,10 @@ import { makeAcpNativeLoggers } from "../acp/AcpNativeLogging.ts";
 import { applyCursorAcpModelSelection, makeCursorAcpRuntime } from "../acp/CursorAcpSupport.ts";
 import {
   CursorAskQuestionRequest,
+  CursorCreatePlanRequest,
   CursorUpdateTodosRequest,
   extractAskQuestions,
+  extractPlanMarkdown,
   extractTodosAsPlan,
 } from "../acp/CursorAcpExtension.ts";
 import { type CursorAdapterShape } from "../Services/CursorAdapter.ts";
@@ -78,6 +80,7 @@ const encodeUnknownJsonStringExit = Schema.encodeUnknownExit(Schema.UnknownFromJ
 
 const PROVIDER = ProviderDriverKind.make("cursor");
 const CURSOR_RESUME_VERSION = 1 as const;
+const ACP_PLAN_MODE_ALIASES = ["plan", "architect"];
 const ACP_IMPLEMENT_MODE_ALIASES = ["code", "agent", "default", "chat", "implement"];
 const ACP_APPROVAL_MODE_ALIASES = ["ask"];
 
@@ -202,6 +205,10 @@ function findModeByAliases(
   return undefined;
 }
 
+function isPlanMode(mode: AcpSessionMode): boolean {
+  return findModeByAliases([mode], ACP_PLAN_MODE_ALIASES) !== undefined;
+}
+
 function resolveRequestedModeId(input: {
   readonly interactionMode: ProviderInteractionMode | undefined;
   readonly runtimeMode: RuntimeMode;
@@ -212,10 +219,15 @@ function resolveRequestedModeId(input: {
     return undefined;
   }
 
+  if (input.interactionMode === "plan") {
+    return findModeByAliases(modeState.availableModes, ACP_PLAN_MODE_ALIASES)?.id;
+  }
+
   if (input.runtimeMode === "read-only" || input.runtimeMode === "approval-required") {
     return (
       findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
       findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
+      modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
       modeState.currentModeId
     );
   }
@@ -223,6 +235,7 @@ function resolveRequestedModeId(input: {
   return (
     findModeByAliases(modeState.availableModes, ACP_IMPLEMENT_MODE_ALIASES)?.id ??
     findModeByAliases(modeState.availableModes, ACP_APPROVAL_MODE_ALIASES)?.id ??
+    modeState.availableModes.find((mode) => !isPlanMode(mode))?.id ??
     modeState.currentModeId
   );
 }
@@ -558,6 +571,30 @@ export function makeCursorAdapter(
                   payload: { answers: resolved },
                 });
                 return { answers: resolved };
+              }),
+            );
+            yield* acp.handleExtRequest("cursor/create_plan", CursorCreatePlanRequest, (params) =>
+              Effect.gen(function* () {
+                yield* logNative(
+                  input.threadId,
+                  "cursor/create_plan",
+                  params,
+                  "acp.cursor.extension",
+                );
+                yield* offerRuntimeEvent({
+                  type: "turn.proposed.completed",
+                  ...(yield* makeEventStamp()),
+                  provider: PROVIDER,
+                  threadId: input.threadId,
+                  turnId: ctx?.activeTurnId,
+                  payload: { planMarkdown: extractPlanMarkdown(params) },
+                  raw: {
+                    source: "acp.cursor.extension",
+                    method: "cursor/create_plan",
+                    payload: params,
+                  },
+                });
+                return { accepted: true } as const;
               }),
             );
             yield* acp.handleExtNotification(

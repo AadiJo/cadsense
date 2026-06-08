@@ -1572,9 +1572,6 @@ async function capturePngBase64(input: {
       const previousFar = state.camera.far;
       const previousAspect = state.camera.aspect;
       applyThreeCadView(state, input.view, input.fit);
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, CAD_VIEW_ANIMATION_MS + 50);
-      });
       renderThreeViewer(state);
       const pngBase64 = await canvasToPngBase64(state.renderer.domElement);
       state.camera.position.copy(previousPosition);

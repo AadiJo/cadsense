@@ -4,6 +4,7 @@ import type {
   OrchestrationCheckpointSummary,
   CadReviewId,
   CadReviewReport,
+  CadReviewStatus,
   OrchestrationEvent,
   OrchestrationLatestTurn,
   OrchestrationMessage,
@@ -40,7 +41,6 @@ import { resolveEnvironmentHttpUrl } from "./environments/runtime";
 import { sanitizeThreadErrorMessage } from "./rpc/transportError";
 import { getThreadFromEnvironmentState } from "./threadDerivation";
 import { isCadReviewChildThreadId } from "./cadReviewThreadVisibility";
-import { hasRunningCadReview, shouldKeepExistingCadReviewOnUpsert } from "./lib/cadReviewStatus";
 const isProviderDriverKindValue = Schema.is(ProviderDriverKind);
 
 export interface EnvironmentState {
@@ -133,6 +133,15 @@ const MAX_THREAD_CHECKPOINTS = 500;
 const MAX_THREAD_PROPOSED_PLANS = 200;
 const MAX_THREAD_ACTIVITIES = 500;
 const EMPTY_THREAD_IDS: ThreadId[] = [];
+const ACTIVE_CAD_REVIEW_STATUSES = new Set<CadReviewStatus>([
+  "requested",
+  "planning",
+  "capturing-baseline",
+  "reviewing",
+  "deep-diving",
+  "synthesizing",
+]);
+
 function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
@@ -186,7 +195,6 @@ function mapMessage(environmentId: EnvironmentId, message: OrchestrationMessage)
     text: message.text,
     turnId: message.turnId,
     createdAt: message.createdAt,
-    updatedAt: message.updatedAt,
     streaming: message.streaming,
     ...(message.streaming ? {} : { completedAt: message.updatedAt }),
     ...(attachments && attachments.length > 0 ? { attachments } : {}),
@@ -218,7 +226,7 @@ function mapTurnDiffSummary(checkpoint: OrchestrationCheckpointSummary): TurnDif
 }
 
 function hasActiveReview(reviews: ReadonlyArray<CadReviewReport> | undefined): boolean {
-  return hasRunningCadReview(reviews);
+  return reviews?.some((review) => ACTIVE_CAD_REVIEW_STATUSES.has(review.status)) ?? false;
 }
 
 function mapProject(
@@ -1517,7 +1525,6 @@ function applyEnvironmentOrchestrationEvent(
                       : message.text.length > 0
                         ? message.text
                         : entry.text,
-                    updatedAt: message.updatedAt,
                     streaming: message.streaming,
                     ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
                     ...(message.streaming
@@ -1729,28 +1736,15 @@ function applyEnvironmentOrchestrationEvent(
       const existingReviews = Object.values(
         state.reviewByThreadId?.[event.payload.threadId] ?? {},
       ) as CadReviewReport[];
-      const existingReview = existingReviews.find((entry) => entry.id === event.payload.review.id);
-      const upsertedReview =
-        existingReview && shouldKeepExistingCadReviewOnUpsert(existingReview, event.payload.review)
-          ? existingReview
-          : event.payload.review;
       const nextReviews = [
         ...existingReviews.filter((entry) => entry.id !== event.payload.review.id),
-        upsertedReview,
+        event.payload.review,
       ];
       return updateSidebarThreadSummary(
         updateThreadState(state, event.payload.threadId, (thread) => {
-          const existingThreadReview = thread.reviews?.find(
-            (entry) => entry.id === event.payload.review.id,
-          );
-          const threadUpsertedReview =
-            existingThreadReview &&
-            shouldKeepExistingCadReviewOnUpsert(existingThreadReview, event.payload.review)
-              ? existingThreadReview
-              : event.payload.review;
           const reviews = [
             ...(thread.reviews ?? []).filter((entry) => entry.id !== event.payload.review.id),
-            threadUpsertedReview,
+            event.payload.review,
           ].toSorted(
             (left, right) =>
               left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
