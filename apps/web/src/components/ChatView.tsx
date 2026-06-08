@@ -2660,6 +2660,7 @@ export default function ChatView(props: ChatViewProps) {
     const sendCtx = composerRef.current?.getSendContext();
     if (!sendCtx) return;
     const {
+      prompt: promptForSend,
       images: composerImages,
       terminalContexts: composerTerminalContexts,
       selectedProvider: ctxSelectedProvider,
@@ -2668,7 +2669,6 @@ export default function ChatView(props: ChatViewProps) {
       selectedPromptEffort: ctxSelectedPromptEffort,
       selectedModelSelection: ctxSelectedModelSelection,
     } = sendCtx;
-    const promptForSend = promptRef.current;
     const {
       trimmedPrompt: trimmed,
       sendableTerminalContexts: sendableComposerTerminalContexts,

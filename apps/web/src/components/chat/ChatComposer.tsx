@@ -123,6 +123,47 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="autocomplete-popup"]',
 ].join(",");
 
+interface CadReviewPreflightState {
+  mechanismRole: string;
+  reviewFocus: string;
+  successCriteria: string;
+}
+
+const EMPTY_CAD_REVIEW_PREFLIGHT: CadReviewPreflightState = {
+  mechanismRole: "",
+  reviewFocus: "",
+  successCriteria: "",
+};
+
+function formatCadReviewPreflightPrompt(
+  prompt: string,
+  preflight: CadReviewPreflightState,
+): string {
+  const lines = [
+    ["Mechanism role", preflight.mechanismRole],
+    ["Review focus", preflight.reviewFocus],
+    ["Success criteria", preflight.successCriteria],
+  ] satisfies ReadonlyArray<readonly [string, string]>;
+
+  const formattedLines = lines
+    .map(([label, value]) => [label, value.trim()] as const)
+    .filter(([, value]) => value.length > 0)
+    .map(([label, value]) => `- ${label}: ${value}`);
+
+  if (formattedLines.length === 0) {
+    return prompt;
+  }
+
+  return [
+    prompt.trim(),
+    "CAD review preflight context:",
+    ...formattedLines,
+    "Use this preflight context to judge the visible CAD. If it conflicts with visible geometry, state the assumption instead of asking a hidden question.",
+  ]
+    .filter((line) => line.length > 0)
+    .join("\n\n");
+}
+
 const extendReplacementRangeForTrailingSpace = (
   text: string,
   rangeEnd: number,
@@ -862,6 +903,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   }, [handleSubmitModeChange, showSubmitModeToggle, submitMode]);
 
+  useEffect(() => {
+    if (isCadReviewInProgress) {
+      setCadReviewPreflight(EMPTY_CAD_REVIEW_PREFLIGHT);
+    }
+  }, [isCadReviewInProgress]);
+
   // ------------------------------------------------------------------
   // Composer-local state
   // ------------------------------------------------------------------
@@ -887,6 +934,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
+  const [cadReviewPreflight, setCadReviewPreflight] = useState<CadReviewPreflightState>(
+    EMPTY_CAD_REVIEW_PREFLIGHT,
+  );
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
 
@@ -2061,7 +2111,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       },
       getSendContext: () => ({
-        prompt: promptRef.current,
+        prompt:
+          submitMode === "review"
+            ? formatCadReviewPreflightPrompt(promptRef.current, cadReviewPreflight)
+            : promptRef.current,
         images: composerImagesRef.current,
         terminalContexts: composerTerminalContextsRef.current,
         selectedPromptEffort,
@@ -2090,6 +2143,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedPromptEffort,
       selectedProvider,
       selectedProviderModels,
+      submitMode,
+      cadReviewPreflight,
     ],
   );
 
@@ -2394,6 +2449,67 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       </Button>
                     </div>
                   ))}
+                </div>
+              )}
+
+            {!isComposerCollapsedMobile &&
+              !isComposerApprovalState &&
+              pendingUserInputs.length === 0 &&
+              submitMode === "review" &&
+              canGenerateCadReview &&
+              !isCadReviewInProgress && (
+                <div
+                  data-cad-review-preflight="true"
+                  className="mb-3 grid gap-2 rounded-md border border-border/55 bg-muted/20 p-2 sm:grid-cols-3"
+                >
+                  <label className="min-w-0 space-y-1">
+                    <span className="block text-[11px] font-medium text-muted-foreground">
+                      Mechanism role
+                    </span>
+                    <input
+                      value={cadReviewPreflight.mechanismRole}
+                      onChange={(event) =>
+                        setCadReviewPreflight((current) => ({
+                          ...current,
+                          mechanismRole: event.target.value,
+                        }))
+                      }
+                      className="h-8 w-full min-w-0 rounded-md border border-border/70 bg-background/70 px-2 text-sm outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-primary/65"
+                      placeholder="arm, shooter, intake"
+                    />
+                  </label>
+                  <label className="min-w-0 space-y-1">
+                    <span className="block text-[11px] font-medium text-muted-foreground">
+                      Review focus
+                    </span>
+                    <input
+                      value={cadReviewPreflight.reviewFocus}
+                      onChange={(event) =>
+                        setCadReviewPreflight((current) => ({
+                          ...current,
+                          reviewFocus: event.target.value,
+                        }))
+                      }
+                      className="h-8 w-full min-w-0 rounded-md border border-border/70 bg-background/70 px-2 text-sm outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-primary/65"
+                      placeholder="ratio, stiffness, access"
+                    />
+                  </label>
+                  <label className="min-w-0 space-y-1">
+                    <span className="block text-[11px] font-medium text-muted-foreground">
+                      Success criteria
+                    </span>
+                    <input
+                      value={cadReviewPreflight.successCriteria}
+                      onChange={(event) =>
+                        setCadReviewPreflight((current) => ({
+                          ...current,
+                          successCriteria: event.target.value,
+                        }))
+                      }
+                      className="h-8 w-full min-w-0 rounded-md border border-border/70 bg-background/70 px-2 text-sm outline-none transition-colors placeholder:text-muted-foreground/45 focus:border-primary/65"
+                      placeholder="fast cycle, high torque"
+                    />
+                  </label>
                 </div>
               )}
 

@@ -1,5 +1,9 @@
 import {
+  type CadReviewActionItem,
+  type CadReviewPersonaReport,
   CommandId,
+  EventId,
+  MessageId,
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationReadModel,
@@ -23,10 +27,20 @@ import {
 } from "../Services/ProjectionSnapshotQuery.ts";
 import {
   buildMechanismPlan,
+  cadReviewChildHasFirstProgress,
   cadReviewChildPromptMessageId,
   CadReviewServiceLive,
+  dedupeCadReviewActionItems,
   extractJsonObject,
+  plainCadReviewActionTitle,
+  plainCadReviewText,
+  selectDeepDiveFindings,
 } from "./CadReviewService.ts";
+import {
+  buildMechanismPlanningPrompt,
+  buildReviewerPrompt,
+  buildSynthesisPrompt,
+} from "./CadReviewPrompts.ts";
 
 const parentThreadId = ThreadId.make("parent-thread");
 const reviewRunId = "cad-review-1";
@@ -230,6 +244,49 @@ describe("CadReviewService", () => {
     expect(second).not.toBe(first);
   });
 
+  it("detects first progress from child review messages or tool activity", () => {
+    expect(
+      cadReviewChildHasFirstProgress({
+        messages: [],
+        activities: [],
+      }),
+    ).toBe(false);
+
+    expect(
+      cadReviewChildHasFirstProgress({
+        messages: [
+          {
+            id: MessageId.make("assistant-message"),
+            role: "assistant",
+            text: "Inspecting the shooter now.",
+            turnId: null,
+            streaming: true,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ],
+        activities: [],
+      }),
+    ).toBe(true);
+
+    expect(
+      cadReviewChildHasFirstProgress({
+        messages: [],
+        activities: [
+          {
+            id: EventId.make("tool-activity"),
+            tone: "tool",
+            kind: "tool.started",
+            summary: "Used Cad View started",
+            payload: {},
+            turnId: null,
+            createdAt: now,
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+
   it("parses reviewer selection from the mechanism planning pass", () => {
     const plan = buildMechanismPlan(
       JSON.stringify({
@@ -299,7 +356,7 @@ describe("CadReviewService", () => {
     expect(plan?.reviewerSelection.every((selection) => selection.enabled)).toBe(true);
   });
 
-  it("falls back to all reviewers when planner selection expresses uncertainty", () => {
+  it("trusts complete reviewer selection even when a disabled reviewer notes uncertainty", () => {
     const plan = buildMechanismPlan(
       JSON.stringify({
         summary: "Planner was unsure.",
@@ -324,7 +381,233 @@ describe("CadReviewService", () => {
       }),
     );
 
-    expect(plan?.reviewerSelection.every((selection) => selection.enabled)).toBe(true);
+    expect(plan?.reviewerSelection).toEqual([
+      {
+        persona: "systems_integration",
+        enabled: false,
+        reason: "Unclear whether this affects adjacent assemblies.",
+      },
+      {
+        persona: "program_readiness",
+        enabled: false,
+        reason: "No program signal was requested.",
+      },
+      {
+        persona: "mechanical_robustness",
+        enabled: true,
+        reason: "Physical mounting risk is in scope.",
+      },
+    ]);
+  });
+
+  it("skips deep dive when reviewer findings are already concrete and actionable", () => {
+    const reports: CadReviewPersonaReport[] = [
+      {
+        persona: "mechanical_robustness",
+        status: "completed",
+        summary: "Shooter review.",
+        positiveSignals: [],
+        topConcerns: [
+          {
+            id: `${reviewRunId}:mechanical_robustness:finding:1`,
+            title: "Service access is trapped behind the side plate",
+            description: "The shooter reduction is boxed in by the tall side plate.",
+            evidenceArtifactIds: ["artifact-1"],
+            confidence: "high",
+            severity: "high",
+            observedGeometry:
+              "The right-side reduction is behind the trussed side plate and full-height guard.",
+            specificCheck: "Confirm belt and bearing replacement path with the shooter installed.",
+            recommendedFix: "Add a removable access cover or make the shooter a pull-out module.",
+          },
+        ],
+        repeatedPatterns: [],
+        likelyFailureModes: [],
+        recommendedChanges: [],
+        confidence: "high",
+        evidenceArtifactIds: ["artifact-1"],
+        toolCallIds: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+
+    expect(selectDeepDiveFindings(reports)).toEqual([]);
+  });
+
+  it("keeps deep dive for high-risk findings that need more evidence or specificity", () => {
+    const reports: CadReviewPersonaReport[] = [
+      {
+        persona: "systems_integration",
+        status: "completed",
+        summary: "Shooter review.",
+        positiveSignals: [],
+        topConcerns: [
+          {
+            id: `${reviewRunId}:systems_integration:finding:1`,
+            title: "Compression continuity may break at the shooter handoff",
+            description: "The note path appears to unload between staged rollers.",
+            evidenceArtifactIds: ["artifact-1"],
+            confidence: "high",
+            severity: "high",
+            observedGeometry: "The lower conveyor and upper shooter have an open transition.",
+            missingEvidence: "Need a close-up of the throat and roller center distances.",
+          },
+          {
+            id: `${reviewRunId}:systems_integration:finding:2`,
+            title: "Middle roller access is unclear",
+            description: "The center roller is buried in the module.",
+            evidenceArtifactIds: ["artifact-2"],
+            confidence: "medium",
+            severity: "medium",
+            observedGeometry: "The module has full side panels.",
+            specificCheck: "Confirm the roller can be removed without pulling the shooter.",
+          },
+        ],
+        repeatedPatterns: [],
+        likelyFailureModes: [],
+        recommendedChanges: [],
+        confidence: "medium",
+        evidenceArtifactIds: ["artifact-1", "artifact-2"],
+        toolCallIds: [],
+        createdAt: now,
+        updatedAt: now,
+      },
+    ];
+
+    expect(selectDeepDiveFindings(reports).map((finding) => finding.id)).toEqual([
+      `${reviewRunId}:systems_integration:finding:1`,
+    ]);
+  });
+
+  it("deduplicates overlapping CAD review action items across reviewers", () => {
+    const actionItems: CadReviewActionItem[] = [
+      {
+        id: `${reviewRunId}:action:1`,
+        title: "Add belt tension adjustment",
+        description: "Slot the NEO mount so the 12T to 36T HTD belt can be tensioned.",
+        priority: "medium",
+        sourceFindingIds: ["systems:finding:1"],
+        evidenceArtifactIds: ["artifact-1"],
+        verificationSteps: ["Measure pulley center distance."],
+      },
+      {
+        id: `${reviewRunId}:action:2`,
+        title: "Add a real belt-tensioning feature",
+        description:
+          "Modify the belt stage so one shaft location can be tuned in assembly, or add a serviceable idler.",
+        priority: "high",
+        sourceFindingIds: ["program:finding:1"],
+        evidenceArtifactIds: ["artifact-2"],
+        verificationSteps: ["Confirm belt wrap and installed preload."],
+      },
+      {
+        id: `${reviewRunId}:action:3`,
+        title: "Support the output shaft",
+        description: "Add an outboard bearing if the external load stays far from the plate.",
+        priority: "medium",
+        sourceFindingIds: ["mechanical:finding:1"],
+        evidenceArtifactIds: ["artifact-3"],
+      },
+    ];
+
+    const deduped = dedupeCadReviewActionItems(actionItems);
+
+    expect(deduped).toHaveLength(2);
+    expect(deduped[0]).toMatchObject({
+      id: `${reviewRunId}:action:1`,
+      priority: "high",
+      sourceFindingIds: ["systems:finding:1", "program:finding:1"],
+      evidenceArtifactIds: ["artifact-1", "artifact-2"],
+      verificationSteps: [
+        "Measure pulley center distance.",
+        "Confirm belt wrap and installed preload.",
+      ],
+    });
+    expect(deduped[1]?.title).toBe("Support the output shaft");
+  });
+
+  it("deduplicates equivalent output shaft overhang language", () => {
+    const actionItems: CadReviewActionItem[] = [
+      {
+        id: `${reviewRunId}:action:1`,
+        title: "Output shaft is heavily overhung relative to the gearbox support",
+        description: "Shorten the shaft or add outboard support.",
+        priority: "high",
+        sourceFindingIds: ["systems:finding:1"],
+        evidenceArtifactIds: ["artifact-1"],
+      },
+      {
+        id: `${reviewRunId}:action:2`,
+        title: "Output shaft appears to rely on a long external cantilever without support",
+        description: "Add an outboard bearing block before attaching the downstream mechanism.",
+        priority: "medium",
+        sourceFindingIds: ["mechanical:finding:1"],
+        evidenceArtifactIds: ["artifact-2"],
+      },
+      {
+        id: `${reviewRunId}:action:3`,
+        title: "Long unsupported outboard load path on the exposed output shaft",
+        description: "Move the first loaded hub closer to the plate.",
+        priority: "medium",
+        sourceFindingIds: ["program:finding:1"],
+        evidenceArtifactIds: ["artifact-3"],
+      },
+    ];
+
+    const deduped = dedupeCadReviewActionItems(actionItems);
+
+    expect(deduped).toHaveLength(1);
+    expect(deduped[0]).toMatchObject({
+      priority: "high",
+      sourceFindingIds: ["systems:finding:1", "mechanical:finding:1", "program:finding:1"],
+      evidenceArtifactIds: ["artifact-1", "artifact-2", "artifact-3"],
+    });
+  });
+
+  it("rewrites output load-path shorthand into a concrete action title", () => {
+    expect(plainCadReviewActionTitle("Close the output load path before driving")).toBe(
+      "Support the output shaft close to the external load",
+    );
+    expect(plainCadReviewActionTitle("Support the output shaft")).toBe("Support the output shaft");
+    expect(plainCadReviewText("The main risk is the output load path.")).toBe(
+      "The main risk is the support for the output shaft.",
+    );
+  });
+
+  it("keeps reviewer and synthesis prompts focused on observed geometry instead of generic warnings", () => {
+    const reviewerPrompt = buildReviewerPrompt({
+      persona: "mechanical_robustness",
+      subject: "Assembly 1",
+      reviewPrompt: "Do an in depth review of my CAD",
+      baselineArtifacts: [],
+      reviewPlan: undefined,
+    });
+    const synthesisPrompt = buildSynthesisPrompt({
+      subject: "Assembly 1",
+      reviewPrompt: "Do an in depth review of my CAD",
+      reports: [],
+      reviewPlan: undefined,
+      deepDiveReports: [],
+    });
+    const planningPrompt = buildMechanismPlanningPrompt({
+      subject: "Assembly 1",
+      reviewPrompt: "Do an in depth review of my CAD",
+      baselineArtifacts: [],
+    });
+
+    expect(reviewerPrompt).toContain("A topConcern must be a judgment about geometry");
+    expect(reviewerPrompt).toContain("Separate checks from findings");
+    expect(planningPrompt).toContain("Do not call request_user_input");
+    expect(planningPrompt).toContain(
+      "Do not treat the phrase 'in depth' as a request for broader scope",
+    );
+    expect(reviewerPrompt).toContain("Do not call request_user_input");
+    expect(reviewerPrompt).toContain("calculate the combined ratio");
+    expect(synthesisPrompt).toContain("Do not call request_user_input");
+    expect(synthesisPrompt).toContain("Do not promote duplicate concerns");
+    expect(synthesisPrompt).toContain("preserve the actual ratio judgment");
+    expect(synthesisPrompt).toContain("plain language for FRC students");
   });
 
   it("marks the review stopped before stopping persisted CAD review child sessions", async () => {

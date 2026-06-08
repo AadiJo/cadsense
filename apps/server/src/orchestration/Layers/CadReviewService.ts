@@ -50,8 +50,13 @@ import {
 
 const CAD_REVIEW_CHILD_LINK_KIND = "cad-review.child-thread.linked";
 const REVIEWER_TURN_TIMEOUT = Duration.minutes(20);
+const REVIEWER_FIRST_PROGRESS_TIMEOUT = Duration.minutes(6);
 const ACTIVE_CHILD_RECOVERY_GRACE_MS = Duration.toMillis(REVIEWER_TURN_TIMEOUT);
-const CAD_REVIEW_REVIEWER_CONCURRENCY = 3;
+// The live CAD viewer is a single browser-side resource. Running multiple reviewers in parallel
+// makes their screenshot/export requests contend with each other and can turn fast captures into
+// repeated 120s timeouts. Keep reviewer passes serialized; adaptive reviewer selection is the
+// primary speed lever.
+const CAD_REVIEW_REVIEWER_CONCURRENCY = 1;
 // Keep baseline capture fast: reviewers can request extra angles, but the automatic pass should
 // avoid monopolizing the CAD viewer before agent reasoning even starts.
 const BASELINE_CAPTURE_SPECS = [
@@ -103,6 +108,7 @@ const serverCommandId = (tag: string): CommandId =>
   CommandId.make(`server:${tag}:${crypto.randomUUID()}`);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+const nowMillis = Effect.map(DateTime.now, (dateTime) => DateTime.toDate(dateTime).getTime());
 
 function reviewSubject(thread: OrchestrationThread, projectTitle: string | undefined): string {
   return projectTitle && projectTitle !== thread.title
@@ -264,12 +270,6 @@ function allReviewerSelection(reason: string): CadReviewMechanismPlan["reviewerS
   return PERSONAS.map((persona) => ({ persona, enabled: true, reason }));
 }
 
-function isUncertainReviewerSelectionReason(reason: string): boolean {
-  return /\b(uncertain|unsure|unknown|unclear|ambiguous|not sure|cannot determine|can't determine)\b/i.test(
-    reason,
-  );
-}
-
 function normalizeReviewerSelection(value: unknown): CadReviewMechanismPlan["reviewerSelection"] {
   const entries = objectArray(value).flatMap((entry) => {
     if (!isSpecialistPersona(entry.persona)) {
@@ -285,10 +285,9 @@ function normalizeReviewerSelection(value: unknown): CadReviewMechanismPlan["rev
   });
   const byPersona = new Map(entries.map((entry) => [entry.persona, entry]));
   const complete = PERSONAS.every((persona) => byPersona.has(persona));
-  const uncertain = entries.some((entry) => isUncertainReviewerSelectionReason(entry.reason));
-  if (!complete || !entries.some((entry) => entry.enabled) || uncertain) {
+  if (!complete || !entries.some((entry) => entry.enabled)) {
     return allReviewerSelection(
-      "Planner selection was missing, incomplete, disabled every reviewer, or expressed uncertainty, so CadSense ran all reviewers.",
+      "Planner selection was missing, incomplete, or disabled every reviewer, so CadSense ran all reviewers.",
     );
   }
   return PERSONAS.map((persona) => byPersona.get(persona)!);
@@ -468,6 +467,15 @@ function hasFreshLiveChildSessionForReview(input: {
 
 export function cadReviewChildPromptMessageId(childThreadId: ThreadId): MessageId {
   return MessageId.make(`user:${childThreadId}:prompt`);
+}
+
+export function cadReviewChildHasFirstProgress(
+  childThread: Pick<OrchestrationThread, "activities" | "messages">,
+): boolean {
+  return (
+    childThread.messages.some((message) => message.role === "assistant") ||
+    childThread.activities.length > 0
+  );
 }
 
 function viewNameFromPath(path: string): string {
@@ -902,13 +910,222 @@ function deepDiveFindingScore(finding: CadReviewFinding): number {
   return severityScore + confidenceScore + missingEvidenceScore + specificityGapScore;
 }
 
-function selectDeepDiveFindings(
+function findingNeedsDeepDive(finding: CadReviewFinding): boolean {
+  if (finding.severity === "critical") {
+    return true;
+  }
+
+  const hasObservedGeometry = trimText(finding.observedGeometry) !== undefined;
+  const hasActionableFollowUp =
+    trimText(finding.specificCheck) !== undefined || trimText(finding.recommendedFix) !== undefined;
+  const isHighRisk = finding.severity === "high" || finding.confidence === "low";
+
+  if (trimText(finding.missingEvidence) !== undefined) {
+    return isHighRisk || !hasActionableFollowUp;
+  }
+
+  return isHighRisk && (!hasObservedGeometry || !hasActionableFollowUp);
+}
+
+export function selectDeepDiveFindings(
   reports: ReadonlyArray<CadReviewPersonaReport>,
 ): CadReviewFinding[] {
   return reports
     .flatMap((report) => report.topConcerns)
+    .filter(findingNeedsDeepDive)
     .toSorted((left, right) => deepDiveFindingScore(right) - deepDiveFindingScore(left))
-    .slice(0, 4);
+    .slice(0, 2);
+}
+
+function priorityRank(priority: CadReviewActionItem["priority"]): number {
+  switch (priority) {
+    case "critical":
+      return 4;
+    case "high":
+      return 3;
+    case "medium":
+      return 2;
+    case "low":
+      return 1;
+  }
+}
+
+function strongerPriority(
+  left: CadReviewActionItem["priority"],
+  right: CadReviewActionItem["priority"],
+): CadReviewActionItem["priority"] {
+  return priorityRank(left) >= priorityRank(right) ? left : right;
+}
+
+function normalizeActionToken(token: string): string {
+  if (token.endsWith("ing") && token.length > 6) {
+    return token.slice(0, -3);
+  }
+  if (token.endsWith("ed") && token.length > 5) {
+    return token.slice(0, -2);
+  }
+  if (token.endsWith("s") && token.length > 5) {
+    return token.slice(0, -1);
+  }
+  return token;
+}
+
+const ACTION_SIMILARITY_STOP_WORDS = new Set([
+  "about",
+  "action",
+  "after",
+  "before",
+  "cad",
+  "check",
+  "close",
+  "current",
+  "design",
+  "fix",
+  "into",
+  "item",
+  "make",
+  "model",
+  "review",
+  "risk",
+  "stage",
+  "that",
+  "the",
+  "this",
+  "with",
+]);
+
+function textTokens(text: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const match of text.toLowerCase().matchAll(/[a-z0-9]+/g)) {
+    const token = normalizeActionToken(match[0]);
+    if (token.length < 4 || ACTION_SIMILARITY_STOP_WORDS.has(token)) {
+      continue;
+    }
+    tokens.add(token);
+  }
+  return tokens;
+}
+
+function tokenSimilarity(leftTokens: Set<string>, rightTokens: Set<string>): number {
+  if (leftTokens.size === 0 || rightTokens.size === 0) {
+    return 0;
+  }
+  let intersection = 0;
+  for (const token of leftTokens) {
+    if (rightTokens.has(token)) {
+      intersection += 1;
+    }
+  }
+  const union = new Set([...leftTokens, ...rightTokens]).size;
+  return union === 0 ? 0 : intersection / union;
+}
+
+function actionTitleSimilarity(left: CadReviewActionItem, right: CadReviewActionItem): number {
+  return tokenSimilarity(textTokens(left.title), textTokens(right.title));
+}
+
+function isOutputShaftOverhangAction(actionItem: CadReviewActionItem): boolean {
+  const title = actionItem.title.toLowerCase();
+  return (
+    /\boutput\b/.test(title) &&
+    /\bshaft\b/.test(title) &&
+    /\b(overhung|overhang|cantilever|cantilevered|unsupported|outboard|stickout|span)\b/.test(title)
+  );
+}
+
+function isDuplicateCadReviewActionItem(
+  left: CadReviewActionItem,
+  right: CadReviewActionItem,
+): boolean {
+  if (isOutputShaftOverhangAction(left) && isOutputShaftOverhangAction(right)) {
+    return true;
+  }
+  return actionTitleSimilarity(left, right) >= 0.35;
+}
+
+function mergeUniqueStrings(
+  left: ReadonlyArray<string> | undefined,
+  right: ReadonlyArray<string> | undefined,
+): string[] | undefined {
+  const merged = [...new Set([...(left ?? []), ...(right ?? [])])];
+  return merged.length > 0 ? merged : undefined;
+}
+
+function longerText(left: string | undefined, right: string | undefined): string | undefined {
+  if (!left) return right;
+  if (!right) return left;
+  return right.length > left.length ? right : left;
+}
+
+function mergeCadReviewActionItems(
+  left: CadReviewActionItem,
+  right: CadReviewActionItem,
+): CadReviewActionItem {
+  const sourceFindingIds = mergeUniqueStrings(left.sourceFindingIds, right.sourceFindingIds) ?? [];
+  const evidenceArtifactIds =
+    mergeUniqueStrings(left.evidenceArtifactIds, right.evidenceArtifactIds) ?? [];
+  const verificationSteps = mergeUniqueStrings(left.verificationSteps, right.verificationSteps);
+  const title = plainCadReviewActionTitle(
+    left.title.length <= right.title.length ? left.title : right.title,
+  );
+  return {
+    ...left,
+    title,
+    description: longerText(left.description, right.description) ?? left.description,
+    priority: strongerPriority(left.priority, right.priority),
+    sourceFindingIds,
+    evidenceArtifactIds,
+    ...(longerText(left.subsystem, right.subsystem)
+      ? { subsystem: longerText(left.subsystem, right.subsystem) }
+      : {}),
+    ...(longerText(left.issueType, right.issueType)
+      ? { issueType: longerText(left.issueType, right.issueType) }
+      : {}),
+    ...(longerText(left.rationale, right.rationale)
+      ? { rationale: longerText(left.rationale, right.rationale) }
+      : {}),
+    ...(longerText(left.targetGeometry, right.targetGeometry)
+      ? { targetGeometry: longerText(left.targetGeometry, right.targetGeometry) }
+      : {}),
+    ...(verificationSteps ? { verificationSteps } : {}),
+  };
+}
+
+export function plainCadReviewText(text: string): string {
+  const trimmed = text.trim();
+  return trimmed
+    .replace(/\boutput\s+load[-\s]?path\b/gi, "support for the output shaft")
+    .replace(/\bload[-\s]?path\b/gi, "force path through the structure");
+}
+
+export function plainCadReviewActionTitle(title: string): string {
+  const rawLower = title.trim().toLowerCase();
+  if (/\boutput\b/.test(rawLower) && /\bload[-\s]?path\b/.test(rawLower)) {
+    return "Support the output shaft close to the external load";
+  }
+  const trimmed = plainCadReviewText(title);
+  return trimmed;
+}
+
+export function dedupeCadReviewActionItems(
+  actionItems: ReadonlyArray<CadReviewActionItem>,
+): CadReviewActionItem[] {
+  const deduped: CadReviewActionItem[] = [];
+  for (const actionItem of actionItems) {
+    const duplicateIndex = deduped.findIndex((candidate) =>
+      isDuplicateCadReviewActionItem(candidate, actionItem),
+    );
+    if (duplicateIndex === -1) {
+      deduped.push(actionItem);
+      continue;
+    }
+    deduped[duplicateIndex] = mergeCadReviewActionItems(deduped[duplicateIndex]!, actionItem);
+  }
+  return deduped.map((actionItem, index) =>
+    Object.assign({}, actionItem, {
+      id: actionItem.id.replace(/:action:\d+$/, `:action:${index + 1}`),
+    }),
+  );
 }
 
 function synthesizeServerSide(input: {
@@ -933,7 +1150,7 @@ function synthesizeServerSide(input: {
   ];
   const commonThemes =
     stringArray(parsed?.commonThemes).length > 0
-      ? stringArray(parsed?.commonThemes)
+      ? stringArray(parsed?.commonThemes).map(plainCadReviewText)
       : [
           ...new Set(
             input.reports.flatMap((report) => [
@@ -944,25 +1161,26 @@ function synthesizeServerSide(input: {
         ].slice(0, 6);
   const positiveSignals =
     stringArrayFromUnknown(parsed?.positiveSignals).length > 0
-      ? stringArrayFromUnknown(parsed?.positiveSignals)
+      ? stringArrayFromUnknown(parsed?.positiveSignals).map(plainCadReviewText)
       : [
           ...new Set(
             input.reports.flatMap((report) => report.positiveSignals).filter((entry) => entry),
           ),
         ].slice(0, 6);
   const parsedActionItems = objectArray(parsed?.actionItems);
-  const actionItems =
+  const rawActionItems =
     parsedActionItems.length > 0
       ? parsedActionItems.map((entry, index): CadReviewActionItem => {
           const sourceFindingIds = stringArray(entry.sourceFindingIds);
           const explicitEvidenceArtifactIds = stringArrayFromUnknown(entry.evidenceArtifactIds);
           const actionItem: CadReviewActionItem = {
             id: `${input.reviewRunId}:action:${index + 1}`,
-            title: trimText(entry.title) ?? `Action item ${index + 1}`,
-            description:
+            title: plainCadReviewActionTitle(trimText(entry.title) ?? `Action item ${index + 1}`),
+            description: plainCadReviewText(
               trimText(entry.description) ??
-              trimText(entry.detail) ??
-              "Follow up on the linked CAD review findings.",
+                trimText(entry.detail) ??
+                "Follow up on the linked CAD review findings.",
+            ),
             priority: priorityValue(entry.priority) ?? "medium",
             sourceFindingIds,
             evidenceArtifactIds:
@@ -979,9 +1197,11 @@ function synthesizeServerSide(input: {
             actionItem,
             subsystem ? { subsystem } : {},
             issueType ? { issueType } : {},
-            rationale ? { rationale } : {},
-            targetGeometry ? { targetGeometry } : {},
-            verificationSteps.length > 0 ? { verificationSteps } : {},
+            rationale ? { rationale: plainCadReviewText(rationale) } : {},
+            targetGeometry ? { targetGeometry: plainCadReviewText(targetGeometry) } : {},
+            verificationSteps.length > 0
+              ? { verificationSteps: verificationSteps.map(plainCadReviewText) }
+              : {},
           );
         })
       : [
@@ -995,25 +1215,26 @@ function synthesizeServerSide(input: {
             if ("deepDive" in entry) {
               return {
                 id: `${input.reviewRunId}:action:${index + 1}`,
-                title: entry.deepDive.focus,
-                description:
+                title: plainCadReviewActionTitle(entry.deepDive.focus),
+                description: plainCadReviewText(
                   entry.deepDive.recommendedChanges[0] ??
-                  entry.deepDive.summary ??
-                  "Follow up on the focused CAD review.",
+                    entry.deepDive.summary ??
+                    "Follow up on the focused CAD review.",
+                ),
                 subsystem: input.subject,
                 issueType: "focused deep dive",
                 priority: entry.deepDive.confidence === "high" ? "high" : "medium",
                 sourceFindingIds: entry.deepDive.sourceFindingIds,
                 evidenceArtifactIds: entry.deepDive.inspectedEvidenceArtifactIds,
-                rationale: entry.deepDive.summary,
-                verificationSteps: entry.deepDive.specificChecks,
+                rationale: plainCadReviewText(entry.deepDive.summary),
+                verificationSteps: entry.deepDive.specificChecks.map(plainCadReviewText),
               };
             }
             const { report, finding } = entry;
             const actionItem: CadReviewActionItem = {
               id: `${input.reviewRunId}:action:${index + 1}`,
-              title: finding.title,
-              description: finding.recommendedFix ?? finding.description,
+              title: plainCadReviewActionTitle(finding.title),
+              description: plainCadReviewText(finding.recommendedFix ?? finding.description),
               subsystem: input.subject,
               issueType: `${personaLabel(report.persona)} finding`,
               priority: finding.severity ?? (finding.confidence === "high" ? "high" : "medium"),
@@ -1021,16 +1242,21 @@ function synthesizeServerSide(input: {
               evidenceArtifactIds: finding.evidenceArtifactIds,
             };
             if (finding.reasoning) {
-              Object.assign(actionItem, { rationale: finding.reasoning });
+              Object.assign(actionItem, { rationale: plainCadReviewText(finding.reasoning) });
             }
             if (finding.observedGeometry) {
-              Object.assign(actionItem, { targetGeometry: finding.observedGeometry });
+              Object.assign(actionItem, {
+                targetGeometry: plainCadReviewText(finding.observedGeometry),
+              });
             }
             if (finding.specificCheck) {
-              Object.assign(actionItem, { verificationSteps: [finding.specificCheck] });
+              Object.assign(actionItem, {
+                verificationSteps: [plainCadReviewText(finding.specificCheck)],
+              });
             }
             return actionItem;
           });
+  const actionItems = dedupeCadReviewActionItems(rawActionItems);
   return { commonThemes, positiveSignals, actionItems };
 }
 
@@ -1355,27 +1581,31 @@ const make = Effect.gen(function* () {
     });
   };
 
-  const waitForChildTurn = (
-    childThreadId: ThreadId,
-  ): Effect.Effect<OrchestrationThread, CadReviewRunError> =>
+  const waitForChildTurn = (input: {
+    readonly childThreadId: ThreadId;
+    readonly firstProgressDeadlineMs: number;
+  }): Effect.Effect<OrchestrationThread, CadReviewRunError> =>
     Effect.gen(function* () {
-      const threadOption = yield* projectionSnapshotQuery.getThreadDetailById(childThreadId).pipe(
-        Effect.mapError(
-          (cause) =>
-            new CadReviewRunError({
-              message: `Failed to read child thread '${childThreadId}': ${String(cause)}`,
-            }),
-        ),
-      );
+      const threadOption = yield* projectionSnapshotQuery
+        .getThreadDetailById(input.childThreadId)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new CadReviewRunError({
+                message: `Failed to read child thread '${input.childThreadId}': ${String(cause)}`,
+              }),
+          ),
+        );
       if (Option.isNone(threadOption)) {
         return yield* new CadReviewRunError({
-          message: `Child thread '${childThreadId}' was not found.`,
+          message: `Child thread '${input.childThreadId}' was not found.`,
         });
       }
       const childThread = threadOption.value;
       const hasAssistantMessage = childThread.messages.some(
         (message) => message.role === "assistant" && !message.streaming,
       );
+      const hasFirstProgress = cadReviewChildHasFirstProgress(childThread);
       const sessionStatus = childThread.session?.status;
       if (
         hasAssistantMessage &&
@@ -1388,11 +1618,17 @@ const make = Effect.gen(function* () {
       }
       if (sessionStatus === "interrupted" || sessionStatus === "stopped") {
         return yield* new CadReviewRunError({
-          message: `Child reviewer '${childThreadId}' was ${sessionStatus}.`,
+          message: `Child reviewer '${input.childThreadId}' was ${sessionStatus}.`,
+        });
+      }
+      const currentTimeMs = yield* nowMillis;
+      if (!hasFirstProgress && currentTimeMs >= input.firstProgressDeadlineMs) {
+        return yield* new CadReviewRunError({
+          message: `Timed out waiting for first progress from child reviewer '${input.childThreadId}'.`,
         });
       }
       yield* Effect.sleep(Duration.seconds(1));
-      return yield* waitForChildTurn(childThreadId);
+      return yield* waitForChildTurn(input);
     });
 
   const runChildReviewer = (input: {
@@ -1427,7 +1663,12 @@ const make = Effect.gen(function* () {
           titleSeed: childReviewThreadInitialTitle(input.title),
           createdAt: input.createdAt,
         });
-        const completed = yield* waitForChildTurn(childThreadId).pipe(
+        const firstProgressStartedAtMs = yield* nowMillis;
+        const completed = yield* waitForChildTurn({
+          childThreadId,
+          firstProgressDeadlineMs:
+            firstProgressStartedAtMs + Duration.toMillis(REVIEWER_FIRST_PROGRESS_TIMEOUT),
+        }).pipe(
           Effect.timeoutOption(REVIEWER_TURN_TIMEOUT),
           Effect.flatMap((option) =>
             Option.match(option, {
