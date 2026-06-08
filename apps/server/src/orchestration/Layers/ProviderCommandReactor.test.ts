@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  type CadReviewReport,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -46,9 +47,11 @@ import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
 import { OrchestrationProjectionPipelineLive } from "./ProjectionPipeline.ts";
 import { OrchestrationProjectionSnapshotQueryLive } from "./ProjectionSnapshotQuery.ts";
 import {
+  formatCadReviewPromptContext,
   providerErrorLabel,
   providerErrorLabelFromInstanceHint,
   ProviderCommandReactorLive,
+  selectLatestCadReviewForPromptContext,
 } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
@@ -63,6 +66,108 @@ const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
 const asMessageId = (value: string): MessageId => MessageId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
+
+function makeCadReviewReport(
+  input?: Partial<CadReviewReport> & {
+    readonly id?: string;
+    readonly status?: CadReviewReport["status"];
+    readonly updatedAt?: string;
+  },
+): CadReviewReport {
+  const id = input?.id ?? "cad-review-1";
+  const updatedAt = input?.updatedAt ?? "2026-01-01T00:05:00.000Z";
+  const report: CadReviewReport = {
+    id: "cad-review-1",
+    threadId: ThreadId.make("thread-1"),
+    title: "Shooter gearbox CAD review",
+    status: input?.status ?? "completed",
+    whatIsBeingReviewed: "Shooter gearbox assembly",
+    reviewPrompt: "Review the shooter gearbox mounting.",
+    commonThemes: ["Bearing support needs a second constraint", "Belt path clearance is tight"],
+    positiveSignals: ["Motor plate is serviceable", "Fastener access is visible"],
+    reviewerTraits: {
+      systems_integration: "Checks robot-level fit and interfaces.",
+      program_readiness: "Checks controls and maintenance readiness.",
+      mechanical_robustness: "Checks structural and manufacturing risk.",
+      synthesis: "Combines reviewer overlap.",
+    },
+    personaReports: [
+      {
+        persona: "mechanical_robustness",
+        status: "completed",
+        summary: "The gearbox needs better bearing support before manufacturing.",
+        topConcerns: [
+          {
+            id: "finding-bearing",
+            title: "Unsupported bearing span",
+            description: "The output shaft bearing is only supported on one side.",
+            evidenceArtifactIds: ["artifact-front"],
+            confidence: "high",
+            severity: "high",
+            recommendedFix: "Add an outer plate or standoff-supported bearing block.",
+          },
+        ],
+        positiveSignals: ["Plate thickness appears reasonable."],
+        repeatedPatterns: [],
+        likelyFailureModes: ["Shaft deflection under shooter load."],
+        recommendedChanges: ["Add a second bearing support."],
+        confidence: "high",
+        evidenceArtifactIds: ["artifact-front"],
+        toolCallIds: [],
+        createdAt: "2026-01-01T00:03:00.000Z",
+        updatedAt: "2026-01-01T00:04:00.000Z",
+      },
+    ],
+    deepDiveReports: [
+      {
+        id: "deep-dive-bearing",
+        sourceFindingIds: ["finding-bearing"],
+        focus: "Bearing support",
+        summary: "The most important risk is cantilevered load on the output shaft.",
+        inspectedEvidenceArtifactIds: ["artifact-front"],
+        observations: ["The bearing appears unsupported outboard."],
+        specificChecks: ["Measure shaft span between supports."],
+        recommendedChanges: ["Add an outboard support plate."],
+        confidence: "high",
+        createdAt: "2026-01-01T00:04:30.000Z",
+      },
+    ],
+    mergedActionItems: [
+      {
+        id: "action-bearing",
+        title: "Add second output shaft support",
+        description: "Add an outboard bearing support tied into the gearbox plate.",
+        priority: "high",
+        sourceFindingIds: ["finding-bearing"],
+        evidenceArtifactIds: ["artifact-front"],
+        rationale: "This reduces shaft deflection under shooter load.",
+        targetGeometry: "Output shaft outer span",
+        verificationSteps: ["Check bearing spacing after the CAD update."],
+      },
+    ],
+    evidenceArtifacts: [
+      {
+        id: "artifact-front",
+        scope: "baseline",
+        viewName: "Front gearbox view",
+        artifactUri: "cadsense://artifact/front.png",
+        mimeType: "image/png",
+        status: "captured",
+        createdAt: "2026-01-01T00:02:00.000Z",
+      },
+    ],
+    toolCallsByReviewer: {
+      systems_integration: [],
+      program_readiness: [],
+      mechanical_robustness: [],
+      synthesis: [],
+    },
+    createdAt: "2026-01-01T00:01:00.000Z",
+    updatedAt: "2026-01-01T00:05:00.000Z",
+    ...input,
+  };
+  return { ...report, id, updatedAt };
+}
 
 const deriveServerPathsSync = (baseDir: string, devUrl: URL | undefined) =>
   Effect.runSync(deriveServerPaths(baseDir, devUrl).pipe(Effect.provide(NodeServices.layer)));
@@ -135,6 +240,84 @@ describe.sequential("ProviderCommandReactor", () => {
 
     it("uses the unknown driver kind when the resolved driver is not registered locally", () => {
       expect(providerErrorLabel("third_party_driver")).toBe("third_party_driver");
+    });
+  });
+
+  describe("CAD review prompt context", () => {
+    it("formats a completed report with numbered action items and evidence labels", () => {
+      const context = formatCadReviewPromptContext(makeCadReviewReport());
+
+      expect(context).toContain("Latest CAD review report context:");
+      expect(context).toContain("- Title: Shooter gearbox CAD review");
+      expect(context).toContain("- Reviewed subject: Shooter gearbox assembly");
+      expect(context).toContain("1. [high] Add second output shaft support");
+      expect(context).toContain("Evidence: Front gearbox view (artifact-front)");
+      expect(context).toContain("Bearing support: The most important risk");
+    });
+
+    it("caps long report sections", () => {
+      const context = formatCadReviewPromptContext(
+        makeCadReviewReport({
+          commonThemes: ["theme 1", "theme 2", "theme 3", "theme 4"],
+          positiveSignals: ["signal 1", "signal 2", "signal 3", "signal 4"],
+          mergedActionItems: Array.from({ length: 7 }, (_, index) => ({
+            id: `action-${index + 1}`,
+            title: `Action ${index + 1}`,
+            description: `Description ${index + 1}`,
+            priority: "medium" as const,
+            sourceFindingIds: [],
+            evidenceArtifactIds: [],
+          })),
+        }),
+      );
+
+      expect(context).toContain("theme 1; theme 2; theme 3 (+1 more)");
+      expect(context).toContain("signal 1; signal 2; signal 3 (+1 more)");
+      expect(context).toContain("- Action items (+1 more):");
+      expect(context).toContain("6. [medium] Action 6");
+      expect(context).not.toContain("7. [medium] Action 7");
+    });
+
+    it("omits empty optional sections", () => {
+      const context = formatCadReviewPromptContext(
+        makeCadReviewReport({
+          reviewPrompt: "",
+          commonThemes: [],
+          positiveSignals: [],
+          personaReports: [],
+          deepDiveReports: [],
+          mergedActionItems: [],
+        }),
+      );
+
+      expect(context).not.toContain("Original review prompt");
+      expect(context).not.toContain("Common themes");
+      expect(context).not.toContain("Positive signals");
+      expect(context).not.toContain("Action items");
+      expect(context).not.toContain("Reviewer summaries");
+      expect(context).not.toContain("Deep dives");
+    });
+
+    it("selects partial and completed reviews while skipping running reports", () => {
+      const running = makeCadReviewReport({
+        id: "cad-review-running",
+        status: "reviewing",
+        updatedAt: "2026-01-01T00:20:00.000Z",
+      });
+      const completed = makeCadReviewReport({
+        id: "cad-review-completed",
+        status: "completed",
+        updatedAt: "2026-01-01T00:10:00.000Z",
+      });
+      const partial = makeCadReviewReport({
+        id: "cad-review-partial",
+        status: "partial",
+        updatedAt: "2026-01-01T00:15:00.000Z",
+      });
+
+      expect(selectLatestCadReviewForPromptContext([running, completed, partial])?.id).toBe(
+        "cad-review-partial",
+      );
     });
   });
 
@@ -452,6 +635,307 @@ describe.sequential("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("injects latest completed CAD review context into prompt-mode follow-up provider input", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:10:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.review.upsert",
+        commandId: CommandId.make("cmd-review-upsert-follow-up"),
+        threadId: ThreadId.make("thread-1"),
+        review: makeCadReviewReport(),
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-review-follow-up"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-review-follow-up"),
+          role: "user",
+          text: "Explain item 1.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const input = harness.sendTurn.mock.calls[0]?.[0] as { input?: string };
+    expect(input.input).toContain("Latest CAD review report context:");
+    expect(input.input).toContain("1. [high] Add second output shaft support");
+    expect(input.input).toContain("Evidence: Front gearbox view (artifact-front)");
+    expect(input.input).toMatch(/User message:\nExplain item 1\.$/);
+  });
+
+  it("injects CAD review context only once for the same latest review and provider session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:10:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.review.upsert",
+        commandId: CommandId.make("cmd-review-upsert-once"),
+        threadId: ThreadId.make("thread-1"),
+        review: makeCadReviewReport(),
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-review-once-1"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-review-once-1"),
+          role: "user",
+          text: "Explain item 1.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-review-once-2"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-review-once-2"),
+          role: "user",
+          text: "What should I do next?",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:11:00.000Z",
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    const firstInput = harness.sendTurn.mock.calls[0]?.[0] as { input?: string };
+    const secondInput = harness.sendTurn.mock.calls[1]?.[0] as { input?: string };
+    expect(firstInput.input).toContain("Latest CAD review report context:");
+    expect(secondInput.input).toBe("What should I do next?");
+  });
+
+  it("injects the newest completed or partial CAD review context", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:20:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.review.upsert",
+        commandId: CommandId.make("cmd-review-upsert-old"),
+        threadId: ThreadId.make("thread-1"),
+        review: makeCadReviewReport({
+          id: "cad-review-old",
+          title: "Old CAD review",
+          mergedActionItems: [
+            {
+              id: "action-old",
+              title: "Old action",
+              description: "Old description",
+              priority: "low",
+              sourceFindingIds: [],
+              evidenceArtifactIds: [],
+            },
+          ],
+          updatedAt: "2026-01-01T00:05:00.000Z",
+        }),
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.review.upsert",
+        commandId: CommandId.make("cmd-review-upsert-new"),
+        threadId: ThreadId.make("thread-1"),
+        review: makeCadReviewReport({
+          id: "cad-review-new",
+          status: "partial",
+          title: "Newest partial CAD review",
+          mergedActionItems: [
+            {
+              id: "action-new",
+              title: "Newest action",
+              description: "Newest description",
+              priority: "critical",
+              sourceFindingIds: [],
+              evidenceArtifactIds: [],
+            },
+          ],
+          updatedAt: "2026-01-01T00:15:00.000Z",
+        }),
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.review.upsert",
+        commandId: CommandId.make("cmd-review-upsert-running"),
+        threadId: ThreadId.make("thread-1"),
+        review: makeCadReviewReport({
+          id: "cad-review-running",
+          status: "reviewing",
+          title: "Running CAD review",
+          updatedAt: "2026-01-01T00:19:00.000Z",
+        }),
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-newest-review"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-newest-review"),
+          role: "user",
+          text: "Which review is this about?",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const input = harness.sendTurn.mock.calls[0]?.[0] as { input?: string };
+    expect(input.input).toContain("Newest partial CAD review");
+    expect(input.input).toContain("Newest action");
+    expect(input.input).not.toContain("Old action");
+    expect(input.input).not.toContain("Running CAD review");
+  });
+
+  it("preserves prompt input when no eligible CAD review exists", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:10:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.review.upsert",
+        commandId: CommandId.make("cmd-review-upsert-ineligible"),
+        threadId: ThreadId.make("thread-1"),
+        review: makeCadReviewReport({ status: "failed" }),
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-no-review-context"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-no-review-context"),
+          role: "user",
+          text: "Plain follow-up.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
+      input: "Plain follow-up.",
+    });
+  });
+
+  it("includes Onshape context before CAD review context when both are present", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:10:00.000Z";
+    const threadId = ThreadId.make("thread-onshape-review");
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-thread-create-onshape-review"),
+        threadId,
+        projectId: asProjectId("project-1"),
+        title: "Onshape review thread",
+        externalContext: {
+          provider: "onshape",
+          onshape: {
+            connectionId: "team-onshape",
+            entityId: "entity-gearbox",
+            entityKind: "part",
+            name: "Shooter Gearbox",
+            breadcrumb: ["Robot", "Shooter", "Gearbox"],
+            reference: {
+              baseUrl: "https://cad.onshape.com",
+              documentId: "doc-1",
+              elementId: "elem-1",
+              partId: "part-1",
+              url: "https://cad.onshape.com/documents/doc-1",
+            },
+          },
+        },
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt: now,
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.review.upsert",
+        commandId: CommandId.make("cmd-review-upsert-onshape"),
+        threadId,
+        review: makeCadReviewReport({ threadId }),
+        createdAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-onshape-review"),
+        threadId,
+        message: {
+          messageId: asMessageId("user-message-onshape-review"),
+          role: "user",
+          text: "Explain the report.",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+    const input = harness.sendTurn.mock.calls[0]?.[0] as { input?: string };
+    expect(input.input).toContain("Onshape context for this chat:");
+    expect(input.input).toContain("Latest CAD review report context:");
+    const providerInput = input.input ?? "";
+    expect(providerInput.indexOf("Onshape context for this chat:")).toBeLessThan(
+      providerInput.indexOf("Latest CAD review report context:"),
+    );
+    expect(input.input).toMatch(/User message:\nExplain the report\.$/);
   });
 
   it("generates a thread title on the first turn", async () => {

@@ -1,4 +1,5 @@
 import {
+  type CadReviewReport,
   type ChatAttachment,
   CommandId,
   EventId,
@@ -60,6 +61,171 @@ type ProviderIntentEvent = Extract<
 function toNonEmptyProviderInput(value: string | undefined): string | undefined {
   const normalized = value?.trim();
   return normalized && normalized.length > 0 ? normalized : undefined;
+}
+
+const CAD_REVIEW_CONTEXT_ACTION_ITEM_LIMIT = 6;
+const CAD_REVIEW_CONTEXT_COMMON_THEME_LIMIT = 3;
+const CAD_REVIEW_CONTEXT_POSITIVE_SIGNAL_LIMIT = 3;
+const CAD_REVIEW_CONTEXT_PERSONA_LIMIT = 3;
+const CAD_REVIEW_CONTEXT_PERSONA_CONCERN_LIMIT = 3;
+const CAD_REVIEW_CONTEXT_DEEP_DIVE_LIMIT = 2;
+const CAD_REVIEW_CONTEXT_EVIDENCE_LIMIT = 8;
+
+function nonEmptyLines(lines: ReadonlyArray<string | null | undefined>): string[] {
+  return lines.filter((line): line is string => line !== null && line !== undefined && line !== "");
+}
+
+function cappedList<T>(items: ReadonlyArray<T>, limit: number): ReadonlyArray<T> {
+  return items.slice(0, Math.max(0, limit));
+}
+
+function omittedCountSuffix(total: number, included: number): string {
+  const omitted = total - included;
+  return omitted > 0 ? ` (+${omitted} more)` : "";
+}
+
+function formatEvidenceReferences(
+  review: CadReviewReport,
+  evidenceArtifactIds: ReadonlyArray<string>,
+): string | null {
+  if (evidenceArtifactIds.length === 0) {
+    return null;
+  }
+  const artifactById = new Map(review.evidenceArtifacts.map((artifact) => [artifact.id, artifact]));
+  const references = cappedList(
+    [...new Set(evidenceArtifactIds)],
+    CAD_REVIEW_CONTEXT_EVIDENCE_LIMIT,
+  )
+    .map((id) => {
+      const artifact = artifactById.get(id);
+      return artifact ? `${artifact.viewName} (${id})` : id;
+    })
+    .join(", ");
+  return references.length > 0
+    ? `Evidence: ${references}${omittedCountSuffix(evidenceArtifactIds.length, CAD_REVIEW_CONTEXT_EVIDENCE_LIMIT)}`
+    : null;
+}
+
+export function selectLatestCadReviewForPromptContext(
+  reviews: ReadonlyArray<CadReviewReport> | undefined,
+): CadReviewReport | null {
+  const eligibleReviews = (reviews ?? []).filter(
+    (review) =>
+      (review.status === "completed" || review.status === "partial") &&
+      (review.commonThemes.length > 0 ||
+        review.positiveSignals.length > 0 ||
+        review.personaReports.length > 0 ||
+        (review.deepDiveReports?.length ?? 0) > 0 ||
+        review.mergedActionItems.length > 0),
+  );
+  return (
+    eligibleReviews.toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0] ??
+    null
+  );
+}
+
+export function formatCadReviewPromptContext(review: CadReviewReport): string {
+  const lines: string[] = [
+    "Latest CAD review report context:",
+    `- Title: ${review.title}`,
+    `- Reviewed subject: ${review.whatIsBeingReviewed}`,
+    `- Status: ${review.status}`,
+    `- Updated: ${review.updatedAt}`,
+  ];
+  if (review.reviewPrompt?.trim()) {
+    lines.push(`- Original review prompt: ${review.reviewPrompt.trim()}`);
+  }
+
+  const commonThemes = cappedList(review.commonThemes, CAD_REVIEW_CONTEXT_COMMON_THEME_LIMIT);
+  if (commonThemes.length > 0) {
+    lines.push(
+      `- Common themes: ${commonThemes.join("; ")}${omittedCountSuffix(
+        review.commonThemes.length,
+        commonThemes.length,
+      )}`,
+    );
+  }
+
+  const positiveSignals = cappedList(
+    review.positiveSignals,
+    CAD_REVIEW_CONTEXT_POSITIVE_SIGNAL_LIMIT,
+  );
+  if (positiveSignals.length > 0) {
+    lines.push(
+      `- Positive signals: ${positiveSignals.join("; ")}${omittedCountSuffix(
+        review.positiveSignals.length,
+        positiveSignals.length,
+      )}`,
+    );
+  }
+
+  const actionItems = cappedList(review.mergedActionItems, CAD_REVIEW_CONTEXT_ACTION_ITEM_LIMIT);
+  if (actionItems.length > 0) {
+    lines.push(
+      `- Action items${omittedCountSuffix(review.mergedActionItems.length, actionItems.length)}:`,
+    );
+    for (const [index, item] of actionItems.entries()) {
+      const detail = nonEmptyLines([
+        `${index + 1}. [${item.priority}] ${item.title}: ${item.description}`,
+        item.rationale ? `Rationale: ${item.rationale}` : null,
+        item.targetGeometry ? `Target geometry: ${item.targetGeometry}` : null,
+        formatEvidenceReferences(review, item.evidenceArtifactIds),
+      ]).join(" ");
+      lines.push(`  ${detail}`);
+    }
+  }
+
+  const personaReports = cappedList(
+    review.personaReports.filter((report) => report.status === "completed"),
+    CAD_REVIEW_CONTEXT_PERSONA_LIMIT,
+  );
+  if (personaReports.length > 0) {
+    lines.push(
+      `- Reviewer summaries${omittedCountSuffix(
+        review.personaReports.length,
+        personaReports.length,
+      )}:`,
+    );
+    for (const report of personaReports) {
+      lines.push(`  - ${report.persona}: ${report.summary}`);
+      const concerns = cappedList(report.topConcerns, CAD_REVIEW_CONTEXT_PERSONA_CONCERN_LIMIT);
+      for (const concern of concerns) {
+        const concernParts = nonEmptyLines([
+          `${concern.title}: ${concern.description}`,
+          concern.severity ? `Severity: ${concern.severity}.` : null,
+          concern.recommendedFix ? `Recommended fix: ${concern.recommendedFix}` : null,
+          formatEvidenceReferences(review, concern.evidenceArtifactIds),
+        ]);
+        lines.push(`    - ${concernParts.join(" ")}`);
+      }
+    }
+  }
+
+  const deepDiveReports = cappedList(
+    review.deepDiveReports ?? [],
+    CAD_REVIEW_CONTEXT_DEEP_DIVE_LIMIT,
+  );
+  if (deepDiveReports.length > 0) {
+    lines.push(
+      `- Deep dives${omittedCountSuffix(
+        review.deepDiveReports?.length ?? 0,
+        deepDiveReports.length,
+      )}:`,
+    );
+    for (const report of deepDiveReports) {
+      lines.push(`  - ${report.focus}: ${report.summary}`);
+      const changes = cappedList(report.recommendedChanges, 2);
+      if (changes.length > 0) {
+        lines.push(`    Recommended changes: ${changes.join("; ")}`);
+      }
+      const evidence = formatEvidenceReferences(review, report.inspectedEvidenceArtifactIds);
+      if (evidence) {
+        lines.push(`    ${evidence}`);
+      }
+    }
+  }
+
+  return lines.join("\n");
 }
 
 function mapProviderSessionStatusToOrchestrationStatus(
@@ -222,6 +388,10 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const injectedCadReviewContextByThread = new Map<
+    string,
+    { readonly reviewId: string; readonly sessionKey: string }
+  >();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -563,41 +733,58 @@ const make = Effect.gen(function* () {
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
-    const onshapeContext =
-      thread.externalContext?.provider === "onshape" ? thread.externalContext.onshape : null;
-    const contextPrefix =
-      onshapeContext === null
-        ? ""
-        : [
-            "Onshape context for this chat:",
-            `- Entity: ${onshapeContext.name} (${onshapeContext.entityKind})`,
-            `- Breadcrumb: ${onshapeContext.breadcrumb.join(" > ")}`,
-            `- Connection: ${onshapeContext.connectionId}`,
-            `- Entity ID: ${onshapeContext.entityId}`,
-            onshapeContext.reference.url ? `- URL: ${onshapeContext.reference.url}` : null,
-            onshapeContext.reference.documentId
-              ? `- Document ID: ${onshapeContext.reference.documentId}`
-              : null,
-            onshapeContext.reference.elementId
-              ? `- Element ID: ${onshapeContext.reference.elementId}`
-              : null,
-            onshapeContext.reference.partId
-              ? `- Part ID: ${onshapeContext.reference.partId}`
-              : null,
-            "",
-            "User message:",
-          ]
-            .filter((line): line is string => line !== null)
-            .join("\n");
-    const normalizedInput = toNonEmptyProviderInput(
-      contextPrefix.length > 0 ? `${contextPrefix}\n${input.messageText}` : input.messageText,
-    );
-    const normalizedAttachments = input.attachments ?? [];
     const activeSession = yield* providerService
       .listSessions()
       .pipe(
         Effect.map((sessions) => sessions.find((session) => session.threadId === input.threadId)),
       );
+    const onshapeContext =
+      thread.externalContext?.provider === "onshape" ? thread.externalContext.onshape : null;
+    const contextSections: string[] = [];
+    if (onshapeContext !== null) {
+      contextSections.push(
+        [
+          "Onshape context for this chat:",
+          `- Entity: ${onshapeContext.name} (${onshapeContext.entityKind})`,
+          `- Breadcrumb: ${onshapeContext.breadcrumb.join(" > ")}`,
+          `- Connection: ${onshapeContext.connectionId}`,
+          `- Entity ID: ${onshapeContext.entityId}`,
+          onshapeContext.reference.url ? `- URL: ${onshapeContext.reference.url}` : null,
+          onshapeContext.reference.documentId
+            ? `- Document ID: ${onshapeContext.reference.documentId}`
+            : null,
+          onshapeContext.reference.elementId
+            ? `- Element ID: ${onshapeContext.reference.elementId}`
+            : null,
+          onshapeContext.reference.partId ? `- Part ID: ${onshapeContext.reference.partId}` : null,
+        ]
+          .filter((line): line is string => line !== null)
+          .join("\n"),
+      );
+    }
+    const latestReview = selectLatestCadReviewForPromptContext(thread.reviews);
+    const sessionKey =
+      activeSession !== undefined
+        ? `${activeSession.provider}:${activeSession.threadId}:${activeSession.createdAt}`
+        : input.threadId;
+    const injectedCadReviewContext = injectedCadReviewContextByThread.get(input.threadId);
+    const shouldInjectLatestReview =
+      latestReview !== null &&
+      (injectedCadReviewContext?.reviewId !== latestReview.id ||
+        injectedCadReviewContext.sessionKey !== sessionKey);
+    if (latestReview && shouldInjectLatestReview) {
+      contextSections.push(formatCadReviewPromptContext(latestReview));
+      injectedCadReviewContextByThread.set(input.threadId, {
+        reviewId: latestReview.id,
+        sessionKey,
+      });
+    }
+    const contextPrefix =
+      contextSections.length > 0 ? `${contextSections.join("\n\n")}\n\nUser message:` : "";
+    const normalizedInput = toNonEmptyProviderInput(
+      contextPrefix.length > 0 ? `${contextPrefix}\n${input.messageText}` : input.messageText,
+    );
+    const normalizedAttachments = input.attachments ?? [];
     const sessionModelSwitch =
       activeSession === undefined
         ? "in-session"
