@@ -243,6 +243,14 @@ export function orderItemsByPreferredIds<TItem, TId>(input: {
   return [...ordered, ...remaining];
 }
 
+export function shouldShowSidebarProjectsEmptyState(input: {
+  projectsSectionExpanded: boolean;
+  projectsLength: number;
+  projectListReady: boolean;
+}): boolean {
+  return input.projectsSectionExpanded && input.projectsLength === 0 && input.projectListReady;
+}
+
 export function getVisibleSidebarThreadIds<TThreadId>(
   renderedProjects: readonly {
     shouldShowThreadPanel?: boolean;

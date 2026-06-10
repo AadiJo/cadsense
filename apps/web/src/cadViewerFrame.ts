@@ -937,6 +937,22 @@ function displayComponentName(object: ThreeObject3D, fallbackIndex: number): str
   return name.length > 0 ? name : `Component ${fallbackIndex + 1}`;
 }
 
+function objectHasVisibleRenderableDescendant(
+  object: ThreeObject3D,
+  ancestorsVisible = true,
+): boolean {
+  const objectVisible = ancestorsVisible && object.visible;
+  if (!objectVisible) {
+    return false;
+  }
+  if (isThreeRenderableObject(object)) {
+    return object.layers.mask !== 0;
+  }
+  return object.children.some((child) =>
+    objectHasVisibleRenderableDescendant(child, objectVisible),
+  );
+}
+
 function buildThreeComponentTree(state: Pick<ThreeViewerState, "group">): {
   readonly nodes: CadViewerFrameComponentNode[];
   readonly objectsById: Map<string, ThreeObject3D>;
@@ -966,7 +982,7 @@ function buildThreeComponentTree(state: Pick<ThreeViewerState, "group">): {
         name: object === state.group ? "Model" : displayComponentName(object, nodes.length),
         kind: mesh.isMesh === true ? "part" : "assembly",
         hasChildren: object.children.some((child) => includeObject(child)),
-        visible: object.visible,
+        visible: objectHasVisibleRenderableDescendant(object),
       });
     }
     for (const child of object.children) {
@@ -989,27 +1005,113 @@ function buildThreeComponentTree(state: Pick<ThreeViewerState, "group">): {
         name: displayComponentName(object, nodes.length),
         kind: "part",
         hasChildren: false,
-        visible: object.visible,
+        visible: objectHasVisibleRenderableDescendant(object),
       });
     }
   }
   return { nodes, objectsById };
 }
 
+function isThreeRenderableObject(object: ThreeObject3D): boolean {
+  return (object as Partial<ThreeNamespace.Mesh>).isMesh === true;
+}
+
+function applyThreeObjectRenderVisibility(object: ThreeObject3D, visible: boolean): void {
+  object.visible = visible;
+  if (visible) {
+    object.layers.enable(0);
+  } else {
+    object.layers.disableAll();
+  }
+}
+
+function collectComponentSubtreeIds(
+  nodes: ReadonlyArray<CadViewerFrameComponentNode>,
+  componentId: string,
+): Set<string> {
+  const childrenByParentId = new Map<string, string[]>();
+  for (const node of nodes) {
+    if (!node.parentId) {
+      continue;
+    }
+    const children = childrenByParentId.get(node.parentId);
+    if (children) {
+      children.push(node.id);
+    } else {
+      childrenByParentId.set(node.parentId, [node.id]);
+    }
+  }
+
+  const ids = new Set<string>();
+  const stack = [componentId];
+  while (stack.length > 0) {
+    const id = stack.pop();
+    if (!id || ids.has(id)) {
+      continue;
+    }
+    ids.add(id);
+    for (const childId of childrenByParentId.get(id) ?? []) {
+      stack.push(childId);
+    }
+  }
+  return ids;
+}
+
+function refreshThreeComponentTreeVisibility(state: ThreeViewerState): void {
+  state.componentTree = state.componentTree.map((node) => {
+    const object = state.componentObjectsById.get(node.id);
+    if (!object) {
+      return node;
+    }
+    const visible = objectHasVisibleRenderableDescendant(object);
+    return visible === node.visible ? node : { ...node, visible };
+  });
+}
+
 function setThreeComponentVisibility(
   state: ThreeViewerState,
   componentId: string,
   visible: boolean,
-): void {
+): { readonly components: ReadonlyArray<CadViewerFrameComponentNode> } {
   const object = state.componentObjectsById.get(componentId);
   if (!object) {
     throw new Error("CAD component was not found.");
   }
-  object.visible = visible;
-  state.componentTree = state.componentTree.map((node) =>
-    node.id === componentId ? { ...node, visible } : node,
-  );
+  const subtreeIds = collectComponentSubtreeIds(state.componentTree, componentId);
+  const visitedObjectIds = new Set<number>();
+  let affectedObjects = 0;
+  let affectedRenderableObjects = 0;
+  for (const id of subtreeIds) {
+    const subtreeObject = state.componentObjectsById.get(id);
+    if (!subtreeObject) {
+      continue;
+    }
+    subtreeObject.traverse((descendant) => {
+      if (visitedObjectIds.has(descendant.id)) {
+        return;
+      }
+      visitedObjectIds.add(descendant.id);
+      applyThreeObjectRenderVisibility(descendant, visible);
+      affectedObjects += 1;
+      if (isThreeRenderableObject(descendant)) {
+        affectedRenderableObjects += 1;
+      }
+    });
+  }
+  if (affectedObjects === 0) {
+    applyThreeObjectRenderVisibility(object, visible);
+  }
+  refreshThreeComponentTreeVisibility(state);
   renderThreeViewer(state);
+  if (
+    affectedRenderableObjects === 0 &&
+    state.componentTree.some((node) => node.id === componentId)
+  ) {
+    console.warn("CAD component visibility changed but no renderable descendants were found.", {
+      componentId,
+    });
+  }
+  return { components: state.componentTree };
 }
 
 function resizeThreeViewer(state: ThreeViewerState): void {
@@ -1689,7 +1791,11 @@ async function handleRequest(request: CadViewerFrameRequest): Promise<{
       return { components: [] };
     case "set-component-visibility":
       if (threeViewerRef) {
-        setThreeComponentVisibility(getLoadedThreeViewer(), request.componentId, request.visible);
+        return setThreeComponentVisibility(
+          getLoadedThreeViewer(),
+          request.componentId,
+          request.visible,
+        );
       }
       return;
     case "zoom-to-fit":

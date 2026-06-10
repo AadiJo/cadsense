@@ -127,8 +127,91 @@ export function applyCadComponentVisibility(
   components: ReadonlyArray<CadViewerFrameComponentNode>,
   visibilityByComponentId: Readonly<Record<string, boolean>>,
 ): CadViewerFrameComponentNode[] {
+  const componentById = new Map<string, CadViewerFrameComponentNode>();
+  const childrenByParentId = new Map<string | undefined, CadViewerFrameComponentNode[]>();
+  for (const component of components) {
+    componentById.set(component.id, component);
+    const children = childrenByParentId.get(component.parentId);
+    if (children) {
+      children.push(component);
+    } else {
+      childrenByParentId.set(component.parentId, [component]);
+    }
+  }
+
+  const ownVisibilityById = new Map<string, boolean>();
+  const resolveOwnVisibility = (
+    component: CadViewerFrameComponentNode,
+    parentVisible: boolean,
+  ): boolean => {
+    const explicitVisible = visibilityByComponentId[component.id];
+    const ownVisible = typeof explicitVisible === "boolean" ? explicitVisible : component.visible;
+    const effectiveOwnVisible = parentVisible && ownVisible;
+    ownVisibilityById.set(component.id, effectiveOwnVisible);
+    for (const child of childrenByParentId.get(component.id) ?? []) {
+      resolveOwnVisibility(child, effectiveOwnVisible);
+    }
+    return effectiveOwnVisible;
+  };
+
+  const visitedRootIds = new Set<string>();
+  for (const component of components) {
+    if (component.parentId && componentById.has(component.parentId)) {
+      continue;
+    }
+    visitedRootIds.add(component.id);
+    resolveOwnVisibility(component, true);
+  }
+  for (const component of components) {
+    if (!visitedRootIds.has(component.id) && !ownVisibilityById.has(component.id)) {
+      resolveOwnVisibility(component, true);
+    }
+  }
+
+  const effectiveVisibilityById = new Map<string, boolean>();
+  const resolveSubtreeVisibility = (component: CadViewerFrameComponentNode): boolean => {
+    const children = childrenByParentId.get(component.id) ?? [];
+    const ownVisible = ownVisibilityById.get(component.id) ?? component.visible;
+    const childVisible = children.some((child) => resolveSubtreeVisibility(child));
+    const visible = ownVisible && (children.length === 0 || childVisible);
+    effectiveVisibilityById.set(component.id, visible);
+    return visible;
+  };
+  for (const component of components) {
+    if (component.parentId && componentById.has(component.parentId)) {
+      continue;
+    }
+    resolveSubtreeVisibility(component);
+  }
+  for (const component of components) {
+    if (!effectiveVisibilityById.has(component.id)) {
+      resolveSubtreeVisibility(component);
+    }
+  }
+
   return components.map((component) => {
-    const visible = visibilityByComponentId[component.id];
-    return typeof visible === "boolean" ? { ...component, visible } : component;
+    const visible = effectiveVisibilityById.get(component.id);
+    return typeof visible === "boolean" && visible !== component.visible
+      ? { ...component, visible }
+      : component;
   });
+}
+
+export function cadComponentVisibilityCommandsForScopeChange(
+  previousVisibilityByComponentId: Readonly<Record<string, boolean>>,
+  nextVisibilityByComponentId: Readonly<Record<string, boolean>>,
+): Array<{ readonly componentId: string; readonly visible: boolean }> {
+  const componentIds = new Set([
+    ...Object.keys(previousVisibilityByComponentId),
+    ...Object.keys(nextVisibilityByComponentId),
+  ]);
+  const commands: Array<{ readonly componentId: string; readonly visible: boolean }> = [];
+  for (const componentId of componentIds) {
+    const previousVisible = previousVisibilityByComponentId[componentId] ?? true;
+    const nextVisible = nextVisibilityByComponentId[componentId] ?? true;
+    if (previousVisible !== nextVisible) {
+      commands.push({ componentId, visible: nextVisible });
+    }
+  }
+  return commands;
 }

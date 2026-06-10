@@ -1226,7 +1226,11 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
           observeRpcEffect(
             WS_METHODS.cadHierarchyUpload,
             Effect.gen(function* () {
-              const result = { components: input.components };
+              const result = {
+                components: input.components,
+                ...(input.status ? { status: input.status } : {}),
+                ...(input.message ? { message: input.message } : {}),
+              };
               if (!completeCadHierarchyRequest(input.requestId, result)) {
                 return yield* new OnshapeRpcError({
                   message: "Unknown or expired CAD hierarchy request.",

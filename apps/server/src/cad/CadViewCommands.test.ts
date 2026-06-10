@@ -5,12 +5,46 @@ import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vitest";
 
 import {
+  cadViewCommandStream,
   cadHierarchyRequestStream,
   completeCadHierarchyRequest,
+  publishCadControlCommand,
   requestCadHierarchy,
 } from "./CadViewCommands.ts";
 
 describe("CadViewCommands", () => {
+  it("replays recent CAD view commands to late subscribers", async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const command = yield* publishCadControlCommand({
+            type: "set-component-visibility",
+            threadId: ThreadId.make("thread-late-cad-command-subscriber"),
+            componentId: "drive",
+            visible: false,
+          });
+
+          const events = yield* cadViewCommandStream.pipe(
+            Stream.filter((event) => event.threadId === command.threadId),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout("1 second"),
+          );
+          const commands = Array.from(events);
+
+          expect(commands).toHaveLength(1);
+          expect(commands[0]).toMatchObject({
+            commandId: command.commandId,
+            threadId: "thread-late-cad-command-subscriber",
+            type: "set-component-visibility",
+            componentId: "drive",
+            visible: false,
+          });
+        }),
+      ),
+    );
+  });
+
   it("replays pending hierarchy requests to late subscribers", async () => {
     await Effect.runPromise(
       Effect.scoped(

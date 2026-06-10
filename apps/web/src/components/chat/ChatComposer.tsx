@@ -122,6 +122,10 @@ const COMPOSER_FLOATING_LAYER_SELECTOR = [
   '[data-slot="autocomplete-popup"]',
 ].join(",");
 
+function isSelectableProviderInstanceEntry(entry: ProviderInstanceEntry): boolean {
+  return entry.enabled && entry.isAvailable && entry.status === "ready";
+}
+
 const extendReplacementRangeForTrailingSpace = (
   text: string,
   rangeEnd: number,
@@ -681,13 +685,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     null;
   const explicitSelectedInstanceId = selectedProviderByThreadId ?? threadProvider;
 
-  const unlockedSelectedProvider =
+  const requestedSelectedProvider =
     resolveProviderDriverKindForInstanceSelection(
       providerInstanceEntries,
       providerStatuses,
       explicitSelectedInstanceId,
     ) ?? ProviderDriverKind.make("codex");
-  const selectedProvider: ProviderDriverKind = lockedProvider ?? unlockedSelectedProvider;
+  const targetSelectedProvider: ProviderDriverKind = lockedProvider ?? requestedSelectedProvider;
   const lockedContinuationGroupKey = useMemo((): string | null => {
     if (!lockedProvider || !activeThread) return null;
     const lockedInstanceId =
@@ -711,8 +715,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   //      ignore picker selections).
   //   2. Thread's persisted instance id (server-side saved selection).
   //   3. Project default's instance id.
-  //   4. First enabled entry matching the current driver kind.
-  //   5. First enabled entry overall / default instance for the kind.
+  //   4. First ready entry matching the current driver kind.
+  //   5. First ready entry overall / default instance for the kind.
   //
   const selectedInstanceId = useMemo<ProviderInstanceId>(() => {
     const candidates: Array<string | null | undefined> = [
@@ -724,7 +728,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     for (const candidate of candidates) {
       if (!candidate) continue;
       const match = providerInstanceEntries.find(
-        (entry) => entry.instanceId === candidate && entry.enabled,
+        (entry) => entry.instanceId === candidate && isSelectableProviderInstanceEntry(entry),
       );
       if (match) {
         // When locked to a specific driver kind, ignore persisted instance
@@ -739,17 +743,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         return match.instanceId;
       }
     }
-    if (explicitSelectedInstanceId) {
-      return ProviderInstanceId.make(explicitSelectedInstanceId);
-    }
     const byKind = providerInstanceEntries.find(
       (entry) =>
-        entry.enabled &&
-        entry.driverKind === selectedProvider &&
+        isSelectableProviderInstanceEntry(entry) &&
+        entry.driverKind === targetSelectedProvider &&
         (!lockedContinuationGroupKey || entry.continuationGroupKey === lockedContinuationGroupKey),
     );
     if (byKind) return byKind.instanceId;
-    const anyEnabled = providerInstanceEntries.find((entry) => entry.enabled);
+    const anyEnabled = providerInstanceEntries.find(isSelectableProviderInstanceEntry);
     return (
       anyEnabled?.instanceId ??
       providerInstanceEntries[0]?.instanceId ??
@@ -762,12 +763,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThread?.session?.providerInstanceId,
     activeThreadModelSelection?.instanceId,
     composerDraft.activeProvider,
-    explicitSelectedInstanceId,
     lockedContinuationGroupKey,
     lockedProvider,
     providerInstanceEntries,
-    selectedProvider,
+    targetSelectedProvider,
   ]);
+  const selectedInstanceProvider = useMemo(
+    () =>
+      providerInstanceEntries.find((entry) => entry.instanceId === selectedInstanceId)
+        ?.driverKind ?? null,
+    [providerInstanceEntries, selectedInstanceId],
+  );
+  const selectedProvider: ProviderDriverKind =
+    lockedProvider ?? selectedInstanceProvider ?? targetSelectedProvider;
 
   const { modelOptions: composerModelOptions, selectedModel } = useEffectiveComposerModelState({
     threadRef: composerDraftTarget,

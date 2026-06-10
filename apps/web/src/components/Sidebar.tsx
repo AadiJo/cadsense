@@ -59,6 +59,7 @@ import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
 import { isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
 import {
   selectProjectsAcrossEnvironments,
+  selectEnvironmentState,
   selectSidebarThreadsForProjectRefs,
   selectSidebarThreadsAcrossEnvironments,
   selectThreadByRef,
@@ -148,6 +149,7 @@ import {
   resolveThreadRailStatusClassName,
   resolveThreadStatusPill,
   orderItemsByPreferredIds,
+  shouldShowSidebarProjectsEmptyState,
   shouldClearThreadSelectionOnMouseDown,
   sortProjectsForSidebar,
   useThreadJumpHintVisibility,
@@ -2334,7 +2336,7 @@ interface SidebarProjectsContentProps {
   suppressProjectClickAfterDragRef: React.RefObject<boolean>;
   suppressProjectClickForContextMenuRef: React.RefObject<boolean>;
   attachProjectListAutoAnimateRef: (node: HTMLElement | null) => void;
-  projectsLength: number;
+  showProjectsEmptyState: boolean;
 }
 
 const SidebarProjectsContent = memo(function SidebarProjectsContent(
@@ -2379,7 +2381,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     suppressProjectClickAfterDragRef,
     suppressProjectClickForContextMenuRef,
     attachProjectListAutoAnimateRef,
-    projectsLength,
+    showProjectsEmptyState,
   } = props;
 
   const handleProjectSortOrderChange = useCallback(
@@ -2558,7 +2560,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           )
         ) : null}
 
-        {projectsSectionExpanded && projectsLength === 0 ? (
+        {showProjectsEmptyState ? (
           <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
             No projects yet
           </div>
@@ -2664,6 +2666,22 @@ export default function Sidebar() {
   const shortcutModifiers = useShortcutModifierState();
   const modelPickerOpen = useModelPickerOpen();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const projectListReady = useStore((state) => {
+    const environmentIds = new Set(Object.keys(state.environmentStateById));
+    if (state.activeEnvironmentId) {
+      environmentIds.add(state.activeEnvironmentId);
+    }
+    if (primaryEnvironmentId) {
+      environmentIds.add(primaryEnvironmentId);
+    }
+    if (environmentIds.size === 0) {
+      return false;
+    }
+    return [...environmentIds].every(
+      (environmentId) =>
+        selectEnvironmentState(state, environmentId as EnvironmentId).bootstrapComplete,
+    );
+  });
   const [sidebarSectionExpansion, setSidebarSectionExpansion] = useLocalStorage(
     "cadsense:sidebar-section-expansion:v1",
     DEFAULT_SIDEBAR_SECTION_EXPANSION,
@@ -2918,6 +2936,11 @@ export default function Sidebar() {
     () => sortedProjects.filter((project) => !isProjectlessChatProject(project)),
     [sortedProjects],
   );
+  const showProjectsEmptyState = shouldShowSidebarProjectsEmptyState({
+    projectsSectionExpanded,
+    projectsLength: regularProjects.length,
+    projectListReady,
+  });
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
   const visibleSidebarThreadKeys = useMemo(
     () =>
@@ -3391,7 +3414,7 @@ export default function Sidebar() {
             suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
             suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
             attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-            projectsLength={regularProjects.length}
+            showProjectsEmptyState={showProjectsEmptyState}
           />
 
           <SidebarSeparator className="mx-0" />

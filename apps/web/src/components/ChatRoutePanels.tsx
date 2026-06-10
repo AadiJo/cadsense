@@ -213,7 +213,6 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
     if (!canonicalThreadRef) {
       return;
     }
-    setCadPanelOpenState(false);
     void navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(canonicalThreadRef),

@@ -577,7 +577,11 @@ export const cadHierarchyUploadRouteLayer = HttpRouter.add(
     const input = yield* decodeCadHierarchyUploadInput(body).pipe(
       Effect.mapError(() => "invalid" as const),
     );
-    completeCadHierarchyRequest(input.requestId, { components: input.components });
+    completeCadHierarchyRequest(input.requestId, {
+      components: input.components,
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.message ? { message: input.message } : {}),
+    });
     return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 200 });
   }).pipe(
     Effect.catchTag("AuthError", respondToAuthError),

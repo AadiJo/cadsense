@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   CAD_SCREENSHOT_HTTP_TIMEOUT_MS,
   CAD_VIEW_EXPORT_ROOT_ENV,
+  CAD_VIEW_MCP_HIERARCHY_TOOL_NAME,
   CAD_VIEW_MCP_TIMEOUT_MS,
   CAD_VIEW_MCP_SERVER_NAME,
   CAD_VIEW_MCP_TOOL_NAME,
@@ -225,6 +226,177 @@ describe("CadViewMcp", () => {
       calculationType: "compression",
       result: { compressionIn: 0.5 },
     });
+  });
+
+  it("returns CAD hierarchy loading status to the agent", async () => {
+    const response = await handleCadViewMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 5,
+        method: "tools/call",
+        params: {
+          name: CAD_VIEW_MCP_HIERARCHY_TOOL_NAME,
+          arguments: { threadId: "thread-1" },
+        },
+      },
+      {
+        setView: vi.fn(),
+        sendControl: vi.fn(),
+        getHierarchy: vi.fn().mockResolvedValue({
+          status: "loading",
+          message: "CAD viewer is still loading the synced model.",
+          components: [],
+        }),
+        captureScreenshot: vi.fn(),
+      },
+    );
+
+    expect(response).toMatchObject({ jsonrpc: "2.0", id: 5 });
+    const text = (response as { result: { content: { text: string }[] } }).result.content[0]!.text;
+    expect(JSON.parse(text)).toEqual({
+      status: "loading",
+      message: "CAD viewer is still loading the synced model.",
+      components: [],
+    });
+  });
+
+  it("confirms CAD component visibility tool calls through the browser hierarchy", async () => {
+    const sendControl = vi.fn().mockResolvedValue(undefined);
+    const getHierarchy = vi.fn().mockResolvedValue({
+      status: "loaded",
+      components: [
+        {
+          id: "drive",
+          name: "Drivetrain",
+          kind: "assembly",
+          hasChildren: true,
+          visible: false,
+        },
+      ],
+    });
+    const response = await handleCadViewMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 6,
+        method: "tools/call",
+        params: {
+          name: "set_cad_component_visibility",
+          arguments: { threadId: "thread-1", componentId: "drive", visible: false },
+        },
+      },
+      {
+        setView: vi.fn(),
+        sendControl,
+        getHierarchy,
+        captureScreenshot: vi.fn(),
+      },
+    );
+
+    expect(sendControl).toHaveBeenCalledWith({
+      type: "set-component-visibility",
+      threadId: "thread-1",
+      componentId: "drive",
+      visible: false,
+    });
+    expect(getHierarchy).toHaveBeenCalledWith({ threadId: "thread-1" });
+    expect(response).toMatchObject({ jsonrpc: "2.0", id: 6 });
+    const text = (response as { result: { content: { text: string }[] } }).result.content[0]!.text;
+    expect(text).toContain("CAD component visibility confirmed");
+    expect(text).toContain("Drivetrain");
+  });
+
+  it("accepts hidden CAD assembly subtrees when the parent group stays visible", async () => {
+    const response = await handleCadViewMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 7,
+        method: "tools/call",
+        params: {
+          name: "set_cad_component_visibility",
+          arguments: { threadId: "thread-1", componentId: "drive", visible: false },
+        },
+      },
+      {
+        setView: vi.fn(),
+        sendControl: vi.fn().mockResolvedValue(undefined),
+        getHierarchy: vi.fn().mockResolvedValue({
+          status: "loaded",
+          components: [
+            {
+              id: "drive",
+              name: "Drivetrain",
+              kind: "assembly",
+              hasChildren: true,
+              visible: true,
+            },
+            {
+              id: "swerve-a",
+              parentId: "drive",
+              name: "Swerve A",
+              kind: "assembly",
+              hasChildren: true,
+              visible: false,
+            },
+            {
+              id: "swerve-b",
+              parentId: "drive",
+              name: "Swerve B",
+              kind: "assembly",
+              hasChildren: true,
+              visible: false,
+            },
+          ],
+        }),
+        captureScreenshot: vi.fn(),
+      },
+    );
+
+    expect(response).toMatchObject({ jsonrpc: "2.0", id: 7 });
+    const text = (response as { result: { content: { text: string }[] } }).result.content[0]!.text;
+    expect(text).toContain("CAD component subtree visibility confirmed");
+    expect(text).toContain("Drivetrain");
+  });
+
+  it("fails CAD component visibility tool calls when the browser hierarchy does not change", async () => {
+    const response = await handleCadViewMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 8,
+        method: "tools/call",
+        params: {
+          name: "set_cad_component_visibility",
+          arguments: { threadId: "thread-1", componentId: "drive", visible: false },
+        },
+      },
+      {
+        setView: vi.fn(),
+        sendControl: vi.fn().mockResolvedValue(undefined),
+        getHierarchy: vi.fn().mockResolvedValue({
+          status: "loaded",
+          components: [
+            {
+              id: "drive",
+              name: "Drivetrain",
+              kind: "assembly",
+              hasChildren: true,
+              visible: true,
+            },
+          ],
+        }),
+        captureScreenshot: vi.fn(),
+      },
+    );
+
+    expect(response).toMatchObject({
+      jsonrpc: "2.0",
+      id: 8,
+      error: {
+        code: -32603,
+      },
+    });
+    expect((response as { error: { message: string } }).error.message).toContain(
+      "still reported visible=true",
+    );
   });
 
   it("aborts screenshot capture requests that never return", async () => {

@@ -320,11 +320,15 @@ export type CadHierarchyBrowserRequest = typeof CadHierarchyBrowserRequest.Type;
 export const CadHierarchyUploadInput = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   components: Schema.Array(CadHierarchyComponent),
+  status: Schema.optional(Schema.Literals(["loaded", "loading", "unavailable", "error"])),
+  message: Schema.optional(TrimmedString),
 });
 export type CadHierarchyUploadInput = typeof CadHierarchyUploadInput.Type;
 
 export const CadHierarchyResult = Schema.Struct({
   components: Schema.Array(CadHierarchyComponent),
+  status: Schema.optional(Schema.Literals(["loaded", "loading", "unavailable", "error"])),
+  message: Schema.optional(TrimmedString),
 });
 export type CadHierarchyResult = typeof CadHierarchyResult.Type;
 

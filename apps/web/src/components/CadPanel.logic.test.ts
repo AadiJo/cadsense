@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   CAD_VIEWER_MODEL_SIZE_LIMIT_BYTES,
   applyCadComponentVisibility,
+  cadComponentVisibilityCommandsForScopeChange,
   cadOnshapeModelQueryIdentity,
   cadViewerFileName,
   formatCadModelBytes,
@@ -149,7 +150,7 @@ describe("CadPanel logic", () => {
     ).toBe(true);
   });
 
-  it("applies saved CAD hierarchy visibility by component id", () => {
+  it("applies saved CAD hierarchy visibility across component subtrees", () => {
     expect(
       applyCadComponentVisibility(
         [
@@ -161,6 +162,14 @@ describe("CadPanel logic", () => {
             visible: true,
           },
           {
+            id: "left-wheel",
+            parentId: "drive",
+            name: "Left Wheel",
+            kind: "part",
+            hasChildren: false,
+            visible: true,
+          },
+          {
             id: "intake",
             name: "Intake",
             kind: "part",
@@ -168,7 +177,7 @@ describe("CadPanel logic", () => {
             visible: false,
           },
         ],
-        { drive: false, unknown: false },
+        { drive: false, "left-wheel": true, unknown: false },
       ),
     ).toEqual([
       {
@@ -179,8 +188,123 @@ describe("CadPanel logic", () => {
         visible: false,
       },
       {
+        id: "left-wheel",
+        parentId: "drive",
+        name: "Left Wheel",
+        kind: "part",
+        hasChildren: false,
+        visible: false,
+      },
+      {
         id: "intake",
         name: "Intake",
+        kind: "part",
+        hasChildren: false,
+        visible: false,
+      },
+    ]);
+  });
+
+  it("resets component visibility when switching to a thread without overrides", () => {
+    expect(cadComponentVisibilityCommandsForScopeChange({ drive: false }, {})).toEqual([
+      { componentId: "drive", visible: true },
+    ]);
+  });
+
+  it("only emits visibility commands that changed between thread scopes", () => {
+    expect(
+      cadComponentVisibilityCommandsForScopeChange(
+        { drive: false, intake: false },
+        { drive: false, elevator: false },
+      ),
+    ).toEqual([
+      { componentId: "intake", visible: true },
+      { componentId: "elevator", visible: false },
+    ]);
+  });
+
+  it("reports parent assemblies hidden when all child subtrees are hidden", () => {
+    expect(
+      applyCadComponentVisibility(
+        [
+          {
+            id: "drive",
+            name: "Drive",
+            kind: "assembly",
+            hasChildren: true,
+            visible: true,
+          },
+          {
+            id: "left-module",
+            parentId: "drive",
+            name: "Left Module",
+            kind: "assembly",
+            hasChildren: true,
+            visible: true,
+          },
+          {
+            id: "left-wheel",
+            parentId: "left-module",
+            name: "Left Wheel",
+            kind: "part",
+            hasChildren: false,
+            visible: true,
+          },
+          {
+            id: "right-module",
+            parentId: "drive",
+            name: "Right Module",
+            kind: "assembly",
+            hasChildren: true,
+            visible: true,
+          },
+          {
+            id: "right-wheel",
+            parentId: "right-module",
+            name: "Right Wheel",
+            kind: "part",
+            hasChildren: false,
+            visible: true,
+          },
+        ],
+        { "left-wheel": false, "right-wheel": false },
+      ),
+    ).toEqual([
+      {
+        id: "drive",
+        name: "Drive",
+        kind: "assembly",
+        hasChildren: true,
+        visible: false,
+      },
+      {
+        id: "left-module",
+        parentId: "drive",
+        name: "Left Module",
+        kind: "assembly",
+        hasChildren: true,
+        visible: false,
+      },
+      {
+        id: "left-wheel",
+        parentId: "left-module",
+        name: "Left Wheel",
+        kind: "part",
+        hasChildren: false,
+        visible: false,
+      },
+      {
+        id: "right-module",
+        parentId: "drive",
+        name: "Right Module",
+        kind: "assembly",
+        hasChildren: true,
+        visible: false,
+      },
+      {
+        id: "right-wheel",
+        parentId: "right-module",
+        name: "Right Wheel",
         kind: "part",
         hasChildren: false,
         visible: false,

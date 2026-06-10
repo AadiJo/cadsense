@@ -19,6 +19,7 @@ import {
   resolveThreadRowClassName,
   resolveThreadStatusPill,
   shouldClearThreadSelectionOnMouseDown,
+  shouldShowSidebarProjectsEmptyState,
   sortProjectsForSidebar,
   THREAD_JUMP_HINT_SHOW_DELAY_MS,
 } from "./Sidebar.logic";
@@ -66,6 +67,42 @@ describe("hasUnseenCompletion", () => {
         session: null,
       }),
     ).toBe(true);
+  });
+});
+
+describe("shouldShowSidebarProjectsEmptyState", () => {
+  it("waits for the project list to finish bootstrapping", () => {
+    expect(
+      shouldShowSidebarProjectsEmptyState({
+        projectsSectionExpanded: true,
+        projectsLength: 0,
+        projectListReady: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("shows only when the expanded, ready project list is empty", () => {
+    expect(
+      shouldShowSidebarProjectsEmptyState({
+        projectsSectionExpanded: true,
+        projectsLength: 0,
+        projectListReady: true,
+      }),
+    ).toBe(true);
+    expect(
+      shouldShowSidebarProjectsEmptyState({
+        projectsSectionExpanded: false,
+        projectsLength: 0,
+        projectListReady: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldShowSidebarProjectsEmptyState({
+        projectsSectionExpanded: true,
+        projectsLength: 1,
+        projectListReady: true,
+      }),
+    ).toBe(false);
   });
 });
 

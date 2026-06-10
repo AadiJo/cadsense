@@ -1040,8 +1040,7 @@ export default function ChatView(props: ChatViewProps) {
     !isProjectlessChat &&
     activeProject?.externalContext?.provider !== "onshape" &&
     activeThread?.externalContext?.provider !== "onshape";
-  const cadUiStateKey =
-    activeThread && activeThreadStartedForUi ? activeThread.id : (activeThread?.projectId ?? null);
+  const cadUiStateKey = routeThreadKey;
   const cadExploded = useUiStateStore((store) =>
     cadUiStateKey ? (store.cadExplodedByThreadId[cadUiStateKey] ?? false) : false,
   );

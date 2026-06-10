@@ -408,6 +408,24 @@ describe("uiStateStore pure functions", () => {
           "turn-2": false,
         },
       },
+      cadExplodedByThreadId: {
+        [thread1]: true,
+        [thread2]: true,
+      },
+      cadZoomToFitRequestByThreadId: {
+        [thread1]: 1,
+        [thread2]: 2,
+      },
+      cadAgentViewStateByThreadId: {
+        [thread1]: {
+          exploded: true,
+          updatedAt: "2026-05-20T00:00:00.000Z",
+        },
+        [thread2]: {
+          exploded: true,
+          updatedAt: "2026-05-20T00:00:01.000Z",
+        },
+      },
     });
 
     const next = syncThreads(initialState, [{ key: thread1 }]);
@@ -418,6 +436,18 @@ describe("uiStateStore pure functions", () => {
     expect(next.threadChangedFilesExpandedById).toEqual({
       [thread1]: {
         "turn-1": false,
+      },
+    });
+    expect(next.cadExplodedByThreadId).toEqual({
+      [thread1]: true,
+    });
+    expect(next.cadZoomToFitRequestByThreadId).toEqual({
+      [thread1]: 1,
+    });
+    expect(next.cadAgentViewStateByThreadId).toEqual({
+      [thread1]: {
+        exploded: true,
+        updatedAt: "2026-05-20T00:00:00.000Z",
       },
     });
   });
@@ -539,6 +569,9 @@ describe("uiStateStore persistence round-trip", () => {
   it("persists thread CAD orientation state across reloads", () => {
     const threadId = ThreadId.make("thread-1");
     const state = makeUiState({
+      cadExplodedByThreadId: {
+        [threadId]: true,
+      },
       cadAgentViewStateByThreadId: {
         [threadId]: {
           viewCommand: {
@@ -568,6 +601,7 @@ describe("uiStateStore persistence round-trip", () => {
         ? persisted.cadAgentViewStateByThreadId[threadId].viewCommand.distance
         : undefined,
     ).toBe(42);
+    expect(persisted.cadExplodedByThreadId?.[threadId]).toBe(true);
   });
 
   it("preserves all-collapsed project state across restart", () => {

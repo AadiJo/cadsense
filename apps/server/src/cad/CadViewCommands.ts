@@ -6,6 +6,7 @@ import {
   type CadSetCameraInput,
   type CadSetViewInput,
 } from "@cadsense/contracts";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -14,6 +15,8 @@ import * as Random from "effect/Random";
 import * as Stream from "effect/Stream";
 
 const CAD_BROWSER_PUBSUB_CAPACITY = 256;
+const RECENT_CAD_VIEW_COMMAND_LIMIT = 128;
+const RECENT_CAD_VIEW_COMMAND_REPLAY_WINDOW_MS = 60_000;
 
 const cadViewCommandPubSub = Effect.runSync(
   PubSub.bounded<CadViewCommand>(CAD_BROWSER_PUBSUB_CAPACITY),
@@ -28,8 +31,40 @@ interface PendingCadHierarchyRequest {
 }
 
 const pendingHierarchyByRequestId = new Map<string, PendingCadHierarchyRequest>();
+const recentCadViewCommands: CadViewCommand[] = [];
 
-export const cadViewCommandStream = Stream.fromPubSub(cadViewCommandPubSub);
+function pruneRecentCadViewCommands(nowMs: number): void {
+  while (recentCadViewCommands.length > RECENT_CAD_VIEW_COMMAND_LIMIT) {
+    recentCadViewCommands.shift();
+  }
+  const firstFreshIndex = recentCadViewCommands.findIndex((command) => {
+    const createdAtMs = Date.parse(command.createdAt);
+    return (
+      Number.isNaN(createdAtMs) || nowMs - createdAtMs <= RECENT_CAD_VIEW_COMMAND_REPLAY_WINDOW_MS
+    );
+  });
+  if (firstFreshIndex > 0) {
+    recentCadViewCommands.splice(0, firstFreshIndex);
+  } else if (firstFreshIndex === -1) {
+    recentCadViewCommands.length = 0;
+  }
+}
+
+function rememberCadViewCommand(command: CadViewCommand, nowMs: number): void {
+  recentCadViewCommands.push(command);
+  pruneRecentCadViewCommands(nowMs);
+}
+
+export const cadViewCommandStream = Stream.unwrap(
+  Effect.gen(function* () {
+    const subscription = yield* PubSub.subscribe(cadViewCommandPubSub);
+    pruneRecentCadViewCommands(yield* Clock.currentTimeMillis);
+    return Stream.concat(
+      Stream.fromIterable([...recentCadViewCommands]),
+      Stream.fromSubscription(subscription),
+    );
+  }),
+);
 export const cadHierarchyRequestStream = Stream.unwrap(
   Effect.gen(function* () {
     const subscription = yield* PubSub.subscribe(cadHierarchyRequestPubSub);
@@ -51,10 +86,11 @@ export const publishCadCameraCommand = (input: CadSetCameraInput): Effect.Effect
 
 export const publishCadControlCommand = (input: CadControlInput): Effect.Effect<CadViewCommand> =>
   Effect.gen(function* () {
+    const now = yield* DateTime.now;
     const base = {
       commandId: yield* Random.nextUUIDv4,
       threadId: input.threadId,
-      createdAt: yield* DateTime.now.pipe(Effect.map(DateTime.formatIso)),
+      createdAt: DateTime.formatIso(now),
     };
     const command: CadViewCommand =
       input.type === "set-view"
@@ -74,6 +110,7 @@ export const publishCadControlCommand = (input: CadControlInput): Effect.Effect<
             : input.type === "set-exploded"
               ? { ...base, type: input.type, exploded: input.exploded }
               : { ...base, type: input.type };
+    rememberCadViewCommand(command, yield* Clock.currentTimeMillis);
     yield* PubSub.publish(cadViewCommandPubSub, command);
     return command;
   });

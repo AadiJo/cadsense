@@ -973,6 +973,26 @@ label:has(> select#reasoning-effort) select {
   }
 }
 
+@keyframes cad-agent-control-overlay-out {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes cad-agent-control-frame-out {
+  0% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    filter: blur(1px);
+  }
+}
+
 @keyframes cad-agent-control-pill-in {
   0% {
     opacity: 0;
@@ -981,6 +1001,17 @@ label:has(> select#reasoning-effort) select {
   100% {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes cad-agent-control-pill-out {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
   }
 }
 
@@ -1041,7 +1072,7 @@ label:has(> select#reasoning-effort) select {
 }
 
 .cad-agent-control-overlay {
-  z-index: 2147483000;
+  z-index: 70;
 }
 
 .cad-agent-control-glow,
@@ -1060,8 +1091,21 @@ label:has(> select#reasoning-effort) select {
   animation: cad-agent-control-frame-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.cad-agent-control-overlay[data-ending="true"] {
+  animation: cad-agent-control-overlay-out 420ms ease-in forwards;
+}
+
+.cad-agent-control-overlay[data-ending="true"] .cad-agent-control-glow,
+.cad-agent-control-overlay[data-ending="true"] .cad-agent-control-frame {
+  animation: cad-agent-control-frame-out 420ms ease-in forwards;
+}
+
 .cad-agent-control-pill {
   animation: cad-agent-control-pill-in 360ms cubic-bezier(0.16, 1, 0.3, 1) 90ms both;
+}
+
+.cad-agent-control-pill[data-ending="true"] {
+  animation: cad-agent-control-pill-out 420ms ease-in forwards;
 }
 
 .cad-fullscreen-exit-button {

@@ -3227,6 +3227,48 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("keeps the CAD panel open when a draft thread canonicalizes after prompt send", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-draft-cad-panel-test" as MessageId,
+        targetText: "draft cad panel test",
+      }),
+    });
+
+    try {
+      const newThreadButton = page.getByTestId("new-thread-button");
+      await expect.element(newThreadButton).toBeInTheDocument();
+      await newThreadButton.click();
+
+      const newThreadPath = await waitForURL(
+        mounted.router,
+        (path) => UUID_ROUTE_RE.test(path),
+        "Route should have changed to a new draft thread UUID.",
+      );
+      const newDraftId = draftIdFromPath(newThreadPath);
+      const newThreadId = draftThreadIdFor(newDraftId);
+
+      const cadToggle = page.getByLabelText("Toggle CAD view");
+      await expect.element(cadToggle).toBeInTheDocument();
+      await cadToggle.click();
+      await expect.element(cadToggle).toHaveAttribute("aria-pressed", "true");
+
+      await promoteDraftThreadViaDomainEvent(newThreadId);
+      await waitForURL(
+        mounted.router,
+        (path) => path === serverThreadPath(newThreadId),
+        "Promoted drafts should canonicalize to the server thread route.",
+      );
+
+      await expect
+        .element(page.getByLabelText("Toggle CAD view"))
+        .toHaveAttribute("aria-pressed", "true");
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("canonicalizes stale promoted draft routes to the server thread route", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,
@@ -5026,6 +5068,93 @@ describe("ChatView timeline estimator parity (full app)", () => {
         );
         expect(searchInput).not.toBeNull();
         expect(document.activeElement).toBe(searchInput);
+      });
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
+  it("falls back from an unavailable selected provider to a ready provider", async () => {
+    const staleInstanceId = ProviderInstanceId.make("opencode");
+    const staleModelSelection = {
+      instanceId: staleInstanceId,
+      model: "github-copilot/gemini-3-flash-preview",
+    };
+    const snapshot = createSnapshotForTargetUser({
+      targetMessageId: "msg-user-unavailable-provider-fallback-target" as MessageId,
+      targetText: "unavailable provider fallback thread",
+    });
+
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: {
+        ...snapshot,
+        projects: snapshot.projects.map((project) =>
+          project.id === PROJECT_ID
+            ? Object.assign({}, project, { defaultModelSelection: staleModelSelection })
+            : project,
+        ),
+        threads: snapshot.threads.map((thread) =>
+          thread.id === THREAD_ID
+            ? Object.assign({}, thread, { modelSelection: staleModelSelection })
+            : thread,
+        ),
+      },
+      configureFixture: (nextFixture) => {
+        nextFixture.serverConfig = {
+          ...nextFixture.serverConfig,
+          providers: [
+            {
+              ...nextFixture.serverConfig.providers[0]!,
+              displayName: "Codex",
+              status: "ready",
+              installed: true,
+              models: [
+                {
+                  slug: "gpt-5.4",
+                  name: "GPT-5.4",
+                  isCustom: false,
+                  capabilities: createModelCapabilities({ optionDescriptors: [] }),
+                },
+              ],
+            },
+            {
+              driver: ProviderDriverKind.make("opencode"),
+              instanceId: staleInstanceId,
+              displayName: "OpenCode",
+              enabled: true,
+              installed: false,
+              version: null,
+              status: "error",
+              auth: { status: "unknown" },
+              checkedAt: NOW_ISO,
+              message: "OpenCode CLI is not installed.",
+              models: [],
+              slashCommands: [],
+              skills: [],
+            },
+          ],
+        };
+      },
+    });
+
+    try {
+      await waitForServerConfigToApply();
+      await waitForComposerEditor();
+
+      await vi.waitFor(() => {
+        const triggerText = findComposerProviderModelPicker()?.textContent ?? "";
+        expect(triggerText).toContain("GPT-5.4");
+        expect(triggerText).not.toContain("GitHub Copilot");
+        expect(triggerText).not.toContain("Gemini 3 Flash Preview");
+      });
+
+      findComposerProviderModelPicker()?.click();
+
+      await vi.waitFor(() => {
+        const listText = document.querySelector(".model-picker-list")?.textContent ?? "";
+        expect(listText).toContain("GPT-5.4");
+        expect(listText).not.toContain("No models found");
       });
     } finally {
       await mounted.cleanup();

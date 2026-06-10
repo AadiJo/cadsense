@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import * as readline from "node:readline";
+import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -468,6 +469,116 @@ export interface CadViewMcpHandlers {
   ) => Promise<CadScreenshotCaptureHttpResult>;
 }
 
+async function delay(ms: number): Promise<void> {
+  await sleep(ms);
+}
+
+type CadHierarchyComponent = CadHierarchyResult["components"][number];
+
+function buildCadHierarchyChildren(
+  components: ReadonlyArray<CadHierarchyComponent>,
+): Map<string | undefined, CadHierarchyComponent[]> {
+  const childrenByParentId = new Map<string | undefined, CadHierarchyComponent[]>();
+  for (const component of components) {
+    const children = childrenByParentId.get(component.parentId);
+    if (children) {
+      children.push(component);
+    } else {
+      childrenByParentId.set(component.parentId, [component]);
+    }
+  }
+  return childrenByParentId;
+}
+
+function cadHierarchyComponentEffectivelyVisible(
+  component: CadHierarchyComponent,
+  childrenByParentId: ReadonlyMap<string | undefined, ReadonlyArray<CadHierarchyComponent>>,
+  visited = new Set<string>(),
+): boolean {
+  if (visited.has(component.id)) {
+    return false;
+  }
+  if (!component.visible) {
+    return false;
+  }
+  visited.add(component.id);
+  const children = childrenByParentId.get(component.id) ?? [];
+  if (children.length === 0) {
+    return true;
+  }
+  return children.some((child) =>
+    cadHierarchyComponentEffectivelyVisible(child, childrenByParentId, new Set(visited)),
+  );
+}
+
+async function verifyCadComponentVisibility(
+  handlers: Pick<CadViewMcpHandlers, "getHierarchy">,
+  input: Extract<CadControlInput, { readonly type: "set-component-visibility" }>,
+): Promise<{
+  readonly componentName: string;
+  readonly componentsChecked: number;
+  readonly confirmedBy: "component" | "subtree";
+}> {
+  let lastStatus: CadHierarchyResult["status"] | undefined;
+  let lastMessage: string | undefined;
+  let lastVisible: boolean | undefined;
+  let lastEffectiveVisible: boolean | undefined;
+  let componentSeen = false;
+  let componentName = input.componentId;
+
+  for (const waitMs of [150, 300, 600, 900]) {
+    await delay(waitMs);
+    const hierarchy = await handlers.getHierarchy({ threadId: input.threadId });
+    lastStatus = hierarchy.status ?? "loaded";
+    lastMessage = hierarchy.message;
+    if (lastStatus !== "loaded") {
+      continue;
+    }
+    const component = hierarchy.components.find((item) => item.id === input.componentId);
+    if (!component) {
+      continue;
+    }
+    componentSeen = true;
+    componentName = component.name;
+    lastVisible = component.visible;
+    if (component.visible === input.visible) {
+      return {
+        componentName,
+        componentsChecked: hierarchy.components.length,
+        confirmedBy: "component",
+      };
+    }
+    const childrenByParentId = buildCadHierarchyChildren(hierarchy.components);
+    const effectiveVisible = cadHierarchyComponentEffectivelyVisible(component, childrenByParentId);
+    lastEffectiveVisible = effectiveVisible;
+    if (!input.visible && component.hasChildren && !effectiveVisible) {
+      return {
+        componentName,
+        componentsChecked: hierarchy.components.length,
+        confirmedBy: "subtree",
+      };
+    }
+  }
+
+  if (!componentSeen) {
+    const detail =
+      lastStatus && lastStatus !== "loaded"
+        ? ` Last hierarchy status was '${lastStatus}'${lastMessage ? `: ${lastMessage}` : "."}`
+        : "";
+    throw new Error(
+      `CAD component '${input.componentId}' was not found after the command.${detail}`,
+    );
+  }
+
+  throw new Error(
+    `CAD component '${componentName}' (${input.componentId}) still reported visible=${String(
+      lastVisible,
+    )} with effective subtree visible=${String(lastEffectiveVisible)} after setting visible=${String(
+      input.visible,
+    )}.`,
+  );
+}
+
 export async function handleCadViewMcpRequest(
   request: JsonRpcRequest,
   handlers: CadViewMcpHandlers,
@@ -583,7 +694,7 @@ export async function handleCadViewMcpRequest(
           {
             name: CAD_VIEW_MCP_HIERARCHY_TOOL_NAME,
             description:
-              "Return the current CAD assembly/component hierarchy, including stable component ids and visibility states.",
+              "Return the current CAD assembly/component hierarchy, including stable component ids and visibility states. The result includes a status field; if status is loading, unavailable, or error, do not treat an empty components array as evidence that the CAD has no hierarchy.",
             inputSchema: { type: "object", properties: {}, additionalProperties: false },
           },
           {
@@ -714,7 +825,20 @@ export async function handleCadViewMcpRequest(
         try {
           const result = await handlers.getHierarchy(input);
           return jsonRpcResult(id, {
-            content: [{ type: "text", text: JSON.stringify(result.components, null, 2) }],
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    status: result.status ?? "loaded",
+                    ...(result.message ? { message: result.message } : {}),
+                    components: result.components,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
           });
         } catch (error) {
           return jsonRpcError(id, -32603, error instanceof Error ? error.message : String(error));
@@ -735,6 +859,23 @@ export async function handleCadViewMcpRequest(
         if (!input) return jsonRpcError(id, -32602, "Invalid CAD control arguments.");
         try {
           await handlers.sendControl(input);
+          if (input.type === "set-component-visibility") {
+            const verification = await verifyCadComponentVisibility(handlers, input);
+            const visibilityScope =
+              verification.confirmedBy === "subtree"
+                ? "CAD component subtree visibility confirmed"
+                : "CAD component visibility confirmed";
+            return jsonRpcResult(id, {
+              content: [
+                {
+                  type: "text",
+                  text: `${visibilityScope} for ${verification.componentName} (${input.componentId}); visible=${String(
+                    input.visible,
+                  )}.`,
+                },
+              ],
+            });
+          }
           return jsonRpcResult(id, {
             content: [{ type: "text", text: "CAD control command sent." }],
           });
