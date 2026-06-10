@@ -22,8 +22,8 @@ export function SettingsSection({
   children,
   className,
   ...sectionProps
-}: ComponentPropsWithoutRef<"section"> & {
-  title: string;
+}: Omit<ComponentPropsWithoutRef<"section">, "title"> & {
+  title: ReactNode;
   icon?: ReactNode;
   headerAction?: ReactNode;
   children: ReactNode;

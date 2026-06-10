@@ -1,4 +1,4 @@
-import { BotIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
+import { BotIcon, ExternalLinkIcon, InfoIcon, PlusIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { MechbaseConnection, OnshapeConnection } from "@cadsense/contracts";
 
@@ -24,6 +24,74 @@ import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 const ITEM_ROW_CLASSNAME = "border-t border-border/60 px-4 py-4 first:border-t-0 sm:px-5";
 const ITEM_ROW_INNER_CLASSNAME =
   "flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between";
+const HEADER_ACTION_BUTTON_CLASSNAME =
+  "h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground";
+
+type ConnectionInfoDialogProps = {
+  title: string;
+  description: string;
+  steps: ReadonlyArray<string>;
+  links: ReadonlyArray<{
+    label: string;
+    href: string;
+  }>;
+};
+
+function ConnectionInfoDialog({ title, description, steps, links }: ConnectionInfoDialogProps) {
+  return (
+    <Dialog>
+      <DialogTrigger
+        render={
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            className="size-5 rounded-sm text-sky-500 hover:bg-sky-500/10 hover:text-sky-400"
+            aria-label={`${title} setup information`}
+          >
+            <InfoIcon className="size-3" />
+          </Button>
+        }
+      />
+      <DialogPopup className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-5">
+          <section className="space-y-2">
+            <h3 className="text-xs font-medium text-foreground">Setup steps</h3>
+            <ol className="list-decimal space-y-1.5 pl-4 text-sm text-muted-foreground">
+              {steps.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </section>
+          {links.length > 0 ? (
+            <section className="space-y-2">
+              <h3 className="text-xs font-medium text-foreground">Links</h3>
+              <div className="flex flex-wrap gap-2">
+                {links.map((link) => (
+                  <Button
+                    key={link.href}
+                    size="xs"
+                    variant="outline"
+                    render={<a href={link.href} target="_blank" rel="noreferrer" />}
+                  >
+                    <ExternalLinkIcon className="size-3" />
+                    {link.label}
+                  </Button>
+                ))}
+              </div>
+            </section>
+          ) : null}
+        </DialogPanel>
+        <DialogFooter>
+          <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
 
 type OnshapeConnectionListRowProps = {
   connection: OnshapeConnection;
@@ -433,13 +501,40 @@ export function ConnectionsSettings() {
   return (
     <SettingsPageContainer>
       <SettingsSection
-        title="Onshape"
+        title={
+          <span className="inline-flex items-center gap-1">
+            <span>Onshape</span>
+            <ConnectionInfoDialog
+              title="Onshape"
+              description="Connect your Onshape account so Cadsense can inspect CAD documents during reviews."
+              steps={[
+                "Sign in to Onshape.",
+                "Click your profile icon in the top-right corner.",
+                "Open My Account.",
+                "Go to Developer.",
+                "Create a new API key.",
+                "Copy both the API key and the secret.",
+                "Paste both values into Cadsense.",
+              ]}
+              links={[
+                {
+                  label: "Open Onshape",
+                  href: "https://cad.onshape.com/",
+                },
+                {
+                  label: "API key docs",
+                  href: "https://cad.onshape.com/help/Content/Plans/my_account_developer.htm",
+                },
+              ]}
+            />
+          </span>
+        }
         headerAction={
           <div className="flex items-center gap-1">
             <Button
               size="xs"
               variant="ghost"
-              className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+              className={HEADER_ACTION_BUTTON_CLASSNAME}
               disabled={isLoadingOnshapeConnections}
               onClick={() => void loadOnshapeConnections()}
             >
@@ -464,7 +559,7 @@ export function ConnectionsSettings() {
                     <Button
                       size="xs"
                       variant="ghost"
-                      className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+                      className={HEADER_ACTION_BUTTON_CLASSNAME}
                       aria-label="Add Onshape connection"
                     >
                       <PlusIcon className="size-3" />
@@ -600,13 +695,32 @@ export function ConnectionsSettings() {
       </SettingsSection>
 
       <SettingsSection
-        title="Mechbase"
+        title={
+          <span className="inline-flex items-center gap-1">
+            <span>Mechbase</span>
+            <ConnectionInfoDialog
+              title="Mechbase"
+              description="A RAG platform that unifies technical documents, robot photos, CAD models, and team knowledge into a searchable engineering knowledge base built for FIRST Robotics teams. Use this to ground CAD reviews in real examples, past robot designs, manufacturing notes, mechanism references, and team-specific precedent instead of relying only on generic design advice."
+              steps={[
+                "Sign in to Mechbase.",
+                "Create an API key.",
+                "Paste the API key into Cadsense.",
+              ]}
+              links={[
+                {
+                  label: "Open Mechbase",
+                  href: "https://mechbase.johari-dev.com/",
+                },
+              ]}
+            />
+          </span>
+        }
         headerAction={
           <div className="flex items-center gap-1">
             <Button
               size="xs"
               variant="ghost"
-              className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+              className={HEADER_ACTION_BUTTON_CLASSNAME}
               disabled={isLoadingMechbaseConnections}
               onClick={() => void loadMechbaseConnections()}
             >
@@ -631,7 +745,7 @@ export function ConnectionsSettings() {
                     <Button
                       size="xs"
                       variant="ghost"
-                      className="h-5 gap-1 rounded-sm px-1 text-[11px] font-normal text-muted-foreground/60 hover:text-muted-foreground"
+                      className={HEADER_ACTION_BUTTON_CLASSNAME}
                       aria-label="Add Mechbase connection"
                     >
                       <PlusIcon className="size-3" />
