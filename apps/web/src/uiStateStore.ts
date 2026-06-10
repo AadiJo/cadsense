@@ -822,7 +822,16 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
                 exploded: command.exploded,
                 updatedAt: command.createdAt,
               }
-            : previous;
+            : command.type === "set-component-visibility"
+              ? {
+                  ...previous,
+                  componentVisibilityById: {
+                    ...previous?.componentVisibilityById,
+                    [command.componentId]: command.visible,
+                  },
+                  updatedAt: command.createdAt,
+                }
+              : previous;
       if (!next || next === previous) {
         return state;
       }

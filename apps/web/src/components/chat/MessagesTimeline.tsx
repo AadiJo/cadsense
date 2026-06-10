@@ -430,6 +430,22 @@ function isCadReviewTimelineWorkEntry(entry: TimelineWorkEntry): boolean {
   );
 }
 
+function isCadReviewVerboseWorkEntry(entry: TimelineWorkEntry): boolean {
+  const kind = entry.activityKind;
+  if (!kind) {
+    return false;
+  }
+  if (!kind.startsWith("cad-review.")) {
+    return isCadReviewTimelineWorkEntry(entry) && kind !== "tool.completed";
+  }
+  return (
+    kind === "cad-review.child-thread.created" ||
+    kind === "cad-review.child-thread.linked" ||
+    kind.endsWith(".progress") ||
+    kind.endsWith(".updated")
+  );
+}
+
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   return (
     <div
@@ -939,7 +955,7 @@ function CadReviewTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "cad-
 
 function CadReviewLiveChildActivity({ summary }: { summary: CadReviewChildActivitySummary }) {
   const reviewer = summary.reviewer ? formatCadReviewReviewerName(summary.reviewer) : "Reviewer";
-  const toolLabel = summary.latestToolTitle || summary.latestToolName;
+  const toolLabel = summary.latestToolTitle || formatCadReviewLiveToolLabel(summary.latestToolName);
   const activityLabel = toolLabel || summary.latestActivityLabel;
 
   return (
@@ -956,7 +972,9 @@ function CadReviewLiveChildActivity({ summary }: { summary: CadReviewChildActivi
         </span>
       </div>
       <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-        {summary.latestToolName ? <span>Tool: {summary.latestToolName}</span> : null}
+        {summary.latestToolName ? (
+          <span>Tool: {formatCadReviewLiveToolLabel(summary.latestToolName)}</span>
+        ) : null}
         {summary.latestScreenshotAt ? (
           <span>
             Screenshot: <LiveSince createdAt={summary.latestScreenshotAt} /> ago
@@ -970,6 +988,16 @@ function CadReviewLiveChildActivity({ summary }: { summary: CadReviewChildActivi
       </div>
     </section>
   );
+}
+
+function formatCadReviewLiveToolLabel(toolName: string | null | undefined): string | null {
+  if (!toolName) {
+    return null;
+  }
+  if (/[\\/]/.test(toolName) || /\.(png|jpe?g|webp)$/i.test(toolName)) {
+    return "Inspecting captured CAD image";
+  }
+  return toolName.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 const CAD_REVIEW_PERSONAS = [
@@ -1658,16 +1686,20 @@ const WorkGroupSection = memo(function WorkGroupSection({
   const { displayCadReviewWorkLog, workspaceRoot } = use(TimelineRowCtx);
   const [isExpanded, setIsExpanded] = useState(false);
   const isCadReviewWorkLog = groupedEntries.some(isCadReviewTimelineWorkEntry);
-  if (isCadReviewWorkLog && !displayCadReviewWorkLog) {
+  const visibleEntriesWhenCollapsed =
+    isCadReviewWorkLog && !displayCadReviewWorkLog
+      ? groupedEntries.filter((entry) => !isCadReviewVerboseWorkEntry(entry))
+      : groupedEntries;
+  if (visibleEntriesWhenCollapsed.length === 0) {
     return null;
   }
-  const hasOverflow = groupedEntries.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
+  const hasOverflow = visibleEntriesWhenCollapsed.length > MAX_VISIBLE_WORK_LOG_ENTRIES;
   const visibleEntries =
     hasOverflow && !isExpanded
-      ? groupedEntries.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
-      : groupedEntries;
-  const hiddenCount = groupedEntries.length - visibleEntries.length;
-  const onlyToolEntries = groupedEntries.every((entry) => entry.tone === "tool");
+      ? visibleEntriesWhenCollapsed.slice(-MAX_VISIBLE_WORK_LOG_ENTRIES)
+      : visibleEntriesWhenCollapsed;
+  const hiddenCount = visibleEntriesWhenCollapsed.length - visibleEntries.length;
+  const onlyToolEntries = visibleEntriesWhenCollapsed.every((entry) => entry.tone === "tool");
   const showHeader = isCadReviewWorkLog || hasOverflow || !onlyToolEntries;
   const groupLabel = isCadReviewWorkLog || !onlyToolEntries ? "Work log" : "Tool calls";
 
@@ -1676,7 +1708,7 @@ const WorkGroupSection = memo(function WorkGroupSection({
       {showHeader && (
         <div className="mb-1.5 flex items-center justify-between gap-2 px-0.5">
           <p className="text-[9px] uppercase tracking-[0.16em] text-muted-foreground/55">
-            {groupLabel} ({groupedEntries.length})
+            {groupLabel} ({visibleEntriesWhenCollapsed.length})
           </p>
           {hasOverflow && (
             <button

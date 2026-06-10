@@ -418,11 +418,14 @@ function deriveCadReviewOverlaySteps(
     id: "planning",
     label: "Plan review",
     state: statusStateForCadReviewStatus(status, "planning", failed),
-    substeps: latestCadReviewSubsteps(
-      entries,
-      ["planning", "plan"],
-      ["Mapping mechanisms", "Choosing review priorities"],
-    ),
+    substeps: [
+      ...liveCadReviewChildSubsteps(childActivity, "planning", status),
+      ...latestCadReviewSubsteps(
+        entries,
+        ["planning", "plan"],
+        ["Mapping mechanisms", "Choosing review priorities"],
+      ),
+    ],
     outputTokens: liveOutputTokensForStep("planning"),
   });
   const baselineSkipped =
@@ -482,11 +485,14 @@ function deriveCadReviewOverlaySteps(
             : isActive
               ? "active"
               : statusStateAfter("reviewing", status),
-      substeps: latestCadReviewSubsteps(
-        entries,
-        [persona, label.toLowerCase()],
-        ["Inspecting geometry", "Attributing tool calls"],
-      ),
+      substeps: [
+        ...liveCadReviewChildSubsteps(childActivity, persona, status),
+        ...latestCadReviewSubsteps(
+          entries,
+          [persona, label.toLowerCase()],
+          ["Inspecting geometry", "Attributing tool calls"],
+        ),
+      ],
       outputTokens: personaOutputTokens,
     });
   });
@@ -494,25 +500,31 @@ function deriveCadReviewOverlaySteps(
     id: "deep-diving",
     label: "Focused deep dives",
     state: statusStateForCadReviewStatus(status, "deep-diving", failed),
-    substeps: latestCadReviewSubsteps(
-      entries,
-      ["deep dive", "focused"],
-      [
-        "Checking highest-risk findings",
-        `${activeReview.deepDiveReports?.length ?? 0} deep dives drafted`,
-      ],
-    ),
+    substeps: [
+      ...liveCadReviewChildSubsteps(childActivity, "deep_diving", status),
+      ...latestCadReviewSubsteps(
+        entries,
+        ["deep dive", "focused"],
+        [
+          "Checking highest-risk findings",
+          `${activeReview.deepDiveReports?.length ?? 0} deep dives drafted`,
+        ],
+      ),
+    ],
     outputTokens: liveOutputTokensForStep("deep_diving"),
   });
   const synthesisStep = buildCadReviewStep({
     id: "synthesizing",
     label: "Synthesis",
     state: statusStateForCadReviewStatus(status, "synthesizing", failed),
-    substeps: latestCadReviewSubsteps(
-      entries,
-      ["synthesis", "synthesizing"],
-      ["Merging reviewer findings", "Writing action items"],
-    ),
+    substeps: [
+      ...liveCadReviewChildSubsteps(childActivity, "synthesizing", status),
+      ...latestCadReviewSubsteps(
+        entries,
+        ["synthesis", "synthesizing"],
+        ["Merging reviewer findings", "Writing action items"],
+      ),
+    ],
     outputTokens: liveOutputTokensForStep("synthesizing"),
   });
 
@@ -571,6 +583,71 @@ function statusStateAfter(
   const currentIndex = CAD_REVIEW_PROGRESS_ORDER.indexOf(current);
   if (currentIndex < 0 || stepIndex < 0) return "pending";
   return currentIndex > stepIndex ? "complete" : "pending";
+}
+
+function liveCadReviewChildSubsteps(
+  childActivity: CadReviewChildActivitySummary | undefined,
+  step: keyof NonNullable<CadReviewReport["outputTokensByStep"]>,
+  reviewStatus: CadReviewStatus,
+): string[] {
+  if (!childActivity) {
+    return [];
+  }
+
+  const childStepIsActive =
+    step === "planning"
+      ? reviewStatus === "planning" && childActivity.reviewer === "synthesis"
+      : step === "deep_diving"
+        ? reviewStatus === "deep-diving" && childActivity.reviewer === "synthesis"
+        : step === "synthesizing"
+          ? reviewStatus === "synthesizing" && childActivity.reviewer === "synthesis"
+          : reviewStatus === "reviewing" && childActivity.reviewer === step;
+
+  if (!childStepIsActive) {
+    return [];
+  }
+
+  const activityLabel = describeCadReviewChildActivity(childActivity);
+  const tokenLabel = formatCadReviewOutputTokens(childActivity.outputTokens);
+  return [activityLabel, ...(tokenLabel ? [`${tokenLabel} tokens generated in this worker`] : [])];
+}
+
+function describeCadReviewChildActivity(activity: CadReviewChildActivitySummary): string {
+  const kind = activity.latestActivityKind.toLowerCase();
+  const label = activity.latestActivityLabel.trim();
+  const toolTitle = activity.latestToolTitle?.trim();
+  const toolName = activity.latestToolName?.trim();
+
+  if (kind.includes("screenshot") || kind.includes("capture")) {
+    return "Capturing CAD evidence";
+  }
+  if (kind.includes("view") || kind.includes("render")) {
+    return "Adjusting the CAD view";
+  }
+  if (kind === "assistant.message") {
+    return "Writing reviewer notes";
+  }
+  if (kind === "context-window.updated") {
+    return "Generating reviewer output";
+  }
+  if (toolTitle) {
+    return `Using ${toolTitle}`;
+  }
+  if (toolName) {
+    if (isPathLikeCadReviewToolName(toolName)) {
+      return "Inspecting captured CAD image";
+    }
+    return `Using ${formatCadReviewToolName(toolName)}`;
+  }
+  return label || "Working in the background";
+}
+
+function formatCadReviewToolName(toolName: string): string {
+  return toolName.replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function isPathLikeCadReviewToolName(toolName: string): boolean {
+  return /[\\/]/.test(toolName) || /\.(png|jpe?g|webp)$/i.test(toolName);
 }
 
 function latestCadReviewSubsteps(

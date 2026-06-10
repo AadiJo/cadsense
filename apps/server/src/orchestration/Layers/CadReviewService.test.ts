@@ -1,4 +1,5 @@
 import {
+  type CadReviewActionItem,
   CommandId,
   ThreadId,
   type OrchestrationCommand,
@@ -29,14 +30,18 @@ import {
   childThreadHasCompletedAssistantMessage,
   CadReviewServiceLive,
   deepDiveOutputIsReady,
+  dedupeCadReviewActionItems,
   extractJsonObject,
   firstPendingInteractiveChildPrompt,
   isUnsupportedCodexCadScreenshotExportRootError,
   mechanismPlanOutputIsReady,
   outputTokensFromChildThread,
   personaReviewOutputIsReady,
+  plainCadReviewActionTitle,
+  plainCadReviewText,
   reviewerConcurrencyForThread,
   synthesisOutputIsReady,
+  synthesizeServerSide,
   userVisibleErrorMessage,
 } from "./CadReviewService.ts";
 import { buildMechanismPlanningPrompt } from "./CadReviewPrompts.ts";
@@ -179,7 +184,11 @@ function makeRunningChildThread(
 function makeProjectionSnapshotQuery(
   parentThread: OrchestrationThread,
   snapshotThreads: ReadonlyArray<OrchestrationThread> = [],
+  detailThreads: ReadonlyArray<OrchestrationThread> = snapshotThreads,
 ): ProjectionSnapshotQueryShape {
+  const detailThreadById = new Map(
+    [parentThread, ...snapshotThreads, ...detailThreads].map((thread) => [thread.id, thread]),
+  );
   return {
     getCommandReadModel: () => Effect.succeed(emptyReadModel),
     getSnapshot: () =>
@@ -197,8 +206,10 @@ function makeProjectionSnapshotQuery(
     getThreadCheckpointContext: () => Effect.succeed(Option.none()),
     getFullThreadDiffContext: () => Effect.succeed(Option.none()),
     getThreadShellById: () => Effect.succeed(Option.none()),
-    getThreadDetailById: (threadId) =>
-      Effect.succeed(threadId === parentThreadId ? Option.some(parentThread) : Option.none()),
+    getThreadDetailById: (threadId) => {
+      const thread = detailThreadById.get(threadId);
+      return Effect.succeed(thread ? Option.some(thread) : Option.none());
+    },
   };
 }
 
@@ -422,7 +433,7 @@ describe("CadReviewService", () => {
     ).toBe("Too Many Requests: quota exceeded");
   });
 
-  it("runs CAD review personas with the shared reviewer concurrency limit", () => {
+  it("runs CAD review personas concurrently as background workers", () => {
     expect(
       reviewerConcurrencyForThread(
         {
@@ -448,6 +459,141 @@ describe("CadReviewService", () => {
       ),
     ).toBe(3);
     expect(reviewerConcurrencyForThread({} as unknown as OrchestrationThread, 5)).toBe(3);
+    expect(reviewerConcurrencyForThread({} as unknown as OrchestrationThread, 2)).toBe(2);
+  });
+
+  it("deduplicates related action items and keeps review wording student-readable", () => {
+    expect(plainCadReviewText("The output load-path is unclear.")).toBe(
+      "The support for the output shaft is unclear.",
+    );
+    expect(plainCadReviewActionTitle("Improve output load-path")).toBe(
+      "Support the output shaft close to the external load",
+    );
+
+    const actionItems = [
+      {
+        id: `${reviewRunId}:action:1`,
+        title: "Reduce output shaft overhang",
+        description: "Move the bearing closer to the external wheel load.",
+        priority: "medium",
+        sourceFindingIds: ["finding-a"],
+        evidenceArtifactIds: ["artifact-a"],
+      },
+      {
+        id: `${reviewRunId}:action:2`,
+        title: "Support unsupported output shaft span",
+        description:
+          "Add support near the wheel or shorten the unsupported output shaft span before manufacturing.",
+        priority: "high",
+        sourceFindingIds: ["finding-b"],
+        evidenceArtifactIds: ["artifact-b"],
+      },
+    ] satisfies CadReviewActionItem[];
+
+    expect(dedupeCadReviewActionItems(actionItems)).toEqual([
+      expect.objectContaining({
+        id: `${reviewRunId}:action:1`,
+        title: "Reduce output shaft overhang",
+        description:
+          "Add support near the wheel or shorten the unsupported output shaft span before manufacturing.",
+        priority: "high",
+        sourceFindingIds: ["finding-a", "finding-b"],
+        evidenceArtifactIds: ["artifact-a", "artifact-b"],
+      }),
+    ]);
+  });
+
+  it("backfills synthesis action items when the synthesis output under-produces", () => {
+    const synthesized = synthesizeServerSide({
+      reviewRunId,
+      subject: "Epsilon / Review my CAD from all angles",
+      deepDiveReports: [],
+      synthesisText: JSON.stringify({
+        commonThemes: ["Several subsystems are tightly coupled."],
+        positiveSignals: ["The drivetrain packaging is mature."],
+        blockingIssues: [
+          { title: "Center handoff is too dense" },
+          { title: "Front intake blocks service" },
+        ],
+        actionItems: [
+          {
+            title: "Reshape the intake cheek plate noses",
+            description: "Make the front intake less likely to catch and bend.",
+            priority: "high",
+            sourceFindingIds: [`${reviewRunId}:systems:finding:1`],
+            evidenceArtifactIds: ["artifact-intake"],
+          },
+        ],
+      }),
+      reports: [
+        {
+          persona: "systems_integration",
+          status: "completed",
+          summary: "Systems summary",
+          positiveSignals: [],
+          topConcerns: [
+            {
+              id: `${reviewRunId}:systems:finding:1`,
+              title: "The front intake traps front-corner service",
+              description: "The intake sits in the same access path as the front modules.",
+              severity: "high",
+              confidence: "high",
+              evidenceArtifactIds: ["artifact-intake"],
+              recommendedFix: "Make the intake a quick-removal cassette.",
+            },
+            {
+              id: `${reviewRunId}:systems:finding:2`,
+              title: "A jam in the center handoff looks hard to reach quickly",
+              description: "The note path is buried behind rollers and side structure.",
+              severity: "high",
+              confidence: "medium",
+              evidenceArtifactIds: ["artifact-handoff"],
+              recommendedFix: "Add a removable access panel or simplify the handoff.",
+            },
+          ],
+          repeatedPatterns: [],
+          likelyFailureModes: [],
+          recommendedChanges: [],
+          evidenceArtifactIds: [],
+          confidence: "medium",
+          toolCallIds: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          persona: "program_readiness",
+          status: "completed",
+          summary: "Program summary",
+          positiveSignals: [],
+          topConcerns: [
+            {
+              id: `${reviewRunId}:program:finding:1`,
+              title: "There are too many note handoffs stacked into one tuning problem",
+              description: "The robot relies on too many close transitions.",
+              severity: "high",
+              confidence: "medium",
+              evidenceArtifactIds: ["artifact-handoff"],
+              recommendedFix: "Remove one internal control stage or make it passive.",
+            },
+          ],
+          repeatedPatterns: [],
+          likelyFailureModes: [],
+          recommendedChanges: [],
+          evidenceArtifactIds: [],
+          confidence: "medium",
+          toolCallIds: [],
+          createdAt: now,
+          updatedAt: now,
+        },
+      ],
+    });
+
+    expect(synthesized.actionItems).toHaveLength(3);
+    expect(synthesized.actionItems.map((item) => item.sourceFindingIds)).toEqual([
+      [`${reviewRunId}:systems:finding:1`],
+      [`${reviewRunId}:systems:finding:2`],
+      [`${reviewRunId}:program:finding:1`],
+    ]);
   });
 
   it("uses the larger child output token signal when activity counts are stale", () => {
@@ -646,7 +792,7 @@ describe("CadReviewService", () => {
     expect(plan?.reviewerSelection.every((selection) => selection.enabled)).toBe(true);
   });
 
-  it("falls back to all reviewers when planner selection expresses uncertainty", () => {
+  it("keeps complete planner selections even when disabled reviewer reasons express uncertainty", () => {
     const plan = buildMechanismPlan(
       JSON.stringify({
         summary: "Planner was unsure.",
@@ -671,7 +817,12 @@ describe("CadReviewService", () => {
       }),
     );
 
-    expect(plan?.reviewerSelection.every((selection) => selection.enabled)).toBe(true);
+    const selectionByPersona = new Map(
+      plan?.reviewerSelection.map((selection) => [selection.persona, selection.enabled]),
+    );
+    expect(selectionByPersona.get("systems_integration")).toBe(false);
+    expect(selectionByPersona.get("program_readiness")).toBe(false);
+    expect(selectionByPersona.get("mechanical_robustness")).toBe(true);
   });
 
   it("marks the review stopped before stopping persisted CAD review child sessions", async () => {
@@ -893,6 +1044,52 @@ describe("CadReviewService", () => {
         Layer.succeed(
           ProjectionSnapshotQuery,
           makeProjectionSnapshotQuery(parentThread, [parentThread, childThread]),
+        ),
+      ),
+      Layer.provide(
+        Layer.succeed(CadViewScheduler, {
+          enqueue: (_threadId, _operationId, operation) => operation,
+        }),
+      ),
+      Layer.provide(ServerSettingsService.layerTest()),
+      Layer.provide(NodeServices.layer),
+    );
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const service = yield* CadReviewService;
+        yield* service.recoverInterruptedReviews();
+      }).pipe(Effect.provide(layer)),
+    );
+
+    expect(dispatchedCommands).toEqual([]);
+  });
+
+  it("does not recover an active CAD review when child progress is only visible in thread detail", async () => {
+    const dispatchedCommands: OrchestrationCommand[] = [];
+    const parentThread = makeParentThread();
+    const lightweightChildThread = makeRunningChildThread(staleUpdatedAt, staleUpdatedAt);
+    const detailedChildThread = makeRunningChildThread(staleUpdatedAt, freshUpdatedAt);
+    const layer = CadReviewServiceLive.pipe(
+      Layer.provide(
+        Layer.succeed(OrchestrationEngineService, {
+          readEvents: () => Stream.empty,
+          dispatch: (command) =>
+            Effect.sync(() => {
+              dispatchedCommands.push(command);
+              return { sequence: dispatchedCommands.length };
+            }),
+          streamDomainEvents: Stream.empty,
+        }),
+      ),
+      Layer.provide(
+        Layer.succeed(
+          ProjectionSnapshotQuery,
+          makeProjectionSnapshotQuery(
+            parentThread,
+            [parentThread, lightweightChildThread],
+            [detailedChildThread],
+          ),
         ),
       ),
       Layer.provide(

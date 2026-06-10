@@ -372,7 +372,7 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("Work log");
   });
 
-  it("hides CAD review work logs by default", async () => {
+  it("shows CAD review milestones by default", async () => {
     const { MessagesTimeline } = await import("./MessagesTimeline");
     const markup = renderToStaticMarkup(
       <MessagesTimeline
@@ -393,7 +393,33 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).not.toContain("Captured baseline CAD screenshot");
+    expect(markup).toContain("Captured baseline CAD screenshot");
+    expect(markup).toContain("Work log");
+  });
+
+  it("hides verbose CAD review child bookkeeping by default", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-1",
+            kind: "work",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            entry: {
+              id: "work-1",
+              createdAt: "2026-03-17T19:12:28.000Z",
+              label: "Mechanical Robustness reviewer thread created",
+              tone: "info",
+              activityKind: "cad-review.child-thread.created",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).not.toContain("Mechanical Robustness reviewer thread created");
     expect(markup).not.toContain("Work log");
   });
 

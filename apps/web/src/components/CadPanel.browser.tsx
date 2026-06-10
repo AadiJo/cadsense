@@ -18,6 +18,12 @@ const environmentId = EnvironmentId.make("environment-cad-browser");
 const threadId = ThreadId.make("thread-cad-browser");
 const cadUiStateKey = scopedThreadKey(scopeThreadRef(environmentId, threadId));
 const sameProjectThreadId = ThreadId.make("thread-cad-browser-same-project");
+const reviewChildThreadId = ThreadId.make(
+  "thread-cad-browser:cad-review:cad-review-browser:systems_integration:child",
+);
+const reviewChildCadUiStateKey = scopedThreadKey(
+  scopeThreadRef(environmentId, reviewChildThreadId),
+);
 const projectThreadIds = [threadId, sameProjectThreadId] as const;
 const projectId = "project-cad-browser";
 const activeReview = {
@@ -779,6 +785,23 @@ describe("CadPanel browser behavior", () => {
 
   it("applies CAD component visibility commands to the returned hierarchy subtree", async () => {
     cadFrameUrl = componentVisibilityFrameUrl();
+    threadReviews = [activeReview];
+    threadActivities = [
+      {
+        id: EventId.make("cad-review-child-created"),
+        tone: "info",
+        kind: "cad-review.child-thread.created",
+        summary: "Created reviewer child thread",
+        payload: {
+          reviewRunId: activeReview.id,
+          childThreadId: reviewChildThreadId,
+          persona: "systems_integration",
+          phase: "reviewing",
+        },
+        turnId: streamingTurnId,
+        createdAt: "2026-05-20T00:00:01.000Z",
+      },
+    ];
     const onObservedRequest = (event: MessageEvent<unknown>) => {
       if (
         typeof event.data === "object" &&
@@ -830,6 +853,33 @@ describe("CadPanel browser behavior", () => {
         useUiStateStore.getState().cadAgentViewStateByThreadId[cadUiStateKey]
           ?.componentVisibilityById,
       ).toMatchObject({ drive: false });
+    });
+
+    cadViewCommandHandler?.({
+      commandId: "hide-left-wheel-reviewer",
+      threadId: reviewChildThreadId,
+      type: "set-component-visibility",
+      componentId: "left-wheel",
+      visible: false,
+      createdAt: "2026-05-20T00:00:05.000Z",
+    });
+
+    await vi.waitFor(() => {
+      expect(observedFrameRequests).toContainEqual(
+        expect.objectContaining({
+          type: "set-component-visibility",
+          componentId: "left-wheel",
+          visible: false,
+        }),
+      );
+      expect(
+        useUiStateStore.getState().cadAgentViewStateByThreadId[reviewChildCadUiStateKey]
+          ?.componentVisibilityById,
+      ).toMatchObject({ "left-wheel": false });
+      expect(
+        useUiStateStore.getState().cadAgentViewStateByThreadId[cadUiStateKey]
+          ?.componentVisibilityById,
+      ).not.toMatchObject({ "left-wheel": false });
     });
 
     cadHierarchyRequestHandler?.({ requestId: "hierarchy-after-hide-drive", threadId });
@@ -956,7 +1006,7 @@ describe("CadPanel browser behavior", () => {
     queryClient.clear();
   });
 
-  it("applies requested screenshot views before capturing the current CAD canvas", async () => {
+  it("captures requested screenshot views without changing the live CAD view state", async () => {
     cadFrameUrl = screenshotFrameUrl();
     const onObservedRequest = (event: MessageEvent<unknown>) => {
       if (
@@ -1003,7 +1053,7 @@ describe("CadPanel browser behavior", () => {
           "type" in request &&
           request.type === "capture",
       );
-      expect(observedFrameRequests).toContainEqual(
+      expect(observedFrameRequests).not.toContainEqual(
         expect.objectContaining({ type: "set-view", view: "front", fit: true }),
       );
       expect(uploadedCadScreenshots).toContainEqual({
@@ -1011,12 +1061,11 @@ describe("CadPanel browser behavior", () => {
         pngBase64: "cG5n",
       });
       expect(captureRequests).toContainEqual(
-        expect.objectContaining({ type: "capture", fit: true }),
+        expect.objectContaining({ type: "capture", view: "front", fit: true }),
       );
-      expect(captureRequests).not.toContainEqual(expect.objectContaining({ view: "front" }));
       expect(
         useUiStateStore.getState().cadAgentViewStateByThreadId[cadUiStateKey]?.viewCommand,
-      ).toMatchObject({ type: "set-view", view: "front", fit: true });
+      ).toBeUndefined();
     });
 
     window.removeEventListener("message", onObservedRequest);

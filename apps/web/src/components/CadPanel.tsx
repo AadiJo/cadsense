@@ -188,7 +188,6 @@ const CAD_AGENT_CONTROL_EXIT_MS = 420;
 const CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD = 2;
 const CAD_FRAME_READY_RECOVERY_TIMEOUT_MS = 10_000;
 const CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS = 90_000;
-const CAD_AGENT_SCREENSHOT_VIEW_SETTLE_MS = 350;
 const EMPTY_LOCAL_CAD_FILES: readonly LocalCadFile[] = [];
 const CAD_TOOLBAR_VIEWS: readonly CadView[] = [
   "isometric",
@@ -1140,7 +1139,11 @@ export default function CadPanel({
   }, [cadComponentVisibilityById, postFrameRequest]);
 
   const toggleComponent = useCallback(
-    (component: CadViewerFrameComponentNode, visible: boolean) => {
+    (
+      component: CadViewerFrameComponentNode,
+      visible: boolean,
+      options?: { readonly persistKey?: string | null },
+    ) => {
       const nextVisibilityByComponentId = {
         ...cadComponentVisibilityById,
         [component.id]: visible,
@@ -1150,8 +1153,9 @@ export default function CadPanel({
         previousComponents = current;
         return applyCadComponentVisibility(current, { [component.id]: visible });
       });
-      if (cadUiStateKey) {
-        setCadComponentVisibility(cadUiStateKey, component.id, visible);
+      const persistKey = options?.persistKey === undefined ? cadUiStateKey : options.persistKey;
+      if (persistKey) {
+        setCadComponentVisibility(persistKey, component.id, visible);
       }
       void postFrameRequest(
         {
@@ -1179,7 +1183,7 @@ export default function CadPanel({
   );
 
   const applyCadViewCommand = useCallback(
-    (command: CadViewCommand) => {
+    (command: CadViewCommand, options?: { readonly persistKey?: string | null }) => {
       if (command.type === "set-view") {
         setFixedView(command.view, command.fit, { persist: false });
         return;
@@ -1209,12 +1213,14 @@ export default function CadPanel({
             visible: !command.visible,
           },
           command.visible,
+          options && "persistKey" in options ? { persistKey: options.persistKey } : undefined,
         );
         return;
       }
       if (command.type === "set-exploded") {
-        if (cadUiStateKey && cadRoutingThreadId) {
-          setCadExploded(cadUiStateKey, command.exploded);
+        const persistKey = options?.persistKey === undefined ? cadUiStateKey : options.persistKey;
+        if (persistKey && cadRoutingThreadId) {
+          setCadExploded(persistKey, command.exploded);
           return;
         }
         void postFrameRequest({ type: "set-exploded", enabled: command.exploded }, 3_000).catch(
@@ -1413,15 +1419,17 @@ export default function CadPanel({
         }
       }
       activateRegularCadAgentControl(`cad-command:${command.commandId}`);
-      if (cadUiStateKey) {
-        recordCadAgentViewCommand(cadUiStateKey, command);
+      const commandUiStateKey = scopedThreadKey(
+        scopeThreadRef(environmentId, ThreadId.make(command.threadId)),
+      );
+      if (commandUiStateKey) {
+        recordCadAgentViewCommand(commandUiStateKey, command);
       }
-      applyCadViewCommand(command);
+      applyCadViewCommand(command, { persistKey: commandUiStateKey });
     });
   }, [
     activateRegularCadAgentControl,
     cadRoutingThreadId,
-    cadUiStateKey,
     agentControlHost,
     applyCadViewCommand,
     environmentId,
@@ -1568,17 +1576,6 @@ export default function CadPanel({
             return;
           }
 
-          if (req.view) {
-            if (!requestStillCurrent()) {
-              await uploadEmptyScreenshot();
-              return;
-            }
-            await postFrameRequest({ type: "set-view", view: req.view, fit: req.fit }, 3_000);
-            await new Promise((resolve) =>
-              setTimeout(resolve, CAD_AGENT_SCREENSHOT_VIEW_SETTLE_MS),
-            );
-          }
-
           if (!requestStillCurrent()) {
             await uploadEmptyScreenshot();
             return;
@@ -1586,24 +1583,12 @@ export default function CadPanel({
           const result = await postFrameRequest(
             {
               type: "capture",
+              ...(req.view ? { view: req.view } : {}),
               fit: req.fit,
             },
             CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS,
           );
           const pngBase64 = result?.pngBase64 ?? "";
-          if (req.view && cadUiStateKey) {
-            const createdAt = new Date().toISOString();
-            const command: CadViewCommand = {
-              commandId: `screenshot:${req.requestId}:set-view`,
-              threadId: cadRoutingThreadId,
-              type: "set-view",
-              view: req.view,
-              fit: req.fit,
-              createdAt,
-            };
-            skipLocalManualCameraReplayCommandIdsRef.current.add(command.commandId);
-            recordCadAgentViewCommand(cadUiStateKey, command);
-          }
           await api.onshape.uploadCadScreenshot({ requestId: req.requestId, pngBase64 });
         } catch {
           await uploadEmptyScreenshot();
@@ -1620,12 +1605,10 @@ export default function CadPanel({
     };
   }, [
     cadRoutingThreadId,
-    cadUiStateKey,
     activateRegularCadAgentControl,
     cadAgentRequestResponderEnabled,
     environmentId,
     postFrameRequest,
-    recordCadAgentViewCommand,
     shouldHandleCadAgentRequest,
   ]);
 

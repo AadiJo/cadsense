@@ -1129,6 +1129,11 @@ function applyThreeCadView(state: ThreeViewerState, view: CadView, fit: boolean)
   applyThreeCadCamera(state, direction, up, undefined, fit, cadViewIsCloseUp(view));
 }
 
+function applyThreeCadViewImmediately(state: ThreeViewerState, view: CadView, fit: boolean): void {
+  const { direction, up } = cadInteractiveViewVector(view);
+  applyThreeCadCamera(state, direction, up, undefined, fit, cadViewIsCloseUp(view), false);
+}
+
 function syncThreeOrbitControlsToCamera(state: ThreeViewerState): void {
   state.controls.update();
   state.controls.saveState();
@@ -1141,6 +1146,7 @@ function applyThreeCadCamera(
   requestedDistance: number | undefined,
   fit: boolean,
   closeUp: boolean,
+  animate = true,
 ): void {
   cancelCadViewFollowUp();
   if (cadViewAnimationFrame !== 0) {
@@ -1187,8 +1193,22 @@ function applyThreeCadCamera(
     .addScaledVector(normalizedDirection, distance);
   const targetTarget = boundingSphere.center.clone();
   const targetUp = new three.Vector3(cameraUp[0], cameraUp[1], cameraUp[2]).normalize();
-  const startedAt = performance.now();
   suppressThreeCameraChangePosts = true;
+
+  if (!animate) {
+    camera.position.copy(targetPosition);
+    controls.target.copy(targetTarget);
+    camera.up.copy(targetUp);
+    camera.lookAt(controls.target);
+    syncThreeOrbitControlsToCamera(state);
+    renderThreeViewer(state);
+    setTimeout(() => {
+      suppressThreeCameraChangePosts = false;
+    }, 0);
+    return;
+  }
+
+  const startedAt = performance.now();
 
   const step = () => {
     const elapsed = performance.now() - startedAt;
@@ -1673,12 +1693,10 @@ async function capturePngBase64(input: {
       const previousNear = state.camera.near;
       const previousFar = state.camera.far;
       const previousAspect = state.camera.aspect;
-      applyThreeCadView(state, input.view, input.fit);
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, CAD_VIEW_ANIMATION_MS + 50);
-      });
+      applyThreeCadViewImmediately(state, input.view, input.fit);
       renderThreeViewer(state);
       const pngBase64 = await canvasToPngBase64(state.renderer.domElement);
+      suppressThreeCameraChangePosts = true;
       state.camera.position.copy(previousPosition);
       state.camera.up.copy(previousUp);
       state.camera.near = previousNear;
@@ -1686,8 +1704,11 @@ async function capturePngBase64(input: {
       state.camera.aspect = previousAspect;
       state.camera.updateProjectionMatrix();
       state.controls.target.copy(previousTarget);
-      state.controls.update();
+      syncThreeOrbitControlsToCamera(state);
       renderThreeViewer(state);
+      setTimeout(() => {
+        suppressThreeCameraChangePosts = false;
+      }, 0);
       return pngBase64;
     }
     renderThreeViewer(state);
