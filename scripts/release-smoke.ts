@@ -5,38 +5,57 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-const workspaceFiles = [
-  "package.json",
-  "bun.lock",
-  "apps/server/package.json",
-  "apps/desktop/package.json",
-  "apps/web/package.json",
-  "apps/marketing/package.json",
-  "oxlint-plugin-cadsense/package.json",
-  "packages/client-runtime/package.json",
-  "packages/contracts/package.json",
-  "packages/shared/package.json",
-  "packages/ssh/package.json",
-  "packages/tailscale/package.json",
-  "packages/effect-acp/package.json",
-  "packages/effect-codex-app-server/package.json",
-  "scripts/package.json",
-] as const;
+function listWorkspaceManifestFiles(): Array<string> {
+  const packageJson = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")) as {
+    readonly workspaces?: { readonly packages?: ReadonlyArray<string> };
+  };
+  const workspacePatterns = packageJson.workspaces?.packages ?? [];
+  const manifests = ["package.json", "bun.lock"];
+
+  for (const pattern of workspacePatterns) {
+    if (!pattern.endsWith("/*")) {
+      const packagePath = resolve(repoRoot, pattern, "package.json");
+      if (existsSync(packagePath)) {
+        manifests.push(`${pattern}/package.json`);
+      }
+      continue;
+    }
+
+    const workspaceRoot = pattern.slice(0, -2);
+    const absoluteWorkspaceRoot = resolve(repoRoot, workspaceRoot);
+    if (!existsSync(absoluteWorkspaceRoot)) {
+      continue;
+    }
+
+    for (const entry of readdirSync(absoluteWorkspaceRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory()) {
+        continue;
+      }
+      const relativePackagePath = `${workspaceRoot}/${entry.name}/package.json`;
+      if (existsSync(resolve(repoRoot, relativePackagePath))) {
+        manifests.push(relativePackagePath);
+      }
+    }
+  }
+
+  return manifests;
+}
 
 function copyWorkspaceManifestFixture(targetRoot: string): void {
-  for (const relativePath of workspaceFiles) {
+  for (const relativePath of listWorkspaceManifestFiles()) {
     const sourcePath = resolve(repoRoot, relativePath);
     const destinationPath = resolve(targetRoot, relativePath);
     mkdirSync(dirname(destinationPath), { recursive: true });
@@ -290,45 +309,52 @@ try {
   const mergedPreviewWindowsManifestPath = resolve(tempRoot, "release-assets/preview.yml");
   const { arm64Path: winDebugArm64Path, x64Path: winDebugX64Path } =
     writeWindowsBuilderDebugFixtures(tempRoot);
-  execFileSync(
-    "bash",
-    [
-      "-lc",
-      `
-        release_assets_dir=${JSON.stringify(resolve(tempRoot, "release-assets"))}
-        shopt -s nullglob
-        found_windows_manifest=false
-        for x64_manifest in "$release_assets_dir"/*-win-x64.yml; do
-          if [[ "$(basename "$x64_manifest")" == builder-debug-* ]]; then
-            continue
-          fi
+  const releaseAssetsDirectory = resolve(tempRoot, "release-assets");
+  let foundWindowsManifest = false;
+  for (const entry of readdirSync(releaseAssetsDirectory, { withFileTypes: true })) {
+    if (!entry.isFile() || !entry.name.endsWith("-win-x64.yml")) {
+      continue;
+    }
+    if (entry.name.startsWith("builder-debug-")) {
+      continue;
+    }
 
-          arm64_manifest="\${x64_manifest/-x64.yml/-arm64.yml}"
-          output_manifest="\${x64_manifest/-win-x64.yml/.yml}"
-          if [[ ! -f "$arm64_manifest" ]]; then
-            echo "Missing matching arm64 Windows manifest for $x64_manifest" >&2
-            exit 1
-          fi
+    const x64Manifest = resolve(releaseAssetsDirectory, entry.name);
+    const arm64Manifest = resolve(
+      releaseAssetsDirectory,
+      entry.name.replace("-x64.yml", "-arm64.yml"),
+    );
+    const outputManifest = resolve(
+      releaseAssetsDirectory,
+      entry.name.replace("-win-x64.yml", ".yml"),
+    );
+    if (!existsSync(arm64Manifest)) {
+      throw new Error(`Missing matching arm64 Windows manifest for ${basename(x64Manifest)}.`);
+    }
 
-          found_windows_manifest=true
-          ${JSON.stringify(process.execPath)} ${JSON.stringify(resolve(repoRoot, "scripts/merge-update-manifests.ts"))} --platform win \
-            "$arm64_manifest" \
-            "$x64_manifest" \
-            "$output_manifest"
-          rm -f "$arm64_manifest" "$x64_manifest"
-        done
+    foundWindowsManifest = true;
+    execFileSync(
+      process.execPath,
+      [
+        resolve(repoRoot, "scripts/merge-update-manifests.ts"),
+        "--platform",
+        "win",
+        arm64Manifest,
+        x64Manifest,
+        outputManifest,
+      ],
+      {
+        cwd: repoRoot,
+        stdio: "inherit",
+      },
+    );
+    rmSync(arm64Manifest, { force: true });
+    rmSync(x64Manifest, { force: true });
+  }
 
-        if [[ "$found_windows_manifest" != true ]]; then
-          echo "No Windows updater manifests found to merge." >&2
-          exit 1
-        fi
-      `,
-    ],
-    {
-      cwd: repoRoot,
-      stdio: "inherit",
-    },
-  );
+  if (!foundWindowsManifest) {
+    throw new Error("No Windows updater manifests found to merge.");
+  }
 
   const mergedWindowsManifest = readFileSync(mergedWindowsManifestPath, "utf8");
   assertContains(

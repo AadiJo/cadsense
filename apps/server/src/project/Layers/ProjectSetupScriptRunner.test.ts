@@ -71,6 +71,7 @@ describe("ProjectSetupScriptRunner", () => {
       runner.runForThread({
         threadId: "thread-1",
         projectId: "project-1",
+        projectCwd: "/repo/project",
         worktreePath: "/repo/worktrees/a",
       }),
     );
@@ -80,7 +81,7 @@ describe("ProjectSetupScriptRunner", () => {
     expect(write).not.toHaveBeenCalled();
   });
 
-  it("opens the deterministic setup terminal with worktree env and writes the command", async () => {
+  it("rejects setup scripts while the integrated terminal is disabled", async () => {
     const open = vi.fn(() =>
       Effect.succeed({
         threadId: "thread-1",
@@ -126,35 +127,19 @@ describe("ProjectSetupScriptRunner", () => {
       ),
     );
 
-    const result = await Effect.runPromise(
-      runner.runForThread({
-        threadId: "thread-1",
-        projectCwd: "/repo/project",
-        worktreePath: "/repo/worktrees/a",
-      }),
-    );
-
-    expect(result).toEqual({
-      status: "started",
-      scriptId: "setup",
-      scriptName: "Setup",
-      terminalId: "setup-setup",
-      cwd: "/repo/worktrees/a",
+    await expect(
+      Effect.runPromise(
+        runner.runForThread({
+          threadId: "thread-1",
+          projectCwd: "/repo/project",
+          worktreePath: "/repo/worktrees/a",
+        }),
+      ),
+    ).rejects.toMatchObject({
+      _tag: "ProjectSetupScriptRunnerError",
+      message: "Project setup scripts require the integrated terminal, which is disabled.",
     });
-    expect(open).toHaveBeenCalledWith({
-      threadId: "thread-1",
-      terminalId: "setup-setup",
-      cwd: "/repo/worktrees/a",
-      worktreePath: "/repo/worktrees/a",
-      env: {
-        CADSENSE_PROJECT_ROOT: "/repo/project",
-        CADSENSE_WORKTREE_PATH: "/repo/worktrees/a",
-      },
-    });
-    expect(write).toHaveBeenCalledWith({
-      threadId: "thread-1",
-      terminalId: "setup-setup",
-      data: "bun install\r",
-    });
+    expect(open).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
   });
 });

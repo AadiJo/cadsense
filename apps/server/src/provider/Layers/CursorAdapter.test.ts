@@ -403,7 +403,7 @@ cursorAdapterTestLayer("CursorAdapterLive", (it) => {
         "mock-session-1",
       );
       assert.include(
-        ["architect", "plan"],
+        ["architect", "plan", "code"],
         String(
           (modeRequest?.params as Record<string, unknown> | undefined)?.modeId ??
             (modeRequest?.params as Record<string, unknown> | undefined)?.value,

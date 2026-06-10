@@ -21,8 +21,6 @@
       "dependencies": {
         "@cadsense/contracts": "workspace:*",
         "@cadsense/shared": "workspace:*",
-        "@cadsense/ssh": "workspace:*",
-        "@cadsense/tailscale": "workspace:*",
         "@effect/platform-node": "catalog:",
         "effect": "catalog:",
         "electron": "41.5.0",
@@ -70,7 +68,6 @@
       "devDependencies": {
         "@cadsense/contracts": "workspace:*",
         "@cadsense/shared": "workspace:*",
-        "@cadsense/tailscale": "workspace:*",
         "@cadsense/web": "workspace:*",
         "@effect/language-service": "catalog:",
         "@effect/vitest": "catalog:",
@@ -224,36 +221,6 @@
         "vitest": "catalog:",
       },
     },
-    "packages/ssh": {
-      "name": "@cadsense/ssh",
-      "dependencies": {
-        "@cadsense/contracts": "workspace:*",
-        "@cadsense/shared": "workspace:*",
-        "effect": "catalog:",
-      },
-      "devDependencies": {
-        "@effect/language-service": "catalog:",
-        "@effect/platform-node": "catalog:",
-        "@effect/vitest": "catalog:",
-        "@types/node": "catalog:",
-        "typescript": "catalog:",
-        "vitest": "catalog:",
-      },
-    },
-    "packages/tailscale": {
-      "name": "@cadsense/tailscale",
-      "dependencies": {
-        "@effect/platform-node": "catalog:",
-        "effect": "catalog:",
-      },
-      "devDependencies": {
-        "@effect/language-service": "catalog:",
-        "@effect/vitest": "catalog:",
-        "@types/node": "catalog:",
-        "typescript": "catalog:",
-        "vitest": "catalog:",
-      },
-    },
     "scripts": {
       "name": "@cadsense/scripts",
       "dependencies": {
@@ -389,10 +356,6 @@
     "@cadsense/scripts": ["@cadsense/scripts@workspace:scripts"],
 
     "@cadsense/shared": ["@cadsense/shared@workspace:packages/shared"],
-
-    "@cadsense/ssh": ["@cadsense/ssh@workspace:packages/ssh"],
-
-    "@cadsense/tailscale": ["@cadsense/tailscale@workspace:packages/tailscale"],
 
     "@cadsense/web": ["@cadsense/web@workspace:apps/web"],
 

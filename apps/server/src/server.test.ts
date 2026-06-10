@@ -3484,11 +3484,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(dispatchResult.sequence, 1);
-      assert.deepEqual(effects, [
-        "dispatch:thread.archive",
-        "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
-      ]);
+      assert.deepEqual(effects, ["dispatch:thread.archive", "dispatch:thread.session.stop"]);
       const sessionStopCommand = dispatchedCommands[1];
       assert.equal(sessionStopCommand?.type, "thread.session.stop");
       if (sessionStopCommand?.type === "thread.session.stop") {
@@ -3566,7 +3562,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         "query:thread-shell:active",
         "dispatch:thread.archive",
         "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
       ]);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
@@ -3618,7 +3613,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(dispatchResult.sequence, 1);
-      assert.deepEqual(effects, ["dispatch:thread.archive", `terminal.close:${threadId}`]);
+      assert.deepEqual(effects, ["dispatch:thread.archive"]);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
         ["thread.archive"],
@@ -3686,7 +3681,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
 
         assert.equal(dispatchResult.sequence, 1);
-        assert.deepEqual(effects, ["dispatch:thread.archive", `terminal.close:${threadId}`]);
+        assert.deepEqual(effects, ["dispatch:thread.archive"]);
         assert.deepEqual(
           dispatchedCommands.map((command) => command.type),
           ["thread.archive"],
@@ -3759,11 +3754,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(dispatchResult.sequence, 1);
-      assert.deepEqual(effects, [
-        "dispatch:thread.archive",
-        "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
-      ]);
+      assert.deepEqual(effects, ["dispatch:thread.archive", "dispatch:thread.session.stop"]);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
         ["thread.archive", "thread.session.stop"],
@@ -3831,11 +3822,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       );
 
       assert.equal(dispatchResult.sequence, 1);
-      assert.deepEqual(effects, [
-        "dispatch:thread.archive",
-        "dispatch:thread.session.stop",
-        `terminal.close:${threadId}`,
-      ]);
+      assert.deepEqual(effects, ["dispatch:thread.archive", "dispatch:thread.session.stop"]);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
         ["thread.archive", "thread.session.stop"],
