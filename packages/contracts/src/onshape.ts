@@ -171,6 +171,11 @@ export const OnshapeSetupConnectionResult = Schema.Struct({
 });
 export type OnshapeSetupConnectionResult = typeof OnshapeSetupConnectionResult.Type;
 
+export const OnshapeRemoveConnectionInput = Schema.Struct({
+  connectionId: OnshapeConnectionId,
+});
+export type OnshapeRemoveConnectionInput = typeof OnshapeRemoveConnectionInput.Type;
+
 export const OnshapeListConnectionsResult = Schema.Struct({
   connections: Schema.Array(OnshapeConnection),
 });

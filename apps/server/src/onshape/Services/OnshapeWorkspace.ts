@@ -37,6 +37,9 @@ export interface OnshapeWorkspaceShape {
   readonly setupConnection: (
     input: OnshapeSetupConnectionInput,
   ) => Effect.Effect<{ readonly connection: OnshapeConnection }, OnshapeWorkspaceError>;
+  readonly removeConnection: (
+    connectionId: OnshapeConnection["connectionId"],
+  ) => Effect.Effect<void, OnshapeWorkspaceError>;
   readonly importUrl: (
     input: OnshapeImportUrlInput,
   ) => Effect.Effect<OnshapeIndexResult, OnshapeWorkspaceError>;

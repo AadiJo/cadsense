@@ -1074,6 +1074,27 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
             ),
             { "rpc.aggregate": "onshape" },
           ),
+        [WS_METHODS.onshapeRemoveConnection]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.onshapeRemoveConnection,
+            Effect.gen(function* () {
+              const onshapeWorkspace = yield* OnshapeWorkspace;
+              yield* onshapeWorkspace.removeConnection(input.connectionId);
+            }).pipe(
+              Effect.provide(OnshapeWorkspaceRouteLayer),
+              Effect.mapError(
+                (cause) =>
+                  new OnshapeRpcError({
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Failed to remove Onshape connection.",
+                    cause,
+                  }),
+              ),
+            ),
+            { "rpc.aggregate": "onshape" },
+          ),
         [WS_METHODS.mechbaseListConnections]: (_input) =>
           observeRpcEffect(
             WS_METHODS.mechbaseListConnections,
@@ -1138,6 +1159,28 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                           : "Failed to set up Mechbase connection.",
                       cause,
                     }),
+              ),
+            ),
+            { "rpc.aggregate": "mechbase" },
+          ),
+        [WS_METHODS.mechbaseRemoveConnection]: (_input) =>
+          observeRpcEffect(
+            WS_METHODS.mechbaseRemoveConnection,
+            Effect.gen(function* () {
+              const secretStore = yield* ServerSecretStore;
+              yield* secretStore.remove(MECHBASE_API_KEY_SECRET_NAME);
+              return {};
+            }).pipe(
+              Effect.provide(ServerSecretStoreLive),
+              Effect.mapError(
+                (cause) =>
+                  new MechbaseRpcError({
+                    message:
+                      cause instanceof Error
+                        ? cause.message
+                        : "Failed to remove Mechbase connection.",
+                    cause,
+                  }),
               ),
             ),
             { "rpc.aggregate": "mechbase" },

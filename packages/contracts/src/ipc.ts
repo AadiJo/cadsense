@@ -71,6 +71,7 @@ import type {
   OnshapeListSyncedCadFilesInput,
   OnshapeListSyncedCadFilesResult,
   OnshapeListConnectionsResult,
+  OnshapeRemoveConnectionInput,
   OnshapeRefreshIndexInput,
   OnshapeSearchIndexInput,
   OnshapeSearchIndexResult,
@@ -81,6 +82,7 @@ import type {
 } from "./onshape.ts";
 import type {
   MechbaseListConnectionsResult,
+  MechbaseRemoveConnectionResult,
   MechbaseSetupConnectionInput,
   MechbaseSetupConnectionResult,
 } from "./mechbase.ts";
@@ -410,6 +412,7 @@ export interface EnvironmentApi {
   onshape: {
     listConnections: () => Promise<OnshapeListConnectionsResult>;
     setupConnection: (input: OnshapeSetupConnectionInput) => Promise<OnshapeSetupConnectionResult>;
+    removeConnection: (input: OnshapeRemoveConnectionInput) => Promise<void>;
     importUrl: (input: OnshapeImportUrlInput) => Promise<OnshapeIndexResult>;
     refreshIndex: (input: OnshapeRefreshIndexInput) => Promise<OnshapeIndexResult>;
     searchIndex: (input: OnshapeSearchIndexInput) => Promise<OnshapeSearchIndexResult>;
@@ -430,6 +433,7 @@ export interface EnvironmentApi {
     setupConnection: (
       input: MechbaseSetupConnectionInput,
     ) => Promise<MechbaseSetupConnectionResult>;
+    removeConnection: () => Promise<MechbaseRemoveConnectionResult>;
   };
   vcs: {
     listRefs: (input: VcsListRefsInput) => Promise<VcsListRefsResult>;

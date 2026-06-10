@@ -22,6 +22,9 @@ export const MechbaseSetupConnectionResult = Schema.Struct({
 });
 export type MechbaseSetupConnectionResult = typeof MechbaseSetupConnectionResult.Type;
 
+export const MechbaseRemoveConnectionResult = Schema.Struct({});
+export type MechbaseRemoveConnectionResult = typeof MechbaseRemoveConnectionResult.Type;
+
 export class MechbaseRpcError extends Schema.TaggedErrorClass<MechbaseRpcError>()(
   "MechbaseRpcError",
   {

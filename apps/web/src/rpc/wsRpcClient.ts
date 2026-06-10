@@ -73,6 +73,7 @@ export interface WsRpcClient {
   readonly onshape: {
     readonly listConnections: RpcUnaryNoArgMethod<typeof WS_METHODS.onshapeListConnections>;
     readonly setupConnection: RpcUnaryMethod<typeof WS_METHODS.onshapeSetupConnection>;
+    readonly removeConnection: RpcUnaryMethod<typeof WS_METHODS.onshapeRemoveConnection>;
     readonly importUrl: RpcUnaryMethod<typeof WS_METHODS.onshapeImportUrl>;
     readonly refreshIndex: RpcUnaryMethod<typeof WS_METHODS.onshapeRefreshIndex>;
     readonly searchIndex: RpcUnaryMethod<typeof WS_METHODS.onshapeSearchIndex>;
@@ -91,6 +92,7 @@ export interface WsRpcClient {
   readonly mechbase: {
     readonly listConnections: RpcUnaryNoArgMethod<typeof WS_METHODS.mechbaseListConnections>;
     readonly setupConnection: RpcUnaryMethod<typeof WS_METHODS.mechbaseSetupConnection>;
+    readonly removeConnection: RpcUnaryNoArgMethod<typeof WS_METHODS.mechbaseRemoveConnection>;
   };
   readonly shell: {
     readonly openInEditor: (input: {
@@ -201,6 +203,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.onshapeListConnections]({})),
       setupConnection: (input) =>
         transport.request((client) => client[WS_METHODS.onshapeSetupConnection](input)),
+      removeConnection: (input) =>
+        transport.request((client) => client[WS_METHODS.onshapeRemoveConnection](input)),
       importUrl: (input) =>
         transport.request((client) => client[WS_METHODS.onshapeImportUrl](input)),
       refreshIndex: (input) =>
@@ -244,6 +248,8 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
         transport.request((client) => client[WS_METHODS.mechbaseListConnections]({})),
       setupConnection: (input) =>
         transport.request((client) => client[WS_METHODS.mechbaseSetupConnection](input)),
+      removeConnection: () =>
+        transport.request((client) => client[WS_METHODS.mechbaseRemoveConnection]({})),
     },
     shell: {
       openInEditor: (input) =>

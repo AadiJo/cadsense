@@ -31,6 +31,9 @@ export interface OnshapeIndexRepositoryShape {
   readonly getConnection: (
     connectionId: OnshapeConnectionId,
   ) => Effect.Effect<Option.Option<PersistedOnshapeConnection>, ProjectionRepositoryError>;
+  readonly removeConnection: (
+    connectionId: OnshapeConnectionId,
+  ) => Effect.Effect<void, ProjectionRepositoryError>;
   readonly upsertIndexRun: (run: OnshapeIndexRun) => Effect.Effect<void, ProjectionRepositoryError>;
   readonly getLatestIndexRun: (
     connectionId: OnshapeConnectionId,

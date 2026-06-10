@@ -215,6 +215,26 @@ const makeOnshapeIndexRepository = Effect.gen(function* () {
       `,
   });
 
+  const removeConnectionRows = (connectionId: OnshapeConnectionId) =>
+    Effect.gen(function* () {
+      yield* sql`
+        DELETE FROM onshape_entity_search
+        WHERE connection_id = ${connectionId}
+      `;
+      yield* sql`
+        DELETE FROM onshape_entities
+        WHERE connection_id = ${connectionId}
+      `;
+      yield* sql`
+        DELETE FROM onshape_index_runs
+        WHERE connection_id = ${connectionId}
+      `;
+      yield* sql`
+        DELETE FROM onshape_connections
+        WHERE connection_id = ${connectionId}
+      `;
+    });
+
   const upsertRunRow = SqlSchema.void({
     Request: OnshapeIndexRun,
     execute: (row) =>
@@ -523,6 +543,10 @@ const makeOnshapeIndexRepository = Effect.gen(function* () {
       getConnectionRow({ connectionId }).pipe(
         Effect.map(Option.map(decodeConnectionRow)),
         Effect.mapError(toPersistenceSqlError("OnshapeIndexRepository.getConnection")),
+      ),
+    removeConnection: (connectionId) =>
+      removeConnectionRows(connectionId).pipe(
+        Effect.mapError(toPersistenceSqlError("OnshapeIndexRepository.removeConnection")),
       ),
     upsertIndexRun: (run) =>
       upsertRunRow(run).pipe(

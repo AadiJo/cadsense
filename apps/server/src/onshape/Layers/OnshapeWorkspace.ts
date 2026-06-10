@@ -987,6 +987,12 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
       return { connection: publicOnshapeConnection(connection) };
     });
 
+  const removeConnection: OnshapeWorkspaceShape["removeConnection"] = (connectionId) =>
+    Effect.gen(function* () {
+      yield* repository.removeConnection(connectionId);
+      yield* secretStore.remove(`onshape-${connectionId}`);
+    });
+
   const importUrl: OnshapeWorkspaceShape["importUrl"] = (input) =>
     Effect.gen(function* () {
       const connection = yield* repository.getConnection(input.connectionId);
@@ -1395,6 +1401,7 @@ const makeOnshapeWorkspace = Effect.gen(function* () {
   return {
     listConnections,
     setupConnection,
+    removeConnection,
     importUrl,
     refreshIndex,
     searchIndex,

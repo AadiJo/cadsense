@@ -65,6 +65,10 @@ function makeRepositoryLayer() {
         }),
       listConnections: () => Effect.succeed(Array.from(connections.values())),
       getConnection: (id) => Effect.succeed(optionFromNullable(connections.get(id))),
+      removeConnection: (id) =>
+        Effect.sync(() => {
+          connections.delete(id);
+        }),
       upsertIndexRun: (run) =>
         Effect.sync(() => {
           const existingIndex = runs.findIndex((existing) => existing.runId === run.runId);

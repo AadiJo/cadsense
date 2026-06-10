@@ -62,6 +62,7 @@ import {
   OnshapeListSyncedCadFilesInput,
   OnshapeListSyncedCadFilesResult,
   OnshapeListConnectionsResult,
+  OnshapeRemoveConnectionInput,
   OnshapeRefreshIndexInput,
   OnshapeRpcError,
   OnshapeSearchIndexInput,
@@ -73,6 +74,7 @@ import {
 } from "./onshape.ts";
 import {
   MechbaseListConnectionsResult,
+  MechbaseRemoveConnectionResult,
   MechbaseRpcError,
   MechbaseSetupConnectionInput,
   MechbaseSetupConnectionResult,
@@ -171,6 +173,7 @@ export const WS_METHODS = {
   // Onshape methods
   onshapeListConnections: "onshape.listConnections",
   onshapeSetupConnection: "onshape.setupConnection",
+  onshapeRemoveConnection: "onshape.removeConnection",
   onshapeImportUrl: "onshape.importUrl",
   onshapeRefreshIndex: "onshape.refreshIndex",
   onshapeSearchIndex: "onshape.searchIndex",
@@ -178,6 +181,7 @@ export const WS_METHODS = {
   onshapeListSyncedCadFiles: "onshape.listSyncedCadFiles",
   mechbaseListConnections: "mechbase.listConnections",
   mechbaseSetupConnection: "mechbase.setupConnection",
+  mechbaseRemoveConnection: "mechbase.removeConnection",
   cadScreenshotUpload: "cad.screenshotUpload",
   cadHierarchyUpload: "cad.hierarchyUpload",
 
@@ -304,6 +308,12 @@ export const WsOnshapeSetupConnectionRpc = Rpc.make(WS_METHODS.onshapeSetupConne
   error: OnshapeRpcError,
 });
 
+export const WsOnshapeRemoveConnectionRpc = Rpc.make(WS_METHODS.onshapeRemoveConnection, {
+  payload: OnshapeRemoveConnectionInput,
+  success: Schema.Void,
+  error: OnshapeRpcError,
+});
+
 export const WsOnshapeImportUrlRpc = Rpc.make(WS_METHODS.onshapeImportUrl, {
   payload: OnshapeImportUrlInput,
   success: OnshapeIndexResult,
@@ -343,6 +353,12 @@ export const WsMechbaseListConnectionsRpc = Rpc.make(WS_METHODS.mechbaseListConn
 export const WsMechbaseSetupConnectionRpc = Rpc.make(WS_METHODS.mechbaseSetupConnection, {
   payload: MechbaseSetupConnectionInput,
   success: MechbaseSetupConnectionResult,
+  error: MechbaseRpcError,
+});
+
+export const WsMechbaseRemoveConnectionRpc = Rpc.make(WS_METHODS.mechbaseRemoveConnection, {
+  payload: Schema.Struct({}),
+  success: MechbaseRemoveConnectionResult,
   error: MechbaseRpcError,
 });
 
@@ -579,6 +595,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlPublishRepositoryRpc,
   WsOnshapeListConnectionsRpc,
   WsOnshapeSetupConnectionRpc,
+  WsOnshapeRemoveConnectionRpc,
   WsOnshapeImportUrlRpc,
   WsOnshapeRefreshIndexRpc,
   WsOnshapeSearchIndexRpc,
@@ -586,6 +603,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOnshapeListSyncedCadFilesRpc,
   WsMechbaseListConnectionsRpc,
   WsMechbaseSetupConnectionRpc,
+  WsMechbaseRemoveConnectionRpc,
   WsCadScreenshotUploadRpc,
   WsCadHierarchyUploadRpc,
   WsProjectsEnsureProjectlessChatRpc,
