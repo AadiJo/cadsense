@@ -12,13 +12,11 @@ import { type EnvironmentState, useStore } from "../store";
 import { type Thread } from "../types";
 
 import {
-  MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   buildExpiredTerminalContextToastCopy,
   createLocalDispatchSnapshot,
   deriveComposerSendState,
   deriveLockedProvider,
   hasServerAcknowledgedLocalDispatch,
-  reconcileMountedTerminalThreadIds,
   resolveSendEnvMode,
   shouldWriteThreadErrorToCurrentServerThread,
   waitForProjectedServerThread,
@@ -100,87 +98,6 @@ describe("resolveSendEnvMode", () => {
   it("forces local mode for non-git repositories", () => {
     expect(resolveSendEnvMode({ requestedEnvMode: "worktree", isGitRepo: false })).toBe("local");
     expect(resolveSendEnvMode({ requestedEnvMode: "local", isGitRepo: false })).toBe("local");
-  });
-});
-
-describe("reconcileMountedTerminalThreadIds", () => {
-  it("keeps previously mounted open threads and adds the active open thread", () => {
-    expect(
-      reconcileMountedTerminalThreadIds({
-        currentThreadIds: [ThreadId.make("thread-hidden"), ThreadId.make("thread-stale")],
-        openThreadIds: [ThreadId.make("thread-hidden"), ThreadId.make("thread-active")],
-        activeThreadId: ThreadId.make("thread-active"),
-        activeThreadTerminalOpen: true,
-      }),
-    ).toEqual([ThreadId.make("thread-hidden"), ThreadId.make("thread-active")]);
-  });
-
-  it("drops mounted threads once their terminal drawer is no longer open", () => {
-    expect(
-      reconcileMountedTerminalThreadIds({
-        currentThreadIds: [ThreadId.make("thread-closed")],
-        openThreadIds: [],
-        activeThreadId: ThreadId.make("thread-closed"),
-        activeThreadTerminalOpen: false,
-      }),
-    ).toEqual([]);
-  });
-
-  it("keeps only the most recently active hidden terminal threads", () => {
-    expect(
-      reconcileMountedTerminalThreadIds({
-        currentThreadIds: [
-          ThreadId.make("thread-1"),
-          ThreadId.make("thread-2"),
-          ThreadId.make("thread-3"),
-        ],
-        openThreadIds: [
-          ThreadId.make("thread-1"),
-          ThreadId.make("thread-2"),
-          ThreadId.make("thread-3"),
-          ThreadId.make("thread-4"),
-        ],
-        activeThreadId: ThreadId.make("thread-4"),
-        activeThreadTerminalOpen: true,
-        maxHiddenThreadCount: 2,
-      }),
-    ).toEqual([ThreadId.make("thread-2"), ThreadId.make("thread-3"), ThreadId.make("thread-4")]);
-  });
-
-  it("moves the active thread to the end so it is treated as most recently used", () => {
-    expect(
-      reconcileMountedTerminalThreadIds({
-        currentThreadIds: [
-          ThreadId.make("thread-a"),
-          ThreadId.make("thread-b"),
-          ThreadId.make("thread-c"),
-        ],
-        openThreadIds: [
-          ThreadId.make("thread-a"),
-          ThreadId.make("thread-b"),
-          ThreadId.make("thread-c"),
-        ],
-        activeThreadId: ThreadId.make("thread-a"),
-        activeThreadTerminalOpen: true,
-        maxHiddenThreadCount: 2,
-      }),
-    ).toEqual([ThreadId.make("thread-b"), ThreadId.make("thread-c"), ThreadId.make("thread-a")]);
-  });
-
-  it("defaults to the hidden mounted terminal cap", () => {
-    const currentThreadIds = Array.from(
-      { length: MAX_HIDDEN_MOUNTED_TERMINAL_THREADS + 2 },
-      (_, index) => ThreadId.make(`thread-${index + 1}`),
-    );
-
-    expect(
-      reconcileMountedTerminalThreadIds({
-        currentThreadIds,
-        openThreadIds: currentThreadIds,
-        activeThreadId: null,
-        activeThreadTerminalOpen: false,
-      }),
-    ).toEqual(currentThreadIds.slice(-MAX_HIDDEN_MOUNTED_TERMINAL_THREADS));
   });
 });
 

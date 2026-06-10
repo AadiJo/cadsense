@@ -460,6 +460,24 @@ async function waitForCadLoadState(state: "idle" | "loading" | "loaded" | "error
   });
 }
 
+function cadHelperStripElement(): HTMLElement | undefined {
+  return Array.from(document.querySelectorAll<HTMLElement>("div")).find(
+    (element) => element.textContent?.trim() === "Drag to rotate, scroll to zoom",
+  );
+}
+
+async function expectCadHelperStripVisible() {
+  await vi.waitFor(() => {
+    expect(cadHelperStripElement()).toBeTruthy();
+  });
+}
+
+async function expectCadHelperStripHidden() {
+  await vi.waitFor(() => {
+    expect(cadHelperStripElement()).toBeUndefined();
+  });
+}
+
 describe("CadPanel browser behavior", () => {
   afterEach(() => {
     vi.clearAllMocks();
@@ -498,7 +516,7 @@ describe("CadPanel browser behavior", () => {
     await waitForCadLoadState("loaded");
     await waitForCadLoadState("loaded");
     await waitForCadLoadState("loaded");
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
 
     await screen.unmount();
     queryClient.clear();
@@ -522,13 +540,46 @@ describe("CadPanel browser behavior", () => {
     );
 
     await waitForCadLoadState("loaded");
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripHidden();
     expect(document.querySelector('[data-cad-interaction-blocker="true"]')).toBeTruthy();
     expect(
       document
         .querySelector<HTMLElement>('[aria-label="CAD viewer toolbar"]')
         ?.getAttribute("aria-disabled"),
     ).toBe("true");
+    expect(
+      document.querySelector<HTMLButtonElement>('button[aria-label="Expand CAD view"]')?.disabled,
+    ).toBe(true);
+
+    await screen.unmount();
+    queryClient.clear();
+  });
+
+  it("prevents fullscreen entry while a CAD review is active", async () => {
+    cadFrameUrl = delayedReadyFrameUrl();
+    threadReviews = [activeReview];
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await waitForCadLoadState("loaded");
+    const expandButton = document.querySelector<HTMLButtonElement>(
+      'button[aria-label="Expand CAD view"]',
+    );
+    expect(expandButton).toBeTruthy();
+    expect(expandButton!.disabled).toBe(true);
+    expandButton!.click();
+    expect(document.querySelector('button[aria-label="Exit fullscreen CAD view"]')).toBeNull();
 
     await screen.unmount();
     queryClient.clear();
@@ -577,7 +628,7 @@ describe("CadPanel browser behavior", () => {
       </QueryClientProvider>,
     );
 
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
     await vi.waitFor(() => expect(cadViewCommandHandler).toBeTypeOf("function"));
 
     cadViewCommandHandler?.({
@@ -604,6 +655,7 @@ describe("CadPanel browser behavior", () => {
     expect(overlay!.className).toContain("absolute");
     expect(overlay!.className).toContain("inset-0");
     expect(overlay!.className).not.toContain("fixed");
+    await expectCadHelperStripHidden();
 
     await screen.unmount();
     queryClient.clear();
@@ -632,7 +684,7 @@ describe("CadPanel browser behavior", () => {
       </QueryClientProvider>,
     );
 
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripHidden();
     await expect.element(page.getByText("Agent control")).toBeVisible();
     expect(document.querySelector(".cad-agent-control-pill")).toBeTruthy();
 
@@ -648,6 +700,32 @@ describe("CadPanel browser behavior", () => {
       },
       { timeout: 1_000 },
     );
+
+    await screen.unmount();
+    queryClient.clear();
+  });
+
+  it("hides the helper strip while the active CAD thread is streaming", async () => {
+    cadFrameUrl = delayedReadyFrameUrl();
+    latestTurn = makeRunningLatestTurn();
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const CadPanel = (await import("./CadPanel")).default;
+
+    const screen = await render(
+      <QueryClientProvider client={queryClient}>
+        <div style={{ width: "640px", height: "420px" }}>
+          <CadPanel />
+        </div>
+      </QueryClientProvider>,
+    );
+
+    await expect.element(page.getByText("Loading CAD model")).toBeVisible();
+    await expectCadHelperStripHidden();
+    await waitForCadLoadState("loaded");
+    await expectCadHelperStripHidden();
 
     await screen.unmount();
     queryClient.clear();
@@ -683,7 +761,7 @@ describe("CadPanel browser behavior", () => {
       </QueryClientProvider>,
     );
 
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
     await vi.waitFor(() => {
       expect(observedFrameRequests).toContainEqual(
         expect.objectContaining({ type: "set-exploded", enabled: false }),
@@ -725,7 +803,7 @@ describe("CadPanel browser behavior", () => {
       </QueryClientProvider>,
     );
 
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
     await vi.waitFor(() => expect(cadViewCommandHandler).toBeTypeOf("function"));
     await vi.waitFor(() => {
       expect(observedFrameRequests).toContainEqual(
@@ -766,7 +844,7 @@ describe("CadPanel browser behavior", () => {
     );
 
     await waitForCadLoadState("loaded");
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
     await vi.waitFor(() => expect(cadHierarchyRequestHandler).toBeTypeOf("function"));
 
     cadHierarchyRequestHandler?.({ requestId: "hierarchy-normal-chat", threadId });
@@ -928,7 +1006,7 @@ describe("CadPanel browser behavior", () => {
         requestId: "hierarchy-loading",
         components: [],
         status: "loading",
-        message: expect.stringContaining("still loading"),
+        message: expect.stringContaining("at least two times"),
       });
     });
 
@@ -952,7 +1030,7 @@ describe("CadPanel browser behavior", () => {
     );
 
     await waitForCadLoadState("loaded");
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
     await vi.waitFor(() => expect(cadHierarchyRequestHandler).toBeTypeOf("function"));
 
     cadHierarchyRequestHandler?.({
@@ -989,7 +1067,7 @@ describe("CadPanel browser behavior", () => {
     );
 
     await waitForCadLoadState("loaded");
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripHidden();
     await vi.waitFor(() => expect(cadHierarchyRequestHandler).toBeTypeOf("function"));
 
     cadHierarchyRequestHandler?.({ requestId: "hierarchy-active-review", threadId });
@@ -1035,7 +1113,7 @@ describe("CadPanel browser behavior", () => {
     );
 
     await waitForCadLoadState("loaded");
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
     await vi.waitFor(() => expect(cadScreenshotRequestHandler).toBeTypeOf("function"));
 
     cadScreenshotRequestHandler?.({
@@ -1118,7 +1196,7 @@ describe("CadPanel browser behavior", () => {
       </QueryClientProvider>,
     );
 
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripHidden();
     await vi.waitFor(() => {
       expect(observedFrameRequests).toContainEqual(
         expect.objectContaining({ type: "set-view", view: "right", fit: true }),
@@ -1161,7 +1239,7 @@ describe("CadPanel browser behavior", () => {
       </QueryClientProvider>,
     );
 
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
     await vi.waitFor(() => expect(cadViewCommandHandler).toBeTypeOf("function"));
 
     cadViewCommandHandler?.({
@@ -1215,7 +1293,7 @@ describe("CadPanel browser behavior", () => {
       </QueryClientProvider>,
     );
 
-    await expect.element(page.getByText("Drag to rotate, scroll to zoom")).toBeVisible();
+    await expectCadHelperStripVisible();
 
     const expandButton = document.querySelector<HTMLButtonElement>(
       'button[aria-label="Expand CAD view"]',

@@ -230,6 +230,18 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
   const shouldUseDiffSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const renderCadPanel = rightPanelsEnabled;
   const shouldRenderCadPanel = cadPanelOpen || visibleThreadHasRunningCadReview;
+  const cadInlinePanelOpen = rightPanelsEnabled && cadPanelOpen && !shouldUseDiffSheet;
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return;
+    }
+
+    document.documentElement.classList.toggle("cad-inline-panel-open", cadInlinePanelOpen);
+    return () => {
+      document.documentElement.classList.remove("cad-inline-panel-open");
+    };
+  }, [cadInlinePanelOpen]);
 
   useEffect(() => {
     if (isProjectlessRoute && cadPanelOpen) {

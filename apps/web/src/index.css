@@ -259,6 +259,10 @@ code {
   -webkit-app-region: no-drag;
 }
 
+.wco.cad-inline-panel-open .chat-header-actions {
+  padding-right: 0;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
@@ -1089,6 +1093,16 @@ label:has(> select#reasoning-effort) select {
   outline: 1px solid rgb(16 185 129 / 0.95);
   outline-offset: -1px;
   animation: cad-agent-control-frame-in 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.cad-agent-control-frame::before {
+  position: absolute;
+  top: 0;
+  bottom: -1px;
+  left: 0;
+  width: 1px;
+  background: rgb(16 185 129 / 0.95);
+  content: "";
 }
 
 .cad-agent-control-overlay[data-ending="true"] {

@@ -174,6 +174,7 @@ const decodeKeybindingRuleExit = Schema.decodeUnknownExit(KeybindingRule);
 const decodeResolvedKeybindingFromConfigExit = Schema.decodeExit(ResolvedKeybindingFromConfig);
 const decodeRawKeybindingsEntriesExit = Schema.decodeUnknownExit(RawKeybindingsEntries);
 const encodeKeybindingsConfigPrettyJson = Schema.encodeEffect(KeybindingsConfigPrettyJson);
+const REMOVED_KEYBINDING_COMMANDS = new Set(["diff.toggle"]);
 
 export interface KeybindingsConfigState {
   readonly keybindings: ResolvedKeybindingsConfig;
@@ -203,6 +204,14 @@ function invalidEntryIssue(index: number, detail: string): ServerConfigIssue {
     index,
     message: trimIssueMessage(detail),
   };
+}
+
+function removedKeybindingCommand(entry: unknown): string | null {
+  if (typeof entry !== "object" || entry === null || !("command" in entry)) {
+    return null;
+  }
+  const command = (entry as { readonly command?: unknown }).command;
+  return typeof command === "string" && REMOVED_KEYBINDING_COMMANDS.has(command) ? command : null;
 }
 
 function mergeWithDefaultKeybindings(custom: ResolvedKeybindingsConfig): ResolvedKeybindingsConfig {
@@ -348,6 +357,16 @@ const makeKeybindings = Effect.gen(function* () {
 
     return yield* Effect.forEach(rawConfig, (entry) =>
       Effect.gen(function* () {
+        const removedCommand = removedKeybindingCommand(entry);
+        if (removedCommand) {
+          yield* Effect.logWarning("removing obsolete keybinding entry", {
+            path: keybindingsConfigPath,
+            entry,
+            command: removedCommand,
+          });
+          return null;
+        }
+
         const decodedRule = decodeKeybindingRuleExit(entry);
         if (decodedRule._tag === "Failure") {
           yield* Effect.logWarning("ignoring invalid keybinding entry", {
@@ -375,11 +394,12 @@ const makeKeybindings = Effect.gen(function* () {
     {
       readonly keybindings: readonly KeybindingRule[];
       readonly issues: readonly ServerConfigIssue[];
+      readonly removedObsoleteEntries: number;
     },
     KeybindingsConfigError
   > {
     if (!(yield* readConfigExists)) {
-      return { keybindings: [], issues: [] };
+      return { keybindings: [], issues: [], removedObsoleteEntries: 0 };
     }
 
     const rawConfig = yield* readRawConfig;
@@ -389,12 +409,26 @@ const makeKeybindings = Effect.gen(function* () {
       return {
         keybindings: [],
         issues: [malformedConfigIssue(detail)],
+        removedObsoleteEntries: 0,
       };
     }
 
     const keybindings: KeybindingRule[] = [];
     const issues: ServerConfigIssue[] = [];
+    let removedObsoleteEntries = 0;
     for (const [index, entry] of decodedEntries.value.entries()) {
+      const removedCommand = removedKeybindingCommand(entry);
+      if (removedCommand) {
+        removedObsoleteEntries += 1;
+        yield* Effect.logWarning("removing obsolete keybinding entry", {
+          path: keybindingsConfigPath,
+          index,
+          entry,
+          command: removedCommand,
+        });
+        continue;
+      }
+
       const decodedRule = decodeKeybindingRuleExit(entry);
       if (decodedRule._tag === "Failure") {
         const detail = Cause.pretty(decodedRule.cause);
@@ -423,7 +457,7 @@ const makeKeybindings = Effect.gen(function* () {
       keybindings.push(decodedRule.value);
     }
 
-    return { keybindings, issues };
+    return { keybindings, issues, removedObsoleteEntries };
   });
 
   const writeConfigAtomically = (rules: readonly KeybindingRule[]) => {
@@ -533,7 +567,7 @@ const makeKeybindings = Effect.gen(function* () {
           reason: "shortcut context already used by existing rule",
         });
       }
-      if (missingDefaults.length === 0) {
+      if (missingDefaults.length === 0 && runtimeConfig.removedObsoleteEntries === 0) {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }

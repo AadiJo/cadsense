@@ -103,13 +103,13 @@ export function CadPanelInlineSidebar(props: {
       defaultOpen={false}
       open={open}
       onOpenChange={onOpenChange}
-      className="w-auto min-h-0 flex-none bg-transparent"
+      className="relative z-30 w-auto min-h-0 flex-none bg-transparent"
       style={{ "--sidebar-width": CAD_INLINE_DEFAULT_WIDTH } as CSSProperties}
     >
       <Sidebar
         side="right"
         collapsible="offcanvas"
-        className="border-l border-border bg-card text-foreground"
+        className="z-30 border-l border-border bg-card text-foreground"
         resizable={{
           getMaxWidth: () =>
             Math.max(

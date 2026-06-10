@@ -209,7 +209,7 @@ function cadHierarchyViewerUnavailableMessage(
     return {
       status: "loading",
       message:
-        "CAD viewer is still loading the synced model. Retry after the CAD panel finishes loading.",
+        "CAD viewer is still loading the synced model. Retry this CAD hierarchy request at least two times before ending the turn back to the user; the panel often becomes ready on a later attempt.",
     };
   }
   if (loadState === "error") {
@@ -1065,6 +1065,9 @@ export default function CadPanel({
   }, [cadExploded, cadUiStateKey, postFrameRequest, setCadExploded]);
 
   const openFullscreen = useCallback(() => {
+    if (cadInteractionBlocked) {
+      return;
+    }
     if (fullscreenCloseTimeoutRef.current) {
       clearTimeout(fullscreenCloseTimeoutRef.current);
       fullscreenCloseTimeoutRef.current = null;
@@ -1094,7 +1097,7 @@ export default function CadPanel({
         }, CAD_FULLSCREEN_BEACON_RELEASE_MS);
       }, CAD_FULLSCREEN_TRANSITION_MS);
     });
-  }, []);
+  }, [cadInteractionBlocked]);
 
   const closeFullscreen = useCallback(() => {
     if (fullscreenEnterTimeoutRef.current) {
@@ -1121,6 +1124,13 @@ export default function CadPanel({
       setFullscreenClosing(false);
     }, CAD_FULLSCREEN_TRANSITION_MS);
   }, [fullscreenMounted]);
+
+  useEffect(() => {
+    if (!cadInteractionBlocked || (!fullscreenMounted && !fullscreenEntering)) {
+      return;
+    }
+    closeFullscreen();
+  }, [cadInteractionBlocked, closeFullscreen, fullscreenEntering, fullscreenMounted]);
 
   const refreshComponents = useCallback(() => {
     if (loadStateRef.current !== "loaded") {
@@ -1838,6 +1848,7 @@ export default function CadPanel({
         right: fullscreenButtonShowsExit ? 16 : 8,
         top: fullscreenButtonShowsExit ? 48 : 8,
       } as const);
+  const fullscreenControlDisabled = !fullscreenButtonShowsExit && cadInteractionBlocked;
   const fullscreenControl = (
     <Tooltip>
       <TooltipTrigger
@@ -1851,6 +1862,7 @@ export default function CadPanel({
             size="icon-sm"
             style={fullscreenButtonStyle}
             variant="outline"
+            disabled={fullscreenControlDisabled}
             onClick={fullscreenButtonShowsExit ? closeFullscreen : openFullscreen}
           >
             {fullscreenButtonShowsExit ? <Minimize2Icon /> : <Maximize2Icon />}
@@ -2039,15 +2051,17 @@ export default function CadPanel({
             </div>
           )}
           {cadToolbar}
-          <div
-            className={cn(
-              "pointer-events-none absolute bottom-2 left-2 rounded-md border border-border/70 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm",
-              fullscreen && "left-4 bottom-4",
-              loadState !== "loaded" && "hidden",
-            )}
-          >
-            Drag to rotate, scroll to zoom
-          </div>
+          {cadInteractionBlocked ? null : (
+            <div
+              className={cn(
+                "pointer-events-none absolute bottom-2 left-2 rounded-md border border-border/70 bg-background/90 px-2 py-1 text-xs text-muted-foreground shadow-sm",
+                fullscreen && "left-4 bottom-4",
+                loadState !== "loaded" && "hidden",
+              )}
+            >
+              Drag to rotate, scroll to zoom
+            </div>
+          )}
         </div>
         {fullscreenBeaconAnchored ? null : fullscreenControl}
         {fullscreenControlPortal}

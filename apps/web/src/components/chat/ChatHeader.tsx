@@ -112,7 +112,7 @@ export const ChatHeader = memo(function ChatHeader({
           </span>
         )}
       </div>
-      <div className="ml-auto flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+0.5em)]">
+      <div className="chat-header-actions ml-auto flex shrink-0 items-center justify-end gap-2 @3xl/header-actions:gap-3 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+0.5em)]">
         {showProjectControls && activeProjectOnshapeContext ? (
           <OnshapeSyncControl
             context={activeProjectOnshapeContext}
