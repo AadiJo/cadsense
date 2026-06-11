@@ -5,7 +5,7 @@ export function SplashScreen() {
         <img
           alt="Cadsense"
           className="size-16 object-contain"
-          src="/apple-touch-icon.png?v=Cadsense"
+          src="/apple-touch-icon.png?v=cs-20260611"
         />
       </div>
     </div>

@@ -157,7 +157,6 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
   const rootDir = path.resolve(input.dirname, "../../..");
   const appRoot = input.isPackaged ? input.appPath : rootDir;
   const resourcesPath = input.resourcesPath;
-  const backendRoot = input.isPackaged ? path.join(resourcesPath, "app.asar.unpacked") : appRoot;
   const branding = resolveDesktopAppBranding({
     isDevelopment,
     appVersion: input.appVersion,
@@ -188,7 +187,7 @@ const makeDesktopEnvironment = Effect.fn("desktop.environment.make")(function* (
     logDir: path.join(stateDir, "logs"),
     rootDir,
     appRoot,
-    backendEntryPath: path.join(backendRoot, "apps/server/dist/bin.mjs"),
+    backendEntryPath: path.join(appRoot, "apps/server/dist/bin.mjs"),
     backendCwd: input.isPackaged ? homeDirectory : appRoot,
     preloadPath: path.join(input.dirname, "preload.cjs"),
     appUpdateYmlPath: input.isPackaged

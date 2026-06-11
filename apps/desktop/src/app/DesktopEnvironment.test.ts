@@ -106,7 +106,7 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
-  it.effect("runs the packaged backend from the unpacked asar directory", () =>
+  it.effect("runs the packaged backend from the packaged app directory", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment({
         appPath: "/Applications/CadSense.app/Contents/Resources/app.asar",
@@ -116,7 +116,7 @@ describe("DesktopEnvironment", () => {
 
       assert.equal(
         np(environment.backendEntryPath),
-        "/Applications/CadSense.app/Contents/Resources/app.asar.unpacked/apps/server/dist/bin.mjs",
+        "/Applications/CadSense.app/Contents/Resources/app.asar/apps/server/dist/bin.mjs",
       );
       assert.equal(
         np(environment.appRoot),

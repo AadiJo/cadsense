@@ -624,7 +624,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     if (signed) {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
     } else {
-      winConfig.signAndEditExecutable = false;
+      winConfig.signExecutable = false;
     }
     buildConfig.win = winConfig;
   }
@@ -820,7 +820,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
       ...commandOutputOptions(options.verbose),
       // Windows needs shell mode to resolve .cmd shims (e.g. bun.cmd).
       shell: process.platform === "win32",
-    })`bun install --production --omit optional`,
+    })`bun install --production`,
   );
 
   const buildEnv: NodeJS.ProcessEnv = {
