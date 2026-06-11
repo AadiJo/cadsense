@@ -106,6 +106,25 @@ describe("DesktopEnvironment", () => {
     }),
   );
 
+  it.effect("runs the packaged backend from the unpacked asar directory", () =>
+    Effect.gen(function* () {
+      const environment = yield* makeEnvironment({
+        appPath: "/Applications/CadSense.app/Contents/Resources/app.asar",
+        isPackaged: true,
+        resourcesPath: "/Applications/CadSense.app/Contents/Resources",
+      });
+
+      assert.equal(
+        np(environment.backendEntryPath),
+        "/Applications/CadSense.app/Contents/Resources/app.asar.unpacked/apps/server/dist/bin.mjs",
+      );
+      assert.equal(
+        np(environment.appRoot),
+        "/Applications/CadSense.app/Contents/Resources/app.asar",
+      );
+    }),
+  );
+
   it.effect("resolves picker defaults without nullish sentinels", () =>
     Effect.gen(function* () {
       const environment = yield* makeEnvironment();

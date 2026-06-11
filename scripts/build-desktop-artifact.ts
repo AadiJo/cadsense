@@ -556,9 +556,7 @@ export function resolveMockUpdateServerUrl(mockUpdateServerPort: number | undefi
 }
 
 export function resolveDesktopProductName(version: string): string {
-  return resolveDesktopUpdateChannel(version) === "nightly"
-    ? "Cadsense (Nightly)"
-    : (desktopPackageJson.productName ?? "Cadsense");
+  return resolveDesktopUpdateChannel(version) === "nightly" ? "Cadsense (Nightly)" : "Cadsense";
 }
 
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
@@ -573,6 +571,7 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     appId: "com.cadsense.cadsense",
     productName: resolveDesktopProductName(version),
     artifactName: "Cadsense-${version}-${arch}.${ext}",
+    asarUnpack: ["apps/server/dist/**"],
     directories: {
       buildResources: "apps/desktop/resources",
     },
@@ -617,6 +616,10 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     const winConfig: Record<string, unknown> = {
       target: [target],
       icon: "icon.ico",
+    };
+    buildConfig.nsis = {
+      installerIcon: "icon.ico",
+      uninstallerIcon: "icon.ico",
     };
     if (signed) {
       winConfig.azureSignOptions = yield* AzureTrustedSigningOptionsConfig;
