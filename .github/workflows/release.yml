@@ -401,9 +401,6 @@ jobs:
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
@@ -420,9 +417,6 @@ jobs:
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: |
-            release-assets/*.dmg
-            release-assets/*.zip
-            release-assets/*.AppImage
             release-assets/*.exe
             release-assets/*.blockmap
             release-assets/*.yml
