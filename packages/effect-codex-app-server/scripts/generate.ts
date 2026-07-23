@@ -593,6 +593,21 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
     }
   }
 
+  // Codex can add reasoning effort values independently of this generated client.
+  // Keep these wire fields open so a new value does not break the entire app-server probe.
+  for (const [name, schema] of Object.entries(aggregateSchemas)) {
+    if (name.endsWith("__ReasoningEffort")) {
+      const description =
+        schema !== null && typeof schema === "object" && !Array.isArray(schema)
+          ? (schema as Readonly<Record<string, unknown>>)["description"]
+          : undefined;
+      aggregateSchemas[name] = {
+        type: "string",
+        ...(typeof description === "string" ? { description } : {}),
+      };
+    }
+  }
+
   const generator = makeJsonSchemaGenerator();
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
     left.localeCompare(right),

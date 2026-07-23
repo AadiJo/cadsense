@@ -10,6 +10,7 @@ import { assert, it } from "@effect/vitest";
 
 import * as CodexError from "./errors.ts";
 import * as CodexProtocol from "./protocol.ts";
+import * as CodexSchema from "./schema.ts";
 import { makeInMemoryStdio } from "./_internal/stdio.ts";
 const encodeUnknownJsonString = Schema.encodeUnknownSync(Schema.UnknownFromJsonString);
 
@@ -18,6 +19,38 @@ const encoder = new TextEncoder();
 const encodeJsonl = (value: unknown) => encoder.encode(`${encodeUnknownJsonString(value)}\n`);
 
 const decodeJson = Schema.decodeEffect(Schema.UnknownFromJsonString);
+const decodeModelListResponse = Schema.decodeUnknownSync(CodexSchema.V2ModelListResponse);
+const decodeTurnStartParams = Schema.decodeUnknownSync(CodexSchema.V2TurnStartParams);
+
+it("accepts reasoning efforts added after the client was generated", () => {
+  const modelList = decodeModelListResponse({
+    data: [
+      {
+        defaultReasoningEffort: "ultra",
+        description: "Future reasoning model",
+        displayName: "GPT Test",
+        hidden: false,
+        id: "gpt-test",
+        isDefault: true,
+        model: "gpt-test",
+        supportedReasoningEfforts: [
+          {
+            description: "A newly introduced reasoning mode",
+            reasoningEffort: "ultra",
+          },
+        ],
+      },
+    ],
+  });
+  const turnStart = decodeTurnStartParams({
+    effort: "ultra",
+    input: [],
+    threadId: "thread-1",
+  });
+
+  assert.equal(modelList.data[0]?.defaultReasoningEffort, "ultra");
+  assert.equal(turnStart.effort, "ultra");
+});
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
   it.effect(
