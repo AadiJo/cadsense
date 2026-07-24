@@ -21,6 +21,7 @@ import {
 import { compareSemverVersions } from "@cadsense/shared/semver";
 import {
   query as claudeQuery,
+  type ModelInfo as ClaudeModelInfo,
   type SlashCommand as ClaudeSlashCommand,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
@@ -49,6 +50,13 @@ const CLAUDE_PRESENTATION = {
   showInteractionModeToggle: false,
 } as const;
 const MINIMUM_CLAUDE_OPUS_4_7_VERSION = "2.1.111";
+const CLAUDE_EFFORT_LABELS: Readonly<Record<string, string>> = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  xhigh: "Extra High",
+  max: "Max",
+};
 const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   {
     slug: "claude-opus-4-7",
@@ -179,6 +187,81 @@ const BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
   },
 ];
 
+const discoveredClaudeModelCapabilities = new Map<string, ModelCapabilities>();
+
+function mapClaudeModelCapabilities(model: ClaudeModelInfo): ModelCapabilities {
+  const fallbackDescriptors =
+    BUILT_IN_MODELS.find((candidate) => candidate.slug === model.value)?.capabilities
+      ?.optionDescriptors ?? [];
+  const supplementalDescriptors = fallbackDescriptors.filter(
+    (descriptor) => descriptor.id !== "effort" && descriptor.id !== "fastMode",
+  );
+  const effortLevels = [...new Set(model.supportedEffortLevels ?? [])];
+  const effortOptions: Array<{
+    value: string;
+    label: string;
+    isDefault?: boolean;
+  }> = effortLevels.map((value) => {
+    const label = CLAUDE_EFFORT_LABELS[value] ?? toTitleCaseWords(value);
+    return value === "high" ? { value, label, isDefault: true } : { value, label };
+  });
+  if (model.supportsAdaptiveThinking) {
+    effortOptions.push({
+      value: "ultrathink",
+      label: "Ultrathink",
+    });
+  }
+
+  return createModelCapabilities({
+    optionDescriptors: [
+      ...(effortOptions.length > 0
+        ? [
+            buildSelectOptionDescriptor({
+              id: "effort",
+              label: "Reasoning",
+              options: effortOptions,
+              ...(model.supportsAdaptiveThinking ? { promptInjectedValues: ["ultrathink"] } : {}),
+            }),
+          ]
+        : []),
+      ...(model.supportsFastMode
+        ? [
+            buildBooleanOptionDescriptor({
+              id: "fastMode",
+              label: "Fast Mode",
+            }),
+          ]
+        : []),
+      ...supplementalDescriptors,
+    ],
+  });
+}
+
+function providerModelsFromClaudeModelInfo(
+  models: ReadonlyArray<ClaudeModelInfo>,
+): ReadonlyArray<ServerProviderModel> {
+  const seen = new Set<string>();
+  const mapped: ServerProviderModel[] = [];
+
+  for (const model of models) {
+    const slug = nonEmptyProbeString(model.value);
+    if (!slug || seen.has(slug)) {
+      continue;
+    }
+    seen.add(slug);
+    const capabilities = mapClaudeModelCapabilities({ ...model, value: slug });
+    discoveredClaudeModelCapabilities.set(slug, capabilities);
+    mapped.push({
+      slug,
+      name: nonEmptyProbeString(model.displayName) ?? slug,
+      isCustom: false,
+      capabilities,
+    });
+  }
+
+  return mapped;
+}
+
 function supportsClaudeOpus47(version: string | null | undefined): boolean {
   return version ? compareSemverVersions(version, MINIMUM_CLAUDE_OPUS_4_7_VERSION) >= 0 : false;
 }
@@ -200,6 +283,7 @@ function formatClaudeOpus47UpgradeMessage(version: string | null): string {
 export function getClaudeModelCapabilities(model: string | null | undefined): ModelCapabilities {
   const slug = model?.trim();
   return (
+    (slug ? discoveredClaudeModelCapabilities.get(slug) : undefined) ??
     BUILT_IN_MODELS.find((candidate) => candidate.slug === slug)?.capabilities ??
     DEFAULT_CLAUDE_MODEL_CAPABILITIES
   );
@@ -358,6 +442,7 @@ type ClaudeCapabilitiesProbe = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  readonly models: ReadonlyArray<ClaudeModelInfo>;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
 
@@ -483,6 +568,7 @@ const probeClaudeCapabilities = (
         email: account?.email,
         subscriptionType: account?.subscriptionType,
         tokenSource: account?.tokenSource,
+        models: init.models ?? [],
         slashCommands: parseClaudeInitializationCommands(init.commands),
       } satisfies ClaudeCapabilitiesProbe;
     });
@@ -611,19 +697,24 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     });
   }
 
+  const capabilities = resolveCapabilities
+    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
+    : undefined;
+  const discoveredModels = capabilities
+    ? providerModelsFromClaudeModelInfo(capabilities.models)
+    : [];
   const models = providerModelsFromSettings(
-    getBuiltInClaudeModelsForVersion(parsedVersion),
+    discoveredModels.length > 0
+      ? discoveredModels
+      : getBuiltInClaudeModelsForVersion(parsedVersion),
     PROVIDER,
     claudeSettings.customModels,
     DEFAULT_CLAUDE_MODEL_CAPABILITIES,
   );
-  const opus47UpgradeMessage = supportsClaudeOpus47(parsedVersion)
-    ? undefined
-    : formatClaudeOpus47UpgradeMessage(parsedVersion);
-
-  const capabilities = resolveCapabilities
-    ? yield* resolveCapabilities(claudeSettings).pipe(Effect.orElseSucceed(() => undefined))
-    : undefined;
+  const opus47UpgradeMessage =
+    discoveredModels.length > 0 || supportsClaudeOpus47(parsedVersion)
+      ? undefined
+      : formatClaudeOpus47UpgradeMessage(parsedVersion);
   const slashCommands = capabilities?.slashCommands ?? [];
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 

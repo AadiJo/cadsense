@@ -24,6 +24,7 @@ import {
   type ServerProviderSlashCommand,
   type ServerSettings as ContractServerSettings,
 } from "@cadsense/contracts";
+import type { ModelInfo as ClaudeModelInfo } from "@anthropic-ai/claude-agent-sdk";
 import * as PlatformError from "effect/PlatformError";
 import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -101,6 +102,7 @@ type TestClaudeCapabilities = {
   readonly email: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
+  readonly models: ReadonlyArray<ClaudeModelInfo>;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
 };
 
@@ -110,6 +112,7 @@ function claudeCapabilities(overrides: Partial<TestClaudeCapabilities> = {}) {
       email: undefined,
       subscriptionType: undefined,
       tokenSource: undefined,
+      models: [],
       slashCommands: [],
       ...overrides,
     });
@@ -1392,6 +1395,60 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsService.layerTest(), T
               }),
             ),
           ),
+      );
+
+      it.effect("uses the Claude initialization model and reasoning metadata", () =>
+        Effect.gen(function* () {
+          const status = yield* checkClaudeProviderStatus(
+            defaultClaudeSettings,
+            claudeCapabilities({
+              models: [
+                {
+                  value: "claude-sonnet-5-1",
+                  displayName: "Claude Sonnet 5.1",
+                  description: "Future Sonnet model",
+                  supportedEffortLevels: ["low", "high", "xhigh"],
+                  supportsAdaptiveThinking: true,
+                  supportsFastMode: true,
+                },
+              ],
+            }),
+          );
+
+          assert.deepStrictEqual(
+            status.models.map((model) => model.slug),
+            ["claude-sonnet-5-1"],
+          );
+          const model = status.models[0];
+          if (!model?.capabilities) {
+            assert.fail("Expected discovered Claude model capabilities.");
+          }
+          assert.deepStrictEqual(model.capabilities.optionDescriptors, [
+            {
+              ...selectDescriptor("effort", "Reasoning", [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High", isDefault: true },
+                { id: "xhigh", label: "Extra High" },
+                { id: "ultrathink", label: "Ultrathink" },
+              ]),
+              promptInjectedValues: ["ultrathink"],
+            },
+            booleanDescriptor("fastMode", "Fast Mode"),
+          ]);
+          const effort = model.capabilities.optionDescriptors?.[0];
+          assert.deepStrictEqual(
+            effort?.type === "select" ? effort.promptInjectedValues : undefined,
+            ["ultrathink"],
+          );
+        }).pipe(
+          Effect.provide(
+            mockSpawnerLayer((args) => {
+              const joined = args.join(" ");
+              if (joined === "--version") return { stdout: "2.1.200\n", stderr: "", code: 0 };
+              throw new Error(`Unexpected args: ${joined}`);
+            }),
+          ),
+        ),
       );
 
       it.effect("hides Claude Opus 4.7 on older Claude Code versions", () =>
