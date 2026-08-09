@@ -264,6 +264,9 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            purpose: payload.purpose ?? "general",
+            parentThreadId: payload.parentThreadId ?? null,
+            reviewRunId: payload.reviewRunId ?? null,
             title: payload.title,
             externalContext: payload.externalContext ?? null,
             modelSelection: payload.modelSelection,

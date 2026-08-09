@@ -29,6 +29,9 @@ const BrowserSavedEnvironmentRegistryDocumentSchema = Schema.Struct({
 });
 type BrowserSavedEnvironmentRegistryDocument =
   typeof BrowserSavedEnvironmentRegistryDocumentSchema.Type;
+const decodeBrowserSavedEnvironmentRecord = Schema.decodeUnknownSync(
+  BrowserSavedEnvironmentRecordSchema,
+);
 
 function hasWindow(): boolean {
   return typeof window !== "undefined";
@@ -74,11 +77,26 @@ function readBrowserSavedEnvironmentRegistryDocument(): BrowserSavedEnvironmentR
   }
 
   try {
-    const parsed = getLocalStorageItem(
-      SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY,
-      BrowserSavedEnvironmentRegistryDocumentSchema,
-    );
-    return parsed ?? {};
+    const parsed = getLocalStorageItem(SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY, Schema.Unknown);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    const document = parsed as { readonly version?: unknown; readonly records?: unknown };
+    const records = Array.isArray(document.records)
+      ? document.records.flatMap((record) => {
+          try {
+            return [decodeBrowserSavedEnvironmentRecord(record)];
+          } catch {
+            return [];
+          }
+        })
+      : [];
+    return {
+      ...(typeof document.version === "number" && Number.isFinite(document.version)
+        ? { version: document.version }
+        : {}),
+      records,
+    };
   } catch {
     return {};
   }
