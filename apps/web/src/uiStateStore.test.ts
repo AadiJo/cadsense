@@ -570,15 +570,42 @@ describe("local CAD object URL ownership", () => {
       },
     });
 
-    useUiStateStore
-      .getState()
-      .syncProjects([{ key: "project-kept", logicalKey: "project-kept", cwd: "/kept" }]);
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/kept",
+        cadScopeKey: "project-kept",
+        logicalKey: "project-kept",
+        cwd: "/kept",
+      },
+    ]);
 
     expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
       "project-kept": [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }],
     });
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:removed");
     expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:kept");
+  });
+
+  it("keeps files when the project's physical key differs from its CAD scope key", () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const files = [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }];
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: { "environment:project-id": files },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/project/path",
+        cadScopeKey: "environment:project-id",
+        logicalKey: "environment:repository",
+        cwd: "/project/path",
+      },
+    ]);
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "environment:project-id": files,
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
 });
 

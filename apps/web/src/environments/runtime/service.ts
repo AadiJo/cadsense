@@ -12,6 +12,7 @@ import { Throttler } from "@tanstack/react-pacer";
 import {
   createKnownEnvironment,
   getKnownEnvironmentWsBaseUrl,
+  scopedProjectKey,
   scopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
@@ -732,6 +733,7 @@ function syncProjectUiFromStore() {
   useUiStateStore.getState().syncProjects(
     projects.map((project) => ({
       key: derivePhysicalProjectKey(project),
+      cadScopeKey: scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
       logicalKey: deriveLogicalProjectKeyFromSettings(project, clientSettings),
       cwd: project.cwd,
     })),
@@ -785,6 +787,7 @@ function applyRecoveredEventBatch(
     useUiStateStore.getState().syncProjects(
       projects.map((project) => ({
         key: derivePhysicalProjectKey(project),
+        cadScopeKey: scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
         logicalKey: deriveLogicalProjectKeyFromSettings(project, clientSettings),
         cwd: project.cwd,
       })),

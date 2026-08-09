@@ -747,7 +747,12 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
-  syncProjects: (projects: readonly SyncProjectInput[]) => void;
+  syncProjects: (
+    projects: readonly (SyncProjectInput & {
+      /** Project identity key (env + project id). Used for project-scoped ephemeral state. */
+      cadScopeKey: string;
+    })[],
+  ) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
   markThreadVisited: (threadId: string, visitedAt?: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
@@ -779,7 +784,7 @@ function revokeLocalCadFileUrls(files: readonly LocalCadFile[]): void {
 export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
   syncProjects: (projects) => {
-    const activeScopeKeys = new Set(projects.map((project) => project.key));
+    const activeScopeKeys = new Set(projects.map((project) => project.cadScopeKey));
     const staleScopeEntries = Object.entries(get().localCadFilesByScopeKey).filter(
       ([scopeKey]) => !activeScopeKeys.has(scopeKey),
     );
