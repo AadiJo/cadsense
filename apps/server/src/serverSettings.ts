@@ -496,6 +496,34 @@ const makeServerSettings = Effect.gen(function* () {
     ),
   );
 
+  type SettingsFileSnapshot =
+    | { readonly exists: false }
+    | { readonly exists: true; readonly contents: string };
+
+  const snapshotSettingsFile: Effect.Effect<SettingsFileSnapshot, ServerSettingsError> =
+    Effect.gen(function* () {
+      if (!(yield* readConfigExists)) {
+        return { exists: false } as const;
+      }
+      return { exists: true, contents: yield* readRawConfig } as const;
+    });
+
+  const restoreSettingsFile = (snapshot: SettingsFileSnapshot) =>
+    (snapshot.exists
+      ? writeFileStringAtomically({
+          filePath: settingsPath,
+          contents: snapshot.contents,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, pathService),
+        )
+      : fs.remove(settingsPath, { force: true })
+    ).pipe(
+      Effect.mapError((cause) =>
+        toSettingsError("failed to restore settings file after update failure", cause),
+      ),
+    );
+
   const snapshotProviderEnvironmentSecrets = (
     mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>,
   ) =>
@@ -624,9 +652,11 @@ const makeServerSettings = Effect.gen(function* () {
   return {
     start,
     ready: Deferred.await(startedDeferred),
-    getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeProviderEnvironmentSecrets),
-      Effect.map(resolveTextGenerationProvider),
+    getSettings: writeSemaphore.withPermits(1)(
+      getSettingsFromCache.pipe(
+        Effect.flatMap(materializeProviderEnvironmentSecrets),
+        Effect.map(resolveTextGenerationProvider),
+      ),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
@@ -638,6 +668,7 @@ const makeServerSettings = Effect.gen(function* () {
           );
           const next = yield* normalizeServerSettings(prepared.settings);
           const previousSecrets = yield* snapshotProviderEnvironmentSecrets(prepared.mutations);
+          const previousSettingsFile = yield* snapshotSettingsFile;
           const committed = yield* commitSettingsUpdateUninterruptibly(
             Effect.gen(function* () {
               yield* writeSettingsAtomically(next);
@@ -649,7 +680,7 @@ const makeServerSettings = Effect.gen(function* () {
                 yield* runBestEffortRollbackSteps(
                   [
                     ...restoreProviderEnvironmentSecrets(previousSecrets),
-                    writeSettingsAtomically(current),
+                    restoreSettingsFile(previousSettingsFile),
                   ],
                   (rollbackError) =>
                     Effect.logError(

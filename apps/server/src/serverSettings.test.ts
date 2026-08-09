@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
@@ -680,7 +681,104 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.isTrue(result._tag === "Failure");
       assert.equal(values.size, 0);
       assert.isUndefined((yield* serverSettings.getSettings).providerInstances[instanceId]);
-      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), instanceId);
+      assert.isFalse(yield* fileSystem.exists(serverConfig.settingsPath));
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("does not expose partially updated secrets through concurrent reads", () =>
+    Effect.gen(function* () {
+      const values = new Map<string, Uint8Array>();
+      const firstNewSecretApplied = yield* Deferred.make<void>();
+      const releaseSecretUpdate = yield* Deferred.make<void>();
+      const readCompleted = yield* Deferred.make<void>();
+      const decoder = new TextDecoder();
+      const secretStore: ServerSecretStoreShape = {
+        get: (name) => Effect.sync(() => values.get(name) ?? null),
+        set: (name, value) =>
+          Effect.gen(function* () {
+            values.set(name, Uint8Array.from(value));
+            if (decoder.decode(value) === "new-a") {
+              yield* Deferred.succeed(firstNewSecretApplied, undefined);
+              yield* Deferred.await(releaseSecretUpdate);
+            }
+          }),
+        remove: (name) => Effect.sync(() => values.delete(name)).pipe(Effect.asVoid),
+        getOrCreateRandom: () =>
+          Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+      };
+
+      yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const instance = (left: string, right: string) => ({
+          driver: ProviderDriverKind.make("codex"),
+          environment: [
+            { name: "SECRET_A", value: left, sensitive: true },
+            { name: "SECRET_B", value: right, sensitive: true },
+          ],
+          config: {},
+        });
+
+        yield* serverSettings.updateSettings({
+          providerInstances: { [instanceId]: instance("old-a", "old-b") },
+        });
+        const updateFiber = yield* serverSettings
+          .updateSettings({ providerInstances: { [instanceId]: instance("new-a", "new-b") } })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(firstNewSecretApplied);
+
+        const readFiber = yield* serverSettings.getSettings.pipe(
+          Effect.tap(() => Deferred.succeed(readCompleted, undefined)),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isNone(yield* Deferred.poll(readCompleted)));
+
+        yield* Deferred.succeed(releaseSecretUpdate, undefined);
+        yield* Fiber.join(updateFiber);
+        const current = yield* Fiber.join(readFiber);
+        assert.deepEqual(
+          current.providerInstances[instanceId]?.environment?.map((variable) => variable.value),
+          ["new-a", "new-b"],
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+    }),
+  );
+
+  it.effect("restores the exact settings file when a secret write fails", () => {
+    const secretStore: ServerSecretStoreShape = {
+      get: () => Effect.succeed(null),
+      set: () => Effect.fail(new SecretStoreError({ message: "encrypt failed" })),
+      remove: () => Effect.void,
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const original = `{
+  "enableAssistantStreaming": false,
+  "futureSetting": { "preserve": true }
+}\n`;
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, original);
+
+      const result = yield* serverSettings
+        .updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "SECRET", value: "new-secret", sensitive: true }],
+              config: {},
+            },
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.isTrue(result._tag === "Failure");
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), original);
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
   });
 });
