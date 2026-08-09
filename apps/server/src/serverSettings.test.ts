@@ -528,4 +528,42 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("keeps active environment secrets when settings validation fails", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [
+              { name: "OPENROUTER_API_KEY", value: "sk-active-secret", sensitive: true },
+            ],
+            config: {},
+          },
+        },
+      });
+
+      const result = yield* serverSettings
+        .updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "", value: "", sensitive: false }],
+              config: {},
+            },
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.isTrue(result._tag === "Failure");
+      const current = yield* serverSettings.getSettings;
+      assert.equal(
+        current.providerInstances[instanceId]?.environment?.[0]?.value,
+        "sk-active-secret",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 });

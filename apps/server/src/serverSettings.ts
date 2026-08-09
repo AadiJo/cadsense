@@ -363,89 +363,98 @@ const makeServerSettings = Effect.gen(function* () {
       };
     });
 
-  const persistProviderEnvironmentSecrets = (
+  type ProviderEnvironmentSecretMutation =
+    | {
+        readonly type: "set";
+        readonly name: string;
+        readonly variableName: string;
+        readonly value: Uint8Array;
+      }
+    | {
+        readonly type: "remove";
+        readonly name: string;
+        readonly variableName: string;
+      };
+
+  const prepareProviderEnvironmentSecrets = (
     current: ServerSettings,
     next: ServerSettings,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    Effect.gen(function* () {
-      const providerInstances: Record<string, ProviderInstanceConfig> = {
-        ...next.providerInstances,
-      };
+  ): {
+    readonly settings: ServerSettings;
+    readonly mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>;
+  } => {
+    const providerInstances: Record<string, ProviderInstanceConfig> = {
+      ...next.providerInstances,
+    };
+    const mutations = new Map<string, ProviderEnvironmentSecretMutation>();
+    const nextSecretKeys = new Set<string>();
 
-      const nextSecretKeys = new Set<string>();
-      for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
-        if (!instance.environment) continue;
-        const environment: ProviderInstanceEnvironmentVariable[] = [];
-        for (const variable of instance.environment) {
-          const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
-          if (!variable.sensitive) {
-            yield* secretStore
-              .remove(secretName)
-              .pipe(
-                Effect.mapError((cause) =>
-                  toSettingsError(`failed to remove environment secret ${variable.name}`, cause),
-                ),
-              );
-            environment.push(redactProviderEnvironmentVariable(variable));
-            continue;
-          }
-
-          nextSecretKeys.add(secretName);
-          if (!variable.valueRedacted) {
-            if (variable.value.length > 0) {
-              yield* secretStore
-                .set(secretName, textEncoder.encode(variable.value))
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toSettingsError(`failed to persist environment secret ${variable.name}`, cause),
-                  ),
-                );
-              environment.push({ ...variable, value: "", valueRedacted: true });
-            } else {
-              yield* secretStore
-                .remove(secretName)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toSettingsError(`failed to remove environment secret ${variable.name}`, cause),
-                  ),
-                );
-              const { valueRedacted: _omit, ...rest } = variable;
-              environment.push(rest);
-            }
-            continue;
-          }
-
+    for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
+      if (!instance.environment) continue;
+      const environment: ProviderInstanceEnvironmentVariable[] = [];
+      for (const variable of instance.environment) {
+        const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
+        if (!variable.sensitive) {
+          mutations.set(secretName, {
+            type: "remove",
+            name: secretName,
+            variableName: variable.name,
+          });
           environment.push(redactProviderEnvironmentVariable(variable));
+          continue;
         }
-        providerInstances[instanceId] = {
-          ...instance,
-          environment,
-        } satisfies ProviderInstanceConfig;
-      }
 
-      for (const [instanceId, instance] of Object.entries(current.providerInstances)) {
-        for (const variable of instance.environment ?? []) {
-          if (!variable.sensitive) continue;
-          const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
-          if (nextSecretKeys.has(secretName)) continue;
-          yield* secretStore
-            .remove(secretName)
-            .pipe(
-              Effect.mapError((cause) =>
-                toSettingsError(
-                  `failed to remove stale environment secret ${variable.name}`,
-                  cause,
-                ),
-              ),
-            );
+        nextSecretKeys.add(secretName);
+        if (!variable.valueRedacted) {
+          if (variable.value.length > 0) {
+            mutations.set(secretName, {
+              type: "set",
+              name: secretName,
+              variableName: variable.name,
+              value: textEncoder.encode(variable.value),
+            });
+            environment.push({ ...variable, value: "", valueRedacted: true });
+          } else {
+            mutations.set(secretName, {
+              type: "remove",
+              name: secretName,
+              variableName: variable.name,
+            });
+            const { valueRedacted: _omit, ...rest } = variable;
+            environment.push(rest);
+          }
+          continue;
         }
-      }
 
-      return {
+        environment.push(redactProviderEnvironmentVariable(variable));
+      }
+      providerInstances[instanceId] = {
+        ...instance,
+        environment,
+      } satisfies ProviderInstanceConfig;
+    }
+
+    for (const [instanceId, instance] of Object.entries(current.providerInstances)) {
+      for (const variable of instance.environment ?? []) {
+        if (!variable.sensitive) continue;
+        const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
+        if (nextSecretKeys.has(secretName)) continue;
+        mutations.set(secretName, {
+          type: "remove",
+          name: secretName,
+          variableName: variable.name,
+        });
+      }
+    }
+
+    return {
+      settings: {
         ...next,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
-      };
-    });
+      },
+      mutations: Array.from(mutations.values()),
+    };
+  };
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
@@ -470,6 +479,66 @@ const makeServerSettings = Effect.gen(function* () {
         }),
     ),
   );
+
+  const snapshotProviderEnvironmentSecrets = (
+    mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>,
+  ) =>
+    Effect.forEach(mutations, (mutation) =>
+      secretStore.get(mutation.name).pipe(
+        Effect.mapError((cause) =>
+          toSettingsError(
+            `failed to read environment secret ${mutation.variableName} before updating settings`,
+            cause,
+          ),
+        ),
+        Effect.map((value) => ({
+          name: mutation.name,
+          variableName: mutation.variableName,
+          value,
+        })),
+      ),
+    );
+
+  const applyProviderEnvironmentSecretMutations = (
+    mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>,
+  ) =>
+    Effect.forEach(
+      mutations,
+      (mutation) =>
+        (mutation.type === "set"
+          ? secretStore.set(mutation.name, mutation.value)
+          : secretStore.remove(mutation.name)
+        ).pipe(
+          Effect.mapError((cause) =>
+            toSettingsError(
+              `failed to ${mutation.type === "set" ? "persist" : "remove"} environment secret ${mutation.variableName}`,
+              cause,
+            ),
+          ),
+        ),
+      { discard: true },
+    );
+
+  const restoreProviderEnvironmentSecrets = (
+    snapshots: ReadonlyArray<{
+      readonly name: string;
+      readonly variableName: string;
+      readonly value: Uint8Array | null;
+    }>,
+  ) =>
+    Effect.forEach(
+      snapshots,
+      (snapshot) =>
+        (snapshot.value === null
+          ? secretStore.remove(snapshot.name)
+          : secretStore.set(snapshot.name, snapshot.value)
+        ).pipe(
+          Effect.mapError((cause) =>
+            toSettingsError(`failed to restore environment secret ${snapshot.variableName}`, cause),
+          ),
+        ),
+      { discard: true },
+    );
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
@@ -550,12 +619,29 @@ const makeServerSettings = Effect.gen(function* () {
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          const prepared = prepareProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
           );
-          const next = yield* normalizeServerSettings(nextPersisted);
+          const next = yield* normalizeServerSettings(prepared.settings);
+          const previousSecrets = yield* snapshotProviderEnvironmentSecrets(prepared.mutations);
           yield* writeSettingsAtomically(next);
+
+          const secretMutationExit = yield* applyProviderEnvironmentSecretMutations(
+            prepared.mutations,
+          ).pipe(Effect.exit);
+          if (secretMutationExit._tag === "Failure") {
+            yield* restoreProviderEnvironmentSecrets(previousSecrets).pipe(
+              Effect.andThen(writeSettingsAtomically(current)),
+              Effect.catch((rollbackError) =>
+                Effect.logError("failed to roll back settings after secret persistence failure", {
+                  detail: rollbackError.detail,
+                }),
+              ),
+            );
+            return yield* Effect.failCause(secretMutationExit.cause);
+          }
+
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);
           const materialized = yield* materializeProviderEnvironmentSecrets(next);
