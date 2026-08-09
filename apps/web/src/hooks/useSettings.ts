@@ -209,12 +209,13 @@ async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> 
   } finally {
     const currentSettings = getServerConfig()?.settings;
     if (
-      !succeeded &&
       currentSettings &&
       lastOptimisticServerSettingsSnapshot &&
       currentSettings !== lastOptimisticServerSettingsSnapshot
     ) {
-      persistedServerSettingsSnapshot = currentSettings;
+      persistedServerSettingsSnapshot = succeeded
+        ? applyServerSettingsPatch(currentSettings, patch)
+        : currentSettings;
     }
     pendingServerSettingsWrites = pendingServerSettingsWrites.filter(
       (candidate) => candidate.id !== pendingWrite.id,
