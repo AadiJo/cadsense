@@ -16,8 +16,9 @@ import {
 } from "./lib/cadThreeMfFastParser";
 import ThreeMfFastParserWorker from "./lib/cadThreeMfFastParser.worker?worker";
 import {
-  CAD_VIEWER_FRAME_PARENT_SOURCE,
   CAD_VIEWER_FRAME_SOURCE,
+  isCadViewerFrameRequest,
+  isTrustedCadViewerFrameMessage,
   type CadViewerFrameCameraSnapshot,
   type CadViewerFrameComponentNode,
   type CadViewerFrameFileDescriptor,
@@ -82,6 +83,10 @@ if (!(rootElement instanceof HTMLDivElement)) {
   throw new Error("CAD viewer frame root is missing.");
 }
 const root: HTMLDivElement = rootElement;
+if (window.parent === window) {
+  throw new Error("CAD viewer frame must be embedded by the Cadsense application.");
+}
+const trustedParentOrigin = window.location.origin;
 document.documentElement.style.background = "transparent";
 document.body.style.background = "transparent";
 document.body.style.margin = "0";
@@ -127,7 +132,7 @@ const FALLBACK_VIEWER_ROOT_COMPONENT: CadViewerFrameComponentNode = {
 };
 
 function postToParent(message: CadViewerFrameResponseInput): void {
-  window.parent.postMessage({ source: CAD_VIEWER_FRAME_SOURCE, ...message }, "*");
+  window.parent.postMessage({ source: CAD_VIEWER_FRAME_SOURCE, ...message }, trustedParentOrigin);
 }
 
 function cadCameraSnapshotFromThree(state: ThreeViewerState): CadViewerFrameCameraSnapshot {
@@ -1834,20 +1839,10 @@ async function handleRequest(request: CadViewerFrameRequest): Promise<{
   }
 }
 
-function isCadViewerFrameRequest(value: unknown): value is CadViewerFrameRequest {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "source" in value &&
-    (value as { source?: unknown }).source === CAD_VIEWER_FRAME_PARENT_SOURCE &&
-    "requestId" in value &&
-    typeof (value as { requestId?: unknown }).requestId === "string" &&
-    "type" in value &&
-    typeof (value as { type?: unknown }).type === "string"
-  );
-}
-
 window.addEventListener("message", (event) => {
+  if (!isTrustedCadViewerFrameMessage(event, window.parent, trustedParentOrigin)) {
+    return;
+  }
   if (!isCadViewerFrameRequest(event.data)) {
     return;
   }
