@@ -45,6 +45,7 @@ import {
 import {
   CAD_VIEWER_FRAME_PARENT_SOURCE,
   isCadViewerFrameResponse,
+  isTrustedCadViewerFrameMessage,
   type CadViewerFrameCameraSnapshot,
   type CadViewerFrameComponentNode,
   type CadViewerFrameLoadStats,
@@ -63,6 +64,7 @@ import {
   cadComponentVisibilityCommandsForScopeChange,
   cadOnshapeModelQueryIdentity,
   cadViewerFileName,
+  cadViewerFrameOrigin,
   cadViewerFrameUrl,
   getCadModelViewerBlocker,
   shouldHandleCadAgentRequestForPanel,
@@ -1017,7 +1019,7 @@ export default function CadPanel({
             requestId,
             ...request,
           },
-          "*",
+          cadViewerFrameOrigin(),
           transfer ?? [],
         );
       }),
@@ -1252,10 +1254,16 @@ export default function CadPanel({
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<unknown>) => {
-      if (!isCadViewerFrameResponse(event.data)) {
+      if (
+        !isTrustedCadViewerFrameMessage(
+          event,
+          iframeRef.current?.contentWindow ?? null,
+          cadViewerFrameOrigin(),
+        )
+      ) {
         return;
       }
-      if (iframeRef.current?.contentWindow && event.source !== iframeRef.current.contentWindow) {
+      if (!isCadViewerFrameResponse(event.data)) {
         return;
       }
       if (event.data.type === "ready") {
@@ -1998,6 +2006,7 @@ export default function CadPanel({
               ref={iframeRef}
               title="CAD model viewer"
               src={cadViewerFrameUrl()}
+              referrerPolicy="same-origin"
               className="absolute inset-0 size-full border-0 bg-transparent"
             />
           ) : null}
