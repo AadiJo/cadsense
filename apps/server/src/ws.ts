@@ -120,6 +120,7 @@ import {
 } from "./cad/CadScreenshotCapture.ts";
 import { listSyncedCadFiles } from "./onshape/listSyncedCadFiles.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isOnshapeRpcError = Schema.is(OnshapeRpcError);
 const isMechbaseRpcError = Schema.is(MechbaseRpcError);
@@ -1424,15 +1425,37 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            workspaceFileSystem.writeFile(input).pipe(
+            Effect.gen(function* () {
+              const project = yield* projectionSnapshotQuery
+                .getActiveProjectByWorkspaceRoot(input.cwd)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectWriteFileError({
+                        message: "Failed to validate the project workspace.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new ProjectWriteFileError({
+                  message: "Workspace file writes require an active project root.",
+                });
+              }
+
+              return yield* workspaceFileSystem.writeFile({
+                ...input,
+                cwd: project.value.workspaceRoot,
+              });
+            }).pipe(
               Effect.mapError((cause) => {
+                if (isProjectWriteFileError(cause)) {
+                  return cause;
+                }
                 const message = isWorkspacePathOutsideRootError(cause)
                   ? "Workspace file path must stay within the project root."
                   : "Failed to write workspace file";
-                return new ProjectWriteFileError({
-                  message,
-                  cause,
-                });
+                return new ProjectWriteFileError({ message, cause });
               }),
             ),
             { "rpc.aggregate": "workspace" },
