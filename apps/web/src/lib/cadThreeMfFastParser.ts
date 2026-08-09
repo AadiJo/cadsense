@@ -207,7 +207,9 @@ function parseTransform(value: string | null): readonly number[] | null {
   }
   const parts = value.trim().split(/\s+/u);
   const decimalPattern = /^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)$/iu;
-  const numbers = parts.map((part) => (decimalPattern.test(part) ? Math.fround(Number(part)) : NaN));
+  const numbers = parts.map((part) =>
+    decimalPattern.test(part) ? Math.fround(Number(part)) : NaN,
+  );
   if (numbers.length !== 12 || !numbers.every(Number.isFinite)) {
     throw new Error("3MF component or build item contains an invalid transform.");
   }
@@ -317,10 +319,9 @@ function parseObjects(modelXml: string): Map<string, ParsedObject> {
     if (objects.has(id)) {
       throw new Error(`3MF resources contain duplicate object id '${id}'.`);
     }
-    const meshMatch = new RegExp(
-      `<mesh\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/mesh>`,
-      "iu",
-    ).exec(body);
+    const meshMatch = new RegExp(`<mesh\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/mesh>`, "iu").exec(
+      body,
+    );
     objects.set(id, {
       id,
       name: getAttribute(attributes, "name"),
@@ -334,10 +335,9 @@ function parseObjects(modelXml: string): Map<string, ParsedObject> {
 }
 
 function parseBuildItems(modelXml: string): ParsedBuildItem[] {
-  const buildMatch = new RegExp(
-    `<build\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/build>`,
-    "iu",
-  ).exec(modelXml);
+  const buildMatch = new RegExp(`<build\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/build>`, "iu").exec(
+    modelXml,
+  );
   if (!buildMatch) {
     return [];
   }
