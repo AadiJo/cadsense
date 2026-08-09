@@ -70,4 +70,39 @@ describe("LRUCache", () => {
     expect(cache.get("a")).toBeNull();
     expect(cache.get("b")).toBe("B");
   });
+
+  it("rejects fractional and unsafe integer size estimates", () => {
+    const cache = new LRUCache<string>(10, Number.POSITIVE_INFINITY);
+    cache.set("fractional", "invalid", 0.5);
+    cache.set("unsafe", "invalid", Number.MAX_SAFE_INTEGER + 1);
+    cache.set("valid", "valid", Number.MAX_SAFE_INTEGER);
+
+    expect(cache.get("fractional")).toBeNull();
+    expect(cache.get("unsafe")).toBeNull();
+    expect(cache.get("valid")).toBe("valid");
+  });
+
+  it("does not retain entries when either configured budget is disabled or invalid", () => {
+    const caches = [
+      new LRUCache<string>(0, 100),
+      new LRUCache<string>(10, 0),
+      new LRUCache<string>(Number.NaN, 100),
+      new LRUCache<string>(10, Number.NaN),
+      new LRUCache<string>(1.5, 100),
+    ];
+
+    for (const cache of caches) {
+      cache.set("entry", "value", 1);
+      expect(cache.get("entry")).toBeNull();
+    }
+  });
+
+  it("supports explicitly unbounded entry and memory budgets", () => {
+    const cache = new LRUCache<string>(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY);
+    cache.set("a", "A", Number.MAX_SAFE_INTEGER);
+    cache.set("b", "B", Number.MAX_SAFE_INTEGER);
+
+    expect(cache.get("a")).toBe("A");
+    expect(cache.get("b")).toBe("B");
+  });
 });

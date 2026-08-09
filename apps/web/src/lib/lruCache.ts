@@ -3,14 +3,22 @@ interface CacheEntry<T> {
   approximateSize: number;
 }
 
+function normalizeLimit(limit: number): number {
+  return limit === Number.POSITIVE_INFINITY || (Number.isSafeInteger(limit) && limit > 0)
+    ? limit
+    : 0;
+}
+
 export class LRUCache<T> {
   private cache = new Map<string, CacheEntry<T>>();
   private totalSize = 0;
+  private readonly maxEntries: number;
+  private readonly maxMemoryBytes: number;
 
-  constructor(
-    private readonly maxEntries: number,
-    private readonly maxMemoryBytes: number,
-  ) {}
+  constructor(maxEntries: number, maxMemoryBytes: number) {
+    this.maxEntries = normalizeLimit(maxEntries);
+    this.maxMemoryBytes = normalizeLimit(maxMemoryBytes);
+  }
 
   get(key: string): T | null {
     const entry = this.cache.get(key);
@@ -30,7 +38,9 @@ export class LRUCache<T> {
     }
 
     if (
-      !Number.isFinite(approximateSize) ||
+      this.maxEntries === 0 ||
+      this.maxMemoryBytes === 0 ||
+      !Number.isSafeInteger(approximateSize) ||
       approximateSize < 0 ||
       approximateSize > this.maxMemoryBytes
     ) {
