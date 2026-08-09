@@ -321,11 +321,16 @@ validationLayer("CodexAdapterLive validation", (it) => {
       const runtimeOptions = validationRuntimeFactory.factory.mock.calls[0]?.[0];
       assert.ok(runtimeOptions);
       const codexConfig = runtimeOptions.codexThreadStartConfig as {
-        readonly mcp_servers?: Record<string, { readonly env?: Record<string, string> }>;
+        readonly mcp_servers?: Record<string, { readonly http_headers?: Record<string, string> }>;
       };
-      assert.equal(
-        codexConfig.mcp_servers?.[CAD_VIEW_MCP_SERVER_NAME]?.env?.CADSENSE_CAD_VIEW_THREAD_ID,
-        "thread-visible-cad-panel",
+      const capability =
+        codexConfig.mcp_servers?.[CAD_VIEW_MCP_SERVER_NAME]?.http_headers?.[
+          "x-cadsense-cad-view-token"
+        ];
+      assert.ok(capability);
+      assert.match(
+        Buffer.from(capability.split(".")[0] ?? "", "base64url").toString("utf8"),
+        /thread-visible-cad-panel/,
       );
     }),
   );

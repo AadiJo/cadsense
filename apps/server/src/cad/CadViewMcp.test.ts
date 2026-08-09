@@ -4,14 +4,20 @@ import {
   CAD_SCREENSHOT_HTTP_TIMEOUT_MS,
   CAD_VIEW_EXPORT_ROOT_ENV,
   CAD_VIEW_MCP_HIERARCHY_TOOL_NAME,
+  CAD_VIEW_MCP_PROTOCOL_VERSION,
   CAD_VIEW_MCP_TIMEOUT_MS,
   CAD_VIEW_MCP_SERVER_NAME,
+  CAD_VIEW_MCP_TOKEN_HEADER,
   CAD_VIEW_MCP_TOOL_NAME,
   handleCadViewMcpRequest,
+  makeCadViewMcpCapability,
+  makeCadViewClaudeMcpServers,
   makeCadViewCodexMcpConfig,
+  makeCadViewMcpHttpServer,
   makeCadViewOpenCodeMcpServerConfig,
   makeCadViewMcpOrigin,
   makeCadViewMcpStdioServer,
+  parseCadViewMcpCapability,
   postCadScreenshotCapture,
 } from "./CadViewMcp.ts";
 
@@ -81,28 +87,71 @@ describe("CadViewMcp", () => {
     expect(makeCadViewCodexMcpConfig({ host: undefined, port: 3900 })).toMatchObject({
       mcp_servers: {
         [CAD_VIEW_MCP_SERVER_NAME]: {
-          command: process.execPath,
-          args: expect.arrayContaining(["mcp", "cad-view"]),
-          env: {
-            CADSENSE_CAD_VIEW_ORIGIN: "http://127.0.0.1:3900",
+          url: "http://127.0.0.1:3900/api/mcp/cad",
+          http_headers: {
+            [CAD_VIEW_MCP_TOKEN_HEADER]: expect.any(String),
           },
         },
       },
     });
   });
 
-  it("projects OpenCode local MCP config with enough timeout for screenshots", () => {
+  it("projects OpenCode remote MCP config with enough timeout for screenshots", () => {
     expect(makeCadViewOpenCodeMcpServerConfig({ host: undefined, port: 3900 })).toMatchObject({
       name: CAD_VIEW_MCP_SERVER_NAME,
       config: {
-        type: "local",
-        command: expect.arrayContaining(["mcp", "cad-view"]),
-        environment: {
-          CADSENSE_CAD_VIEW_ORIGIN: "http://127.0.0.1:3900",
+        type: "remote",
+        url: "http://127.0.0.1:3900/api/mcp/cad",
+        headers: {
+          [CAD_VIEW_MCP_TOKEN_HEADER]: expect.any(String),
         },
         enabled: true,
         timeout: CAD_VIEW_MCP_TIMEOUT_MS,
       },
+    });
+  });
+
+  it("projects Claude HTTP MCP config", () => {
+    expect(makeCadViewClaudeMcpServers({ host: undefined, port: 3900 }, "thread-1")).toMatchObject({
+      [CAD_VIEW_MCP_SERVER_NAME]: {
+        type: "http",
+        url: "http://127.0.0.1:3900/api/mcp/cad",
+        headers: { [CAD_VIEW_MCP_TOKEN_HEADER]: expect.any(String) },
+      },
+    });
+  });
+
+  it("signs stateless request context and rejects tampering", () => {
+    const capability = makeCadViewMcpCapability("thread-1", "/tmp/cadsense");
+    expect(parseCadViewMcpCapability(capability)).toEqual({
+      threadId: "thread-1",
+      exportRoot: "/tmp/cadsense",
+    });
+    expect(parseCadViewMcpCapability(`${capability}x`)).toBeUndefined();
+    const server = makeCadViewMcpHttpServer({ host: undefined, port: 3900 }, "thread-1");
+    expect(server.url).toBe("http://127.0.0.1:3900/api/mcp/cad");
+  });
+
+  it("supports stateless MCP v2 discovery and complete results", async () => {
+    const handlers = {
+      setView: vi.fn(),
+      sendControl: vi.fn(),
+      getHierarchy: vi.fn().mockResolvedValue({ components: [] }),
+      captureScreenshot: vi.fn(),
+    };
+    await expect(
+      handleCadViewMcpRequest({ jsonrpc: "2.0", id: 1, method: "server/discover" }, handlers, {
+        protocolVersion: CAD_VIEW_MCP_PROTOCOL_VERSION,
+      }),
+    ).resolves.toMatchObject({
+      result: { resultType: "complete", supportedVersions: [CAD_VIEW_MCP_PROTOCOL_VERSION] },
+    });
+    await expect(
+      handleCadViewMcpRequest({ jsonrpc: "2.0", id: 2, method: "tools/list" }, handlers, {
+        protocolVersion: CAD_VIEW_MCP_PROTOCOL_VERSION,
+      }),
+    ).resolves.toMatchObject({
+      result: { resultType: "complete", ttlMs: 300_000, cacheScope: "private" },
     });
   });
 
@@ -131,6 +180,29 @@ describe("CadViewMcp", () => {
       id: 1,
       result: { content: [{ type: "text", text: "CAD view set to top." }] },
     });
+  });
+
+  it("uses signed request context instead of caller-supplied thread ids", async () => {
+    const setView = vi.fn().mockResolvedValue(undefined);
+    await handleCadViewMcpRequest(
+      {
+        jsonrpc: "2.0",
+        id: 1,
+        method: "tools/call",
+        params: {
+          name: CAD_VIEW_MCP_TOOL_NAME,
+          arguments: { threadId: "untrusted-thread", view: "top", fit: true },
+        },
+      },
+      {
+        setView,
+        sendControl: vi.fn(),
+        getHierarchy: vi.fn().mockResolvedValue({ components: [] }),
+        captureScreenshot: vi.fn(),
+      },
+      { threadId: "signed-thread" },
+    );
+    expect(setView).toHaveBeenCalledWith({ threadId: "signed-thread", view: "top", fit: true });
   });
 
   it("handles free camera MCP tool calls", async () => {

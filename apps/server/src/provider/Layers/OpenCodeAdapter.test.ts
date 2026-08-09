@@ -21,7 +21,7 @@ import {
 } from "@cadsense/contracts";
 import { createModelSelection } from "@cadsense/shared/model";
 import { ServerConfig } from "../../config.ts";
-import { CAD_VIEW_EXPORT_ROOT_ENV, CAD_VIEW_MCP_SERVER_NAME } from "../../cad/CadViewMcp.ts";
+import { CAD_VIEW_MCP_SERVER_NAME } from "../../cad/CadViewMcp.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
 import {
@@ -304,22 +304,19 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
             readonly name: string;
             readonly config: {
               readonly type: string;
-              readonly command: string[];
-              readonly environment?: Record<string, string>;
+              readonly url: string;
+              readonly headers?: Record<string, string>;
             };
           }
         | undefined;
 
-      assert.equal(cadMcp?.config.type, "local");
-      assert.deepEqual(cadMcp?.config.command.slice(-2), ["mcp", "cad-view"]);
-      assert.equal(
-        cadMcp?.config.environment?.[CAD_VIEW_EXPORT_ROOT_ENV],
-        "C:/tmp/cadsense-opencode-cad-screenshots",
-      );
-      assert.equal(
-        cadMcp?.config.environment?.CADSENSE_CAD_VIEW_THREAD_ID,
-        "thread-visible-cad-panel",
-      );
+      assert.equal(cadMcp?.config.type, "remote");
+      assert.equal(cadMcp?.config.url, "http://127.0.0.1:0/api/mcp/cad");
+      const capability = cadMcp?.config.headers?.["x-cadsense-cad-view-token"];
+      assert.ok(capability);
+      const payload = Buffer.from(capability.split(".")[0] ?? "", "base64url").toString("utf8");
+      assert.match(payload, /thread-visible-cad-panel/);
+      assert.match(payload, /C:\/tmp\/cadsense-opencode-cad-screenshots/);
     }).pipe(Effect.provide(adapterLayer));
   });
 
