@@ -21,11 +21,11 @@ export function registerCadProviderThreadAlias(input: {
   readonly ownerThreadId: ThreadId;
   readonly resumeCursor: unknown;
 }): void {
+  unregisterCadProviderThreadAliases(input.ownerThreadId);
   const providerThreadId = readProviderResumeThreadId(input.resumeCursor);
   if (!providerThreadId) {
     return;
   }
-  unregisterCadProviderThreadAliases(input.ownerThreadId);
   const previous = aliasByProviderThreadId.get(providerThreadId);
   if (previous) {
     const previousOwnerIds = providerThreadIdsByOwnerThreadId.get(previous.ownerThreadId);

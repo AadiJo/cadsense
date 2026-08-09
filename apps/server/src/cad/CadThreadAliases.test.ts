@@ -74,4 +74,23 @@ describe("CadThreadAliases", () => {
 
     expect(resolveCadRequestThreadId(ThreadId.make("provider-thread"))).toBe("provider-thread");
   });
+
+  it("removes an owner's stale alias when its replacement session has no provider thread id", () => {
+    const ownerThreadId = ThreadId.make("owner-thread");
+    registerCadProviderThreadAlias({
+      cadThreadId: ThreadId.make("cadsense-thread"),
+      ownerThreadId,
+      resumeCursor: { threadId: "stale-provider-thread" },
+    });
+
+    registerCadProviderThreadAlias({
+      cadThreadId: ThreadId.make("cadsense-thread"),
+      ownerThreadId,
+      resumeCursor: { resume: "replacement-session" },
+    });
+
+    expect(resolveCadRequestThreadId(ThreadId.make("stale-provider-thread"))).toBe(
+      "stale-provider-thread",
+    );
+  });
 });
