@@ -1060,8 +1060,9 @@ const make = Effect.gen(function* () {
       }
     });
 
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, processEvent),
+      Stream.runForEach(Stream.fromSubscription(domainEvents), processEvent),
     );
   });
 

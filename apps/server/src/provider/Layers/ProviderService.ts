@@ -1053,6 +1053,9 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     get streamEvents(): ProviderServiceShape["streamEvents"] {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
+    get subscribeEvents(): ProviderServiceShape["subscribeEvents"] {
+      return PubSub.subscribe(runtimeEventPubSub);
+    },
   } satisfies ProviderServiceShape;
 });
 

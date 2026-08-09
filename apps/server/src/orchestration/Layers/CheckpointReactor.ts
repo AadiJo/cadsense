@@ -807,8 +807,10 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processInputSafely);
 
   const start: CheckpointReactorShape["start"] = Effect.fn("start")(function* () {
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
+    const runtimeEvents = yield* providerService.subscribeEvents;
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) => {
+      Stream.runForEach(Stream.fromSubscription(domainEvents), (event) => {
         if (
           event.type !== "thread.turn-start-requested" &&
           event.type !== "thread.message-sent" &&
@@ -822,7 +824,7 @@ const make = Effect.gen(function* () {
     );
 
     yield* Effect.forkScoped(
-      Stream.runForEach(providerService.streamEvents, (event) => {
+      Stream.runForEach(Stream.fromSubscription(runtimeEvents), (event) => {
         if (event.type !== "turn.started" && event.type !== "turn.completed") {
           return Effect.void;
         }

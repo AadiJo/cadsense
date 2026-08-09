@@ -13,6 +13,8 @@
 import type { OrchestrationCommand, OrchestrationEvent } from "@cadsense/contracts";
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
+import type * as PubSub from "effect/PubSub";
+import type * as Scope from "effect/Scope";
 import type * as Stream from "effect/Stream";
 
 import type { OrchestrationDispatchError } from "../Errors.ts";
@@ -51,6 +53,19 @@ export interface OrchestrationEngineShape {
    * This is a hot runtime stream (new events only), not a historical replay.
    */
   readonly streamDomainEvents: Stream.Stream<OrchestrationEvent>;
+
+  /**
+   * Acquire a live domain-event subscription before forking a consumer.
+   *
+   * Unlike `streamDomainEvents`, this registers with the underlying PubSub
+   * before the effect completes, so an immediately dispatched command cannot
+   * publish into a reactor startup gap.
+   */
+  readonly subscribeDomainEvents: Effect.Effect<
+    PubSub.Subscription<OrchestrationEvent>,
+    never,
+    Scope.Scope
+  >;
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   CommandId,
   ThreadId,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   type OrchestrationReadModel,
   type OrchestrationShellSnapshot,
   type OrchestrationThread,
@@ -11,6 +12,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
 import { describe, expect, it } from "vitest";
 
@@ -838,6 +840,10 @@ describe("CadReviewService", () => {
               return { sequence: dispatchedCommands.length };
             }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
         }),
       ),
       Layer.provide(
@@ -895,6 +901,10 @@ describe("CadReviewService", () => {
               return { sequence: dispatchedCommands.length };
             }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
         }),
       ),
       Layer.provide(
@@ -956,6 +966,10 @@ describe("CadReviewService", () => {
               return { sequence: dispatchedCommands.length };
             }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
         }),
       ),
       Layer.provide(
@@ -997,6 +1011,10 @@ describe("CadReviewService", () => {
               return { sequence: dispatchedCommands.length };
             }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
         }),
       ),
       Layer.provide(
@@ -1038,6 +1056,10 @@ describe("CadReviewService", () => {
               return { sequence: dispatchedCommands.length };
             }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
         }),
       ),
       Layer.provide(
@@ -1080,6 +1102,10 @@ describe("CadReviewService", () => {
               return { sequence: dispatchedCommands.length };
             }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
         }),
       ),
       Layer.provide(
@@ -1140,6 +1166,10 @@ describe("CadReviewService", () => {
               return { sequence: dispatchedCommands.length };
             }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
         }),
       ),
       Layer.provide(
@@ -1194,6 +1224,10 @@ describe("CadReviewService", () => {
               return { sequence: dispatchedCommands.length };
             }),
           streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.flatMap(
+            PubSub.unbounded<OrchestrationEvent>(),
+            PubSub.subscribe,
+          ),
         }),
       ),
       Layer.provide(

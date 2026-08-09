@@ -123,6 +123,9 @@ function createProviderServiceHarness() {
     get streamEvents() {
       return Stream.fromPubSub(runtimeEventPubSub);
     },
+    get subscribeEvents() {
+      return PubSub.subscribe(runtimeEventPubSub);
+    },
   };
 
   const setSession = (session: ProviderSession): void => {

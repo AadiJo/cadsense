@@ -326,6 +326,9 @@ const makeOrchestrationEngine = Effect.gen(function* () {
     get streamDomainEvents(): OrchestrationEngineShape["streamDomainEvents"] {
       return Stream.fromPubSub(eventPubSub);
     },
+    get subscribeDomainEvents(): OrchestrationEngineShape["subscribeDomainEvents"] {
+      return PubSub.subscribe(eventPubSub);
+    },
   } satisfies OrchestrationEngineShape;
 });
 

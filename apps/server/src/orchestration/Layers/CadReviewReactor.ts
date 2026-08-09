@@ -107,6 +107,7 @@ const make = Effect.gen(function* () {
     });
 
   const start: CadReviewReactorShape["start"] = Effect.fn("start")(function* () {
+    const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     const recoverInterruptedReviews = cadReviewService.recoverInterruptedReviews().pipe(
       Effect.catchCause((cause) =>
         Effect.logWarning("cad review reactor failed to recover interrupted reviews", {
@@ -120,7 +121,7 @@ const make = Effect.gen(function* () {
       recoverInterruptedReviews.pipe(Effect.repeat(Schedule.spaced(RECOVERY_SWEEP_INTERVAL))),
     );
     yield* Effect.forkScoped(
-      Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
+      Stream.runForEach(Stream.fromSubscription(domainEvents), (event) =>
         event.type === "thread.review-requested"
           ? startReview(event)
           : event.type === "thread.review-stop-requested"
