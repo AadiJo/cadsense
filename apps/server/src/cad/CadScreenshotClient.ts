@@ -22,24 +22,31 @@ export const captureCadScreenshot = Effect.fn("captureCadScreenshot")(function* 
   readonly fit: boolean;
 }): Effect.fn.Return<CadScreenshotCaptureHttpResult, CadScreenshotClientError> {
   const capture = yield* startCadScreenshotCaptureEffect(input);
-  yield* publishCadScreenshotRequest(capture.browserRequest);
-  return yield* Effect.race(
-    capture.awaitResult,
-    Effect.sleep(CAPTURE_TIMEOUT).pipe(
-      Effect.tap(() =>
-        Effect.sync(() =>
-          rejectCadScreenshotPending(capture.requestId, "CAD screenshot capture timed out."),
+  return yield* Effect.gen(function* () {
+    yield* publishCadScreenshotRequest(capture.browserRequest);
+    return yield* Effect.race(
+      capture.awaitResult,
+      Effect.sleep(CAPTURE_TIMEOUT).pipe(
+        Effect.tap(() =>
+          Effect.sync(() =>
+            rejectCadScreenshotPending(capture.requestId, "CAD screenshot capture timed out."),
+          ),
+        ),
+        Effect.flatMap(() =>
+          Effect.fail(
+            new CadScreenshotClientError({
+              message: "CAD screenshot capture timed out.",
+            }),
+          ),
         ),
       ),
-      Effect.flatMap(() =>
-        Effect.fail(
-          new CadScreenshotClientError({
-            message: "CAD screenshot capture timed out.",
-          }),
-        ),
-      ),
+    );
+  }).pipe(
+    Effect.ensuring(
+      Effect.sync(() => {
+        rejectCadScreenshotPending(capture.requestId, "CAD screenshot capture interrupted.");
+      }),
     ),
-  ).pipe(
     Effect.mapError(
       (error) =>
         new CadScreenshotClientError({

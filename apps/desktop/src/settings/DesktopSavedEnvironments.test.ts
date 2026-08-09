@@ -1,21 +1,27 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { describe, expect } from "vitest";
+import { EnvironmentId, type PersistedSavedEnvironmentRecord } from "@cadsense/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import { describe, expect } from "vitest";
 
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import * as DesktopSavedEnvironments from "./DesktopSavedEnvironments.ts";
 
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
 const safeStorageLayer = Layer.succeed(
   ElectronSafeStorage.ElectronSafeStorage,
   ElectronSafeStorage.ElectronSafeStorage.of({
-    isEncryptionAvailable: Effect.succeed(false),
-    encryptString: () => Effect.die("not used"),
-    decryptString: () => Effect.die("not used"),
+    isEncryptionAvailable: Effect.succeed(true),
+    encryptString: (value) =>
+      Effect.yieldNow.pipe(Effect.andThen(Effect.yieldNow), Effect.as(encoder.encode(value))),
+    decryptString: (value) => Effect.succeed(decoder.decode(value)),
   }),
 );
 
@@ -58,6 +64,15 @@ const withSavedEnvironments = <A, E, R>(
     return yield* effect.pipe(Effect.provide(makeLayer(baseDir)));
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
+const makeRecord = (id: string): PersistedSavedEnvironmentRecord => ({
+  environmentId: EnvironmentId.make(id),
+  label: id,
+  httpBaseUrl: `https://${id}.example.com`,
+  wsBaseUrl: `wss://${id}.example.com`,
+  createdAt: "2026-08-09T00:00:00.000Z",
+  lastConnectedAt: null,
+});
+
 describe("DesktopSavedEnvironments", () => {
   it.effect("uses an empty registry only when the file does not exist", () =>
     withSavedEnvironments(
@@ -87,9 +102,41 @@ describe("DesktopSavedEnvironments", () => {
 
         const writeError = yield* Effect.flip(savedEnvironments.setRegistry([]));
         expect(writeError._tag).toBe("DesktopSavedEnvironmentsWriteError");
+
+        const secretWriteError = yield* Effect.flip(
+          savedEnvironments.setSecret({ environmentId: "alpha", secret: "replacement" }),
+        );
+        expect(secretWriteError._tag).toBe("DesktopSavedEnvironmentsWriteError");
+
+        const secretRemovalError = yield* Effect.flip(savedEnvironments.removeSecret("alpha"));
+        expect(secretRemovalError._tag).toBe("DesktopSavedEnvironmentsWriteError");
         expect(yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath)).toBe(
           corruptDocument,
         );
+
+        yield* fileSystem.remove(environment.savedEnvironmentRegistryPath);
+        yield* savedEnvironments.setRegistry([makeRecord("recovered")]);
+        expect(yield* savedEnvironments.getRegistry).toEqual([makeRecord("recovered")]);
+      }),
+    ),
+  );
+
+  it.effect("serializes concurrent secret updates", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        yield* savedEnvironments.setRegistry([makeRecord("alpha"), makeRecord("beta")]);
+
+        yield* Effect.all(
+          [
+            savedEnvironments.setSecret({ environmentId: "alpha", secret: "secret-alpha" }),
+            savedEnvironments.setSecret({ environmentId: "beta", secret: "secret-beta" }),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        expect(Option.getOrNull(yield* savedEnvironments.getSecret("alpha"))).toBe("secret-alpha");
+        expect(Option.getOrNull(yield* savedEnvironments.getSecret("beta"))).toBe("secret-beta");
       }),
     ),
   );
