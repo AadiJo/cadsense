@@ -1,16 +1,27 @@
 import { randomUUID } from "node:crypto";
 
 import type {
+  CadRequestClaim,
+  CadRequestClaimInput,
+  CadRequestClaimResult,
   CadScreenshotBrowserRequest,
   CadScreenshotCaptureHttpResult,
   CadView,
   ThreadId,
 } from "@cadsense/contracts";
 import * as Deferred from "effect/Deferred";
+import * as DateTime from "effect/DateTime";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
+
+import {
+  claimCadRequestLease,
+  ownsCadRequestLease,
+  type CadRequestLease,
+} from "./CadRequestLease.ts";
 
 const CAPTURE_TIMEOUT = Duration.seconds(120);
 export const MAX_SCREENSHOT_BYTES = 25 * 1024 * 1024;
@@ -30,6 +41,7 @@ interface CadScreenshotPending {
   readonly exportRoot: string;
   readonly suggestedBaseName: string | undefined;
   readonly browserRequest: CadScreenshotBrowserRequest;
+  lease: CadRequestLease | undefined;
 }
 
 const pendingByRequestId = new Map<string, CadScreenshotPending>();
@@ -37,6 +49,9 @@ const pendingByRequestId = new Map<string, CadScreenshotPending>();
 export const cadScreenshotRequestStream = Stream.unwrap(
   Effect.gen(function* () {
     const subscription = yield* PubSub.subscribe(cadScreenshotRequestPubSub);
+    // Replaying claimed work lets a reconnecting broker observe the current retryAt and
+    // contend again when that lease expires. Omitting it here can strand a request when the
+    // original responder crashes and the replacement connects before the lease deadline.
     const pendingRequests = [...pendingByRequestId.values()].map((entry) => entry.browserRequest);
     return Stream.concat(
       Stream.fromIterable(pendingRequests),
@@ -63,9 +78,11 @@ export const startCadScreenshotCaptureEffect = (input: {
   Effect.gen(function* () {
     const requestId = randomUUID();
     const deferred = yield* Deferred.make<CadScreenshotCaptureHttpResult, Error>();
+    const createdAt = DateTime.formatIso(yield* DateTime.now);
     const browserRequest: CadScreenshotBrowserRequest = {
       requestId,
       threadId: input.threadId,
+      createdAt,
       view: input.view,
       fit: input.fit,
       suggestedBaseName: input.suggestedBaseName,
@@ -76,6 +93,7 @@ export const startCadScreenshotCaptureEffect = (input: {
       exportRoot: input.exportRoot,
       suggestedBaseName: input.suggestedBaseName,
       browserRequest,
+      lease: undefined,
     });
     return {
       requestId,
@@ -86,14 +104,42 @@ export const startCadScreenshotCaptureEffect = (input: {
 
 export function completeCadScreenshotPending(
   requestId: string,
+  claim: CadRequestClaim,
   result: CadScreenshotCaptureHttpResult,
+  nowMs = Effect.runSync(Clock.currentTimeMillis),
 ): boolean {
   const entry = pendingByRequestId.get(requestId);
-  if (!entry) {
+  if (!entry || !ownsCadRequestLease(entry, claim, nowMs)) {
     return false;
   }
   pendingByRequestId.delete(requestId);
   Effect.runFork(Deferred.succeed(entry.deferred, result));
+  return true;
+}
+
+export function claimCadScreenshotPending(
+  input: CadRequestClaimInput,
+  nowMs = Effect.runSync(Clock.currentTimeMillis),
+): CadRequestClaimResult {
+  const entry = pendingByRequestId.get(input.requestId);
+  if (!entry) {
+    return { status: "unavailable", reason: "unknown-or-finalized" };
+  }
+  return claimCadRequestLease(entry, input.responderId, nowMs);
+}
+
+export function failCadScreenshotPending(
+  requestId: string,
+  claim: CadRequestClaim,
+  message: string,
+  nowMs = Effect.runSync(Clock.currentTimeMillis),
+): boolean {
+  const entry = pendingByRequestId.get(requestId);
+  if (!entry || !ownsCadRequestLease(entry, claim, nowMs)) {
+    return false;
+  }
+  pendingByRequestId.delete(requestId);
+  Effect.runFork(Deferred.fail(entry.deferred, new Error(message)));
   return true;
 }
 
@@ -130,6 +176,28 @@ export function getCadScreenshotPendingThreadId(requestId: string): string | und
 
 export function getCadScreenshotPendingSuggestedBaseName(requestId: string): string | undefined {
   return pendingByRequestId.get(requestId)?.suggestedBaseName;
+}
+
+export function getCadScreenshotPendingForClaim(
+  requestId: string,
+  claim: CadRequestClaim,
+  nowMs = Effect.runSync(Clock.currentTimeMillis),
+):
+  | {
+      readonly exportRoot: string;
+      readonly threadId: string;
+      readonly suggestedBaseName: string | undefined;
+    }
+  | undefined {
+  const entry = pendingByRequestId.get(requestId);
+  if (!entry || !ownsCadRequestLease(entry, claim, nowMs)) {
+    return undefined;
+  }
+  return {
+    exportRoot: entry.exportRoot,
+    threadId: entry.threadId,
+    suggestedBaseName: entry.suggestedBaseName,
+  };
 }
 
 export function sanitizeCadScreenshotBaseName(raw: string | undefined): string {

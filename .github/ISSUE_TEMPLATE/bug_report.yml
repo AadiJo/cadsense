@@ -104,7 +104,7 @@ body:
     id: attachments
     attributes:
       label: Screenshots, recordings, or supporting files
-      description: Upload screenshots, short recordings, repro archives, or log files. Redact secrets before uploading.
+      description: Only attach files that are safe to make public. Redact secrets and personal information; GitHub enforces file-type and size limits.
     validations:
       required: false
       accept: ".png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.mov,.webm,.log,.txt,.json,.zip"

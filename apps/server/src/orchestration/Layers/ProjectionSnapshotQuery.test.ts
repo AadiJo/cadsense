@@ -286,6 +286,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
+          purpose: "general",
+          parentThreadId: null,
+          reviewRunId: null,
           title: "Thread 1",
           externalContext: null,
           modelSelection: {
@@ -399,6 +402,9 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         {
           id: ThreadId.make("thread-1"),
           projectId: asProjectId("project-1"),
+          purpose: "general",
+          parentThreadId: null,
+          reviewRunId: null,
           title: "Thread 1",
           externalContext: null,
           modelSelection: {

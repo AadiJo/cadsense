@@ -51,6 +51,8 @@ import {
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
   CadScreenshotBrowserRequest,
+  CadRequestClaimInput,
+  CadRequestClaimResult,
   CadHierarchyBrowserRequest,
   CadHierarchyUploadInput,
   CadHierarchyResult,
@@ -183,7 +185,9 @@ export const WS_METHODS = {
   mechbaseSetupConnection: "mechbase.setupConnection",
   mechbaseRemoveConnection: "mechbase.removeConnection",
   cadScreenshotUpload: "cad.screenshotUpload",
+  cadScreenshotClaim: "cad.screenshotClaim",
   cadHierarchyUpload: "cad.hierarchyUpload",
+  cadHierarchyClaim: "cad.hierarchyClaim",
 
   // Streaming subscriptions
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -368,10 +372,20 @@ export const WsCadScreenshotUploadRpc = Rpc.make(WS_METHODS.cadScreenshotUpload,
   error: OnshapeRpcError,
 });
 
+export const WsCadScreenshotClaimRpc = Rpc.make(WS_METHODS.cadScreenshotClaim, {
+  payload: CadRequestClaimInput,
+  success: CadRequestClaimResult,
+});
+
 export const WsCadHierarchyUploadRpc = Rpc.make(WS_METHODS.cadHierarchyUpload, {
   payload: CadHierarchyUploadInput,
   success: CadHierarchyResult,
   error: OnshapeRpcError,
+});
+
+export const WsCadHierarchyClaimRpc = Rpc.make(WS_METHODS.cadHierarchyClaim, {
+  payload: CadRequestClaimInput,
+  success: CadRequestClaimResult,
 });
 
 export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
@@ -605,7 +619,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsMechbaseSetupConnectionRpc,
   WsMechbaseRemoveConnectionRpc,
   WsCadScreenshotUploadRpc,
+  WsCadScreenshotClaimRpc,
   WsCadHierarchyUploadRpc,
+  WsCadHierarchyClaimRpc,
   WsProjectsEnsureProjectlessChatRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsWriteFileRpc,

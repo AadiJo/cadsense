@@ -94,19 +94,25 @@ function parseNumstatEntries(
   stdout: string,
 ): Array<{ path: string; insertions: number; deletions: number }> {
   const entries: Array<{ path: string; insertions: number; deletions: number }> = [];
-  for (const line of stdout.split(/\r?\n/g)) {
-    if (line.trim().length === 0) continue;
-    const [addedRaw, deletedRaw, ...pathParts] = line.split("\t");
-    const rawPath =
-      pathParts.length > 1 ? (pathParts.at(-1) ?? "").trim() : pathParts.join("\t").trim();
+  const records = stdout.split("\0");
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index] ?? "";
+    if (record.length === 0) continue;
+    const firstTab = record.indexOf("\t");
+    const secondTab = firstTab < 0 ? -1 : record.indexOf("\t", firstTab + 1);
+    if (firstTab < 0 || secondTab < 0) continue;
+    const addedRaw = record.slice(0, firstTab);
+    const deletedRaw = record.slice(firstTab + 1, secondTab);
+    let rawPath = record.slice(secondTab + 1);
+    if (rawPath.length === 0) {
+      index += 2;
+      rawPath = records[index] ?? "";
+    }
     if (rawPath.length === 0) continue;
     const added = Number.parseInt(addedRaw ?? "0", 10);
     const deleted = Number.parseInt(deletedRaw ?? "0", 10);
-    const renameArrowIndex = rawPath.indexOf(" => ");
-    const normalizedPath =
-      renameArrowIndex >= 0 ? rawPath.slice(renameArrowIndex + " => ".length).trim() : rawPath;
     entries.push({
-      path: normalizedPath.length > 0 ? normalizedPath : rawPath,
+      path: rawPath,
       insertions: Number.isFinite(added) ? added : 0,
       deletions: Number.isFinite(deleted) ? deleted : 0,
     });
@@ -114,26 +120,27 @@ function parseNumstatEntries(
   return entries;
 }
 
+function pathAfterFields(line: string, fieldCount: number): string | null {
+  let offset = 0;
+  for (let field = 0; field < fieldCount; field += 1) {
+    offset = line.indexOf(" ", offset);
+    if (offset < 0) return null;
+    offset += 1;
+  }
+  const filePath = line.slice(offset);
+  return filePath.length > 0 ? filePath : null;
+}
+
 function parsePorcelainPath(line: string): string | null {
   if (line.startsWith("? ") || line.startsWith("! ")) {
-    const simple = line.slice(2).trim();
+    const simple = line.slice(2);
     return simple.length > 0 ? simple : null;
   }
 
-  if (!(line.startsWith("1 ") || line.startsWith("2 ") || line.startsWith("u "))) {
-    return null;
-  }
-
-  const tabIndex = line.indexOf("\t");
-  if (tabIndex >= 0) {
-    const fromTab = line.slice(tabIndex + 1);
-    const [filePath] = fromTab.split("\t");
-    return filePath?.trim().length ? filePath.trim() : null;
-  }
-
-  const parts = line.trim().split(/\s+/g);
-  const filePath = parts.at(-1) ?? "";
-  return filePath.length > 0 ? filePath : null;
+  if (line.startsWith("1 ")) return pathAfterFields(line, 8);
+  if (line.startsWith("2 ")) return pathAfterFields(line, 9);
+  if (line.startsWith("u ")) return pathAfterFields(line, 10);
+  return null;
 }
 
 function parseBranchLine(line: string): { name: string; current: boolean } | null {
@@ -1164,7 +1171,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const statusResult = yield* executeGit(
       "GitVcsDriver.statusDetails.status",
       cwd,
-      ["status", "--porcelain=2", "--branch"],
+      ["status", "--porcelain=2", "--branch", "-z"],
       {
         allowNonZeroExit: true,
       },
@@ -1179,7 +1186,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       return yield* createGitCommandError(
         "GitVcsDriver.statusDetails.status",
         cwd,
-        ["status", "--porcelain=2", "--branch"],
+        ["status", "--porcelain=2", "--branch", "-z"],
         stderr || "git status failed",
       );
     }
@@ -1187,11 +1194,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const [unstagedNumstatStdout, stagedNumstatStdout, defaultRefResult, hasPrimaryRemote] =
       yield* Effect.all(
         [
-          runGitStdout("GitVcsDriver.statusDetails.unstagedNumstat", cwd, ["diff", "--numstat"]),
+          runGitStdout("GitVcsDriver.statusDetails.unstagedNumstat", cwd, [
+            "diff",
+            "--numstat",
+            "-z",
+          ]),
           runGitStdout("GitVcsDriver.statusDetails.stagedNumstat", cwd, [
             "diff",
             "--cached",
             "--numstat",
+            "-z",
           ]),
           executeGit(
             "GitVcsDriver.statusDetails.defaultRef",
@@ -1219,7 +1231,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     let hasWorkingTreeChanges = false;
     const changedFilesWithoutNumstat = new Set<string>();
 
-    for (const line of statusStdout.split(/\r?\n/g)) {
+    const statusRecords = statusStdout.split("\0");
+    for (let index = 0; index < statusRecords.length; index += 1) {
+      const line = statusRecords[index] ?? "";
       if (line.startsWith("# branch.head ")) {
         const value = line.slice("# branch.head ".length).trim();
         refName = value.startsWith("(") ? null : value;
@@ -1241,6 +1255,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         hasWorkingTreeChanges = true;
         const pathValue = parsePorcelainPath(line);
         if (pathValue) changedFilesWithoutNumstat.add(pathValue);
+        if (line.startsWith("2 ")) index += 1;
       }
     }
 

@@ -2,6 +2,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
@@ -53,6 +54,51 @@ it("accepts reasoning efforts added after the client was generated", () => {
 });
 
 it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
+  it.effect("keeps callbacks responsive when mirrored streams are not consumed", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const notifications = yield* Ref.make<string[]>([]);
+      const requests = yield* Ref.make<number[]>([]);
+      const secondNotificationHandled = yield* Deferred.make<void>();
+      const secondRequestHandled = yield* Deferred.make<void>();
+      yield* CodexProtocol.makeCodexAppServerPatchedProtocol({
+        stdio,
+        incomingQueueCapacity: 1,
+        onNotification: (notification) =>
+          Ref.update(notifications, (current) => [...current, notification.method]).pipe(
+            Effect.andThen(
+              notification.method === "notification/two"
+                ? Deferred.succeed(secondNotificationHandled, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+          ),
+        onRequest: (request) =>
+          Ref.update(requests, (current) => [...current, Number(request.id)]).pipe(
+            Effect.andThen(
+              request.id === 2
+                ? Deferred.succeed(secondRequestHandled, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+            Effect.as({ ok: true }),
+          ),
+      });
+
+      for (const message of [
+        { method: "notification/one" },
+        { method: "notification/two" },
+        { id: 1, method: "request/one" },
+        { id: 2, method: "request/two" },
+      ]) {
+        yield* Queue.offer(input, encodeJsonl(message));
+      }
+
+      yield* Deferred.await(secondNotificationHandled);
+      yield* Deferred.await(secondRequestHandled);
+      assert.deepEqual(yield* Ref.get(notifications), ["notification/one", "notification/two"]);
+      assert.deepEqual(yield* Ref.get(requests), [1, 2]);
+    }),
+  );
+
   it.effect(
     "encodes requests without a jsonrpc field and routes inbound requests and notifications",
     () =>

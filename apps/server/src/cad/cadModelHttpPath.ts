@@ -35,5 +35,9 @@ export function parseCadModelLeafFromPathname(
   if (!pathname.startsWith(prefix)) {
     return null;
   }
-  return decodeURIComponent(pathname.slice(prefix.length));
+  try {
+    return decodeURIComponent(pathname.slice(prefix.length));
+  } catch {
+    return null;
+  }
 }
