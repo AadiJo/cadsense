@@ -22,9 +22,21 @@ it("resolves Windows npm command shims without passing arguments through cmd.exe
     const script = NodePath.join(prefix, "node_modules", "@openai", "codex", "bin", "codex.js");
     mkdirSync(NodePath.dirname(script), { recursive: true });
     writeFileSync(script, "");
+    writeFileSync(NodePath.join(prefix, "node.exe"), "");
     writeFileSync(
       NodePath.join(prefix, "codex.cmd"),
-      '@echo off\n"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\n',
+      [
+        "@ECHO off",
+        "GOTO start",
+        ":find_dp0",
+        "SET dp0=%~dp0",
+        "EXIT /b",
+        ":start",
+        "SETLOCAL",
+        "CALL :find_dp0",
+        'SET "_prog=%dp0%\\node.exe"',
+        'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%" "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*',
+      ].join("\n"),
     );
     const args = ["app-server", "--config", "value & whoami"];
 
@@ -33,8 +45,74 @@ it("resolves Windows npm command shims without passing arguments through cmd.exe
       "win32",
     );
 
-    assert.equal(resolved.command, process.execPath);
+    assert.equal(resolved.command, NodePath.join(prefix, "node.exe"));
     assert.deepEqual(resolved.args, [script, ...args]);
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+it("resolves pnpm Windows command shims without a shell", () => {
+  if (process.platform !== "win32") return;
+  const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-pnpm-shim-"));
+  try {
+    const relativeScript = NodePath.join(
+      "global",
+      "5",
+      ".pnpm",
+      "@openai+codex",
+      "node_modules",
+      "@openai",
+      "codex",
+      "bin",
+      "codex.js",
+    );
+    const script = NodePath.join(prefix, relativeScript);
+    mkdirSync(NodePath.dirname(script), { recursive: true });
+    writeFileSync(script, "");
+    writeFileSync(NodePath.join(prefix, "node.exe"), "");
+    writeFileSync(
+      NodePath.join(prefix, "codex.cmd"),
+      [
+        "@SETLOCAL",
+        '@IF EXIST "%~dp0\\node.exe" (',
+        `  "%~dp0\\node.exe" "%~dp0\\${relativeScript}" %*`,
+        ") ELSE (",
+        "  @SET PATHEXT=%PATHEXT:;.JS;=;%",
+        `  node "%~dp0\\${relativeScript}" %*`,
+        ")",
+      ].join("\n"),
+    );
+    const args = ["app-server", "--config", "value & whoami"];
+
+    const resolved = CodexClient.resolveCommandForSpawn(
+      { command: "codex", args, cwd: prefix, env: { PATH: "", PATHEXT: ".CMD" } },
+      "win32",
+    );
+
+    assert.equal(resolved.command, NodePath.join(prefix, "node.exe"));
+    assert.deepEqual(resolved.args, [script, ...args]);
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+it("does not execute a script mentioned only in unrecognized shim content", () => {
+  if (process.platform !== "win32") return;
+  const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-untrusted-shim-"));
+  try {
+    const script = NodePath.join(prefix, "payload.js");
+    writeFileSync(script, "");
+    const shim = NodePath.join(prefix, "codex.cmd");
+    writeFileSync(shim, `@echo off\nrem "%dp0%\\payload.js" %*\n`);
+
+    const resolved = CodexClient.resolveCommandForSpawn(
+      { command: "codex", cwd: prefix, env: { PATH: "", PATHEXT: ".CMD" } },
+      "win32",
+    );
+
+    assert.equal(resolved.command.toLowerCase(), shim.toLowerCase());
+    assert.deepEqual(resolved.args, []);
   } finally {
     rmSync(prefix, { recursive: true, force: true });
   }

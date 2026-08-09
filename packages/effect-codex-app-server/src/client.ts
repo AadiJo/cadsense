@@ -6,7 +6,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import * as NodePath from "node:path";
 
 import * as CodexRpc from "./_generated/meta.gen.ts";
@@ -310,22 +310,50 @@ function resolveWindowsCommandPath(
   cwd: string,
   env: Record<string, string | undefined>,
 ): string | null {
-  const hasPathSegment = command.includes("/") || command.includes("\\");
+  const hasPathSegment =
+    command.includes("/") || command.includes("\\") || /^[a-zA-Z]:/.test(command);
   const searchDirectories = hasPathSegment
     ? [NodePath.win32.resolve(cwd, NodePath.win32.dirname(command))]
-    : (readWindowsEnv(env, "PATH") ?? "").split(";").filter((entry) => entry.length > 0);
+    : [cwd, ...(readWindowsEnv(env, "PATH") ?? "").split(";")].filter(
+        (entry, index, entries) =>
+          entry.length > 0 &&
+          entries.findIndex((candidate) => candidate.toLowerCase() === entry.toLowerCase()) ===
+            index,
+      );
   const commandName = hasPathSegment ? NodePath.win32.basename(command) : command;
   const extensions = NodePath.win32.extname(commandName)
     ? [""]
-    : (readWindowsEnv(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";");
+    : (readWindowsEnv(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+        .split(";")
+        .map((extension) => extension.trim())
+        .filter((extension) => extension.length > 0);
 
   for (const directory of searchDirectories) {
     for (const extension of extensions) {
       const candidate = NodePath.win32.join(directory, `${commandName}${extension}`);
-      if (existsSync(candidate)) return candidate;
+      try {
+        if (statSync(candidate).isFile()) return candidate;
+      } catch {
+        // Keep searching when a PATH entry is missing or inaccessible.
+      }
     }
   }
   return null;
+}
+
+function resolveWindowsNodeShimScript(source: string): string | null {
+  const cmdShimScript = source.match(
+    /^\s*endLocal\s+&\s+goto\s+#_undefined_#\s+2>NUL\s+\|\|\s+title\s+%COMSPEC%\s+&\s+"%_prog%"\s+"%dp0%[\\/]([^"\r\n]+\.js)"\s+%\*\s*$/im,
+  )?.[1];
+  if (cmdShimScript) return cmdShimScript;
+
+  const pnpmAdjacentScript = source.match(
+    /^\s*"%~dp0[\\/]node\.exe"\s+"%~dp0[\\/]([^"\r\n]+\.js)"\s+%\*\s*$/im,
+  )?.[1];
+  const pnpmPathScript = source.match(
+    /^\s*node(?:\.exe)?\s+"%~dp0[\\/]([^"\r\n]+\.js)"\s+%\*\s*$/im,
+  )?.[1];
+  return pnpmAdjacentScript && pnpmAdjacentScript === pnpmPathScript ? pnpmAdjacentScript : null;
 }
 
 function resolveWindowsCommandShim(
@@ -343,13 +371,22 @@ function resolveWindowsCommandShim(
 
   try {
     const source = readFileSync(resolvedPath, "utf8");
-    const npmScript = source.match(/["']%dp0%[\\/]([^"'\r\n]+\.js)["']\s+%\*/i)?.[1];
-    if (npmScript) {
-      const scriptPath = NodePath.win32.resolve(NodePath.win32.dirname(resolvedPath), npmScript);
-      if (existsSync(scriptPath)) {
+    const nodeShimScript = resolveWindowsNodeShimScript(source);
+    if (nodeShimScript) {
+      const shimDirectory = NodePath.win32.dirname(resolvedPath);
+      const scriptPath = NodePath.win32.resolve(shimDirectory, nodeShimScript);
+      const relativeScriptPath = NodePath.win32.relative(shimDirectory, scriptPath);
+      if (
+        relativeScriptPath.length > 0 &&
+        !relativeScriptPath.startsWith(`..${NodePath.win32.sep}`) &&
+        !NodePath.win32.isAbsolute(relativeScriptPath) &&
+        existsSync(scriptPath)
+      ) {
         const adjacentNode = NodePath.win32.join(NodePath.win32.dirname(resolvedPath), "node.exe");
         return {
-          command: existsSync(adjacentNode) ? adjacentNode : process.execPath,
+          command: existsSync(adjacentNode)
+            ? adjacentNode
+            : (resolveWindowsCommandPath("node", cwd, env) ?? "node"),
           args: [scriptPath, ...args],
         };
       }
