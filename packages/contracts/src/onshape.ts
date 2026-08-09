@@ -319,11 +319,43 @@ export type CadHierarchyComponent = typeof CadHierarchyComponent.Type;
 export const CadHierarchyBrowserRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   threadId: ThreadId,
+  createdAt: IsoDateTime,
 });
 export type CadHierarchyBrowserRequest = typeof CadHierarchyBrowserRequest.Type;
 
+export const CadRequestResponderId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+export type CadRequestResponderId = typeof CadRequestResponderId.Type;
+
+export const CadRequestClaimInput = Schema.Struct({
+  requestId: TrimmedNonEmptyString,
+  responderId: CadRequestResponderId,
+});
+export type CadRequestClaimInput = typeof CadRequestClaimInput.Type;
+
+export const CadRequestClaimResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("claimed"),
+    leaseId: TrimmedNonEmptyString,
+    leaseExpiresAt: IsoDateTime,
+    attempt: PositiveInt,
+  }),
+  Schema.Struct({
+    status: Schema.Literal("unavailable"),
+    reason: Schema.Literals(["already-claimed", "unknown-or-finalized"]),
+    retryAt: Schema.optionalKey(IsoDateTime),
+  }),
+]);
+export type CadRequestClaimResult = typeof CadRequestClaimResult.Type;
+
+export const CadRequestClaim = Schema.Struct({
+  responderId: CadRequestResponderId,
+  leaseId: TrimmedNonEmptyString,
+});
+export type CadRequestClaim = typeof CadRequestClaim.Type;
+
 export const CadHierarchyUploadInput = Schema.Struct({
   requestId: TrimmedNonEmptyString,
+  ...CadRequestClaim.fields,
   components: Schema.Array(CadHierarchyComponent),
   status: Schema.optional(Schema.Literals(["loaded", "loading", "unavailable", "error"])),
   message: Schema.optional(TrimmedString),
@@ -409,6 +441,7 @@ export type CadViewCommand = typeof CadViewCommand.Type;
 export const CadScreenshotBrowserRequest = Schema.Struct({
   requestId: TrimmedNonEmptyString,
   threadId: ThreadId,
+  createdAt: IsoDateTime,
   view: Schema.optional(CadView),
   fit: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   suggestedBaseName: Schema.optional(TrimmedString),
@@ -432,16 +465,33 @@ export const CadScreenshotCaptureHttpResult = Schema.Struct({
 });
 export type CadScreenshotCaptureHttpResult = typeof CadScreenshotCaptureHttpResult.Type;
 
-export const CadScreenshotUploadInput = Schema.Struct({
-  requestId: TrimmedNonEmptyString,
-  pngBase64: TrimmedNonEmptyString,
-});
+export const CadScreenshotUploadInput = Schema.Union([
+  Schema.Struct({
+    requestId: TrimmedNonEmptyString,
+    ...CadRequestClaim.fields,
+    status: Schema.Literal("completed"),
+    pngBase64: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    requestId: TrimmedNonEmptyString,
+    ...CadRequestClaim.fields,
+    status: Schema.Literals(["failed", "cancelled"]),
+    message: TrimmedNonEmptyString.check(Schema.isMaxLength(2_000)),
+  }),
+]);
 export type CadScreenshotUploadInput = typeof CadScreenshotUploadInput.Type;
 
-export const CadScreenshotUploadResult = Schema.Struct({
-  absolutePath: TrimmedNonEmptyString,
-  relativePath: TrimmedNonEmptyString,
-});
+export const CadScreenshotUploadResult = Schema.Union([
+  Schema.Struct({
+    status: Schema.Literal("completed"),
+    absolutePath: TrimmedNonEmptyString,
+    relativePath: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    status: Schema.Literals(["failed", "cancelled"]),
+    message: TrimmedNonEmptyString,
+  }),
+]);
 export type CadScreenshotUploadResult = typeof CadScreenshotUploadResult.Type;
 
 export class OnshapeRpcError extends Schema.TaggedErrorClass<OnshapeRpcError>()("OnshapeRpcError", {

@@ -106,20 +106,21 @@ import { respondToAuthError } from "./auth/http.ts";
 import {
   cadHierarchyRequestStream,
   cadViewCommandStream,
+  claimCadHierarchyRequest,
   completeCadHierarchyRequest,
 } from "./cad/CadViewCommands.ts";
 import {
   cadScreenshotRequestStream,
+  claimCadScreenshotPending,
   completeCadScreenshotPending,
-  getCadScreenshotPendingExportRoot,
-  getCadScreenshotPendingSuggestedBaseName,
-  getCadScreenshotPendingThreadId,
+  failCadScreenshotPending,
+  getCadScreenshotPendingForClaim,
   makeCadScreenshotFilename,
   MAX_SCREENSHOT_BYTES,
-  rejectCadScreenshotPending,
 } from "./cad/CadScreenshotCapture.ts";
 import { listSyncedCadFiles } from "./onshape/listSyncedCadFiles.ts";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isProjectWriteFileError = Schema.is(ProjectWriteFileError);
 const isWorkspacePathOutsideRootError = Schema.is(WorkspacePathOutsideRootError);
 const isOnshapeRpcError = Schema.is(OnshapeRpcError);
 const isMechbaseRpcError = Schema.is(MechbaseRpcError);
@@ -1274,63 +1275,97 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                 ...(input.status ? { status: input.status } : {}),
                 ...(input.message ? { message: input.message } : {}),
               };
-              if (!completeCadHierarchyRequest(input.requestId, result)) {
+              if (
+                !completeCadHierarchyRequest(
+                  input.requestId,
+                  { responderId: input.responderId, leaseId: input.leaseId },
+                  result,
+                )
+              ) {
                 return yield* new OnshapeRpcError({
-                  message: "Unknown or expired CAD hierarchy request.",
+                  message: "Unknown, expired, or unclaimed CAD hierarchy request.",
                 });
               }
               return result;
             }),
             { "rpc.aggregate": "cad" },
           ),
+        [WS_METHODS.cadHierarchyClaim]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cadHierarchyClaim,
+            Effect.sync(() => claimCadHierarchyRequest(input)),
+            { "rpc.aggregate": "cad" },
+          ),
         [WS_METHODS.cadScreenshotUpload]: (input) =>
           observeRpcEffect(
             WS_METHODS.cadScreenshotUpload,
             Effect.gen(function* () {
-              const exportRoot = getCadScreenshotPendingExportRoot(input.requestId);
-              const threadId = getCadScreenshotPendingThreadId(input.requestId);
-              if (!exportRoot || !threadId) {
+              const claim = { responderId: input.responderId, leaseId: input.leaseId };
+              if (input.status !== "completed") {
+                if (!failCadScreenshotPending(input.requestId, claim, input.message)) {
+                  return yield* new OnshapeRpcError({
+                    message: "Unknown, expired, or unclaimed CAD screenshot request.",
+                  });
+                }
+                return { status: input.status, message: input.message } as const;
+              }
+
+              const pending = getCadScreenshotPendingForClaim(input.requestId, claim);
+              if (!pending) {
                 return yield* new OnshapeRpcError({
-                  message: "Unknown or expired CAD screenshot request.",
+                  message: "Unknown, expired, or unclaimed CAD screenshot request.",
                 });
               }
               const decoded = yield* Effect.sync(() => Buffer.from(input.pngBase64, "base64"));
               if (decoded.byteLength === 0) {
-                rejectCadScreenshotPending(input.requestId, "Screenshot payload was empty.");
+                failCadScreenshotPending(input.requestId, claim, "Screenshot payload was empty.");
                 return yield* new OnshapeRpcError({ message: "Screenshot payload was empty." });
               }
               if (decoded.byteLength > MAX_SCREENSHOT_BYTES) {
-                rejectCadScreenshotPending(input.requestId, "Screenshot too large.");
+                failCadScreenshotPending(input.requestId, claim, "Screenshot too large.");
                 return yield* new OnshapeRpcError({
                   message: "Screenshot exceeds maximum size.",
                 });
               }
               const pathService = yield* Path.Path;
               const fileSystem = yield* FileSystem.FileSystem;
-              const directory = pathService.join(exportRoot, threadId);
+              const directory = pathService.join(pending.exportRoot, pending.threadId);
               yield* fileSystem.makeDirectory(directory, { recursive: true });
               const now = yield* DateTime.now;
               const stamp = DateTime.formatIso(now).replace(/[:.]/g, "-");
-              const filename = makeCadScreenshotFilename(
-                stamp,
-                getCadScreenshotPendingSuggestedBaseName(input.requestId),
-              );
+              const filename = makeCadScreenshotFilename(stamp, pending.suggestedBaseName);
               const absolutePath = pathService.join(directory, filename);
               yield* fileSystem.writeFile(absolutePath, new Uint8Array(decoded));
-              const relativePath = `${threadId}/${filename}`.replaceAll("\\", "/");
-              const completed = completeCadScreenshotPending(input.requestId, {
-                requestId: input.requestId,
-                absolutePath,
-                relativePath,
-              });
+              const relativePath = `${pending.threadId}/${filename}`.replaceAll("\\", "/");
+              const completed = completeCadScreenshotPending(
+                input.requestId,
+                {
+                  responderId: input.responderId,
+                  leaseId: input.leaseId,
+                },
+                {
+                  requestId: input.requestId,
+                  absolutePath,
+                  relativePath,
+                },
+              );
               if (!completed) {
                 yield* fileSystem.remove(absolutePath).pipe(Effect.ignore);
                 return yield* new OnshapeRpcError({
                   message: "CAD screenshot request was already finalized.",
                 });
               }
-              return { absolutePath, relativePath };
+              return { status: "completed", absolutePath, relativePath } as const;
             }).pipe(
+              Effect.tapError((error) =>
+                Effect.sync(() =>
+                  failCadScreenshotPending(
+                    input.requestId,
+                    { responderId: input.responderId, leaseId: input.leaseId },
+                    error instanceof Error ? error.message : "Failed to save CAD screenshot.",
+                  ),
+                ),
+              ),
               Effect.mapError(
                 (e): OnshapeRpcError =>
                   isOnshapeRpcError(e)
@@ -1341,6 +1376,12 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                       }),
               ),
             ),
+            { "rpc.aggregate": "cad" },
+          ),
+        [WS_METHODS.cadScreenshotClaim]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.cadScreenshotClaim,
+            Effect.sync(() => claimCadScreenshotPending(input)),
             { "rpc.aggregate": "cad" },
           ),
         [WS_METHODS.projectsSearchEntries]: (input) =>
@@ -1424,15 +1465,37 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
         [WS_METHODS.projectsWriteFile]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsWriteFile,
-            workspaceFileSystem.writeFile(input).pipe(
+            Effect.gen(function* () {
+              const project = yield* projectionSnapshotQuery
+                .getActiveProjectByWorkspaceRoot(input.cwd)
+                .pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProjectWriteFileError({
+                        message: "Failed to validate the project workspace.",
+                        cause,
+                      }),
+                  ),
+                );
+              if (Option.isNone(project)) {
+                return yield* new ProjectWriteFileError({
+                  message: "Workspace file writes require an active project root.",
+                });
+              }
+
+              return yield* workspaceFileSystem.writeFile({
+                ...input,
+                cwd: project.value.workspaceRoot,
+              });
+            }).pipe(
               Effect.mapError((cause) => {
+                if (isProjectWriteFileError(cause)) {
+                  return cause;
+                }
                 const message = isWorkspacePathOutsideRootError(cause)
                   ? "Workspace file path must stay within the project root."
                   : "Failed to write workspace file";
-                return new ProjectWriteFileError({
-                  message,
-                  cause,
-                });
+                return new ProjectWriteFileError({ message, cause });
               }),
             ),
             { "rpc.aggregate": "workspace" },

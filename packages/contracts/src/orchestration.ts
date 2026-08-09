@@ -247,6 +247,9 @@ export type OrchestrationProposedPlan = typeof OrchestrationProposedPlan.Type;
 export const CadReviewId = TrimmedNonEmptyString;
 export type CadReviewId = typeof CadReviewId.Type;
 
+export const ThreadPurpose = Schema.Literals(["general", "cad-review"]);
+export type ThreadPurpose = typeof ThreadPurpose.Type;
+
 export const CadReviewPersona = Schema.Literals([
   "systems_integration",
   "program_readiness",
@@ -529,6 +532,9 @@ export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
+  purpose: Schema.optionalKey(ThreadPurpose),
+  parentThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
+  reviewRunId: Schema.optionalKey(Schema.NullOr(CadReviewId)),
   title: TrimmedNonEmptyString,
   externalContext: Schema.optional(Schema.NullOr(ExternalThreadContext)),
   modelSelection: ModelSelection,
@@ -578,6 +584,9 @@ export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
+  purpose: Schema.optionalKey(ThreadPurpose),
+  parentThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
+  reviewRunId: Schema.optionalKey(Schema.NullOr(CadReviewId)),
   title: TrimmedNonEmptyString,
   externalContext: Schema.optional(Schema.NullOr(ExternalThreadContext)),
   modelSelection: ModelSelection,
@@ -687,6 +696,9 @@ const ThreadCreateCommand = Schema.Struct({
   commandId: CommandId,
   threadId: ThreadId,
   projectId: ProjectId,
+  purpose: Schema.optional(ThreadPurpose),
+  parentThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  reviewRunId: Schema.optional(Schema.NullOr(CadReviewId)),
   title: TrimmedNonEmptyString,
   externalContext: Schema.optional(Schema.NullOr(ExternalThreadContext)),
   modelSelection: ModelSelection,
@@ -1071,6 +1083,9 @@ export const ProjectDeletedPayload = Schema.Struct({
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
+  purpose: Schema.optionalKey(ThreadPurpose),
+  parentThreadId: Schema.optionalKey(Schema.NullOr(ThreadId)),
+  reviewRunId: Schema.optionalKey(Schema.NullOr(CadReviewId)),
   title: TrimmedNonEmptyString,
   externalContext: Schema.optional(Schema.NullOr(ExternalThreadContext)),
   modelSelection: ModelSelection,

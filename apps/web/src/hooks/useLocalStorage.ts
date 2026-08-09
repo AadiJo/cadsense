@@ -58,6 +58,22 @@ function dispatchLocalStorageChange(key: string) {
   );
 }
 
+export function persistLocalStorageUpdate<T, E>(
+  key: string,
+  previousValue: T,
+  value: T | ((previous: T) => T),
+  schema: Schema.Codec<T, E>,
+): T {
+  const nextValue =
+    typeof value === "function" ? (value as (previous: T) => T)(previousValue) : value;
+  if (nextValue === null) {
+    removeLocalStorageItem(key);
+  } else {
+    setLocalStorageItem(key, nextValue, schema);
+  }
+  return nextValue;
+}
+
 export function useLocalStorage<T, E>(
   key: string,
   initialValue: T,
@@ -73,27 +89,25 @@ export function useLocalStorage<T, E>(
       return initialValue;
     }
   });
+  const storedValueRef = useRef(storedValue);
+  const replaceStoredValue = useCallback((nextValue: T) => {
+    storedValueRef.current = nextValue;
+    setStoredValue(nextValue);
+  }, []);
 
-  // Return a wrapped version of useState's setter function that persists the new value to localStorage
+  // Resolve and persist updates before handing the resulting value to React. State updater callbacks may
+  // run more than once, so storage I/O cannot safely happen inside one.
   const setValue = useCallback(
     (value: T | ((val: T) => T)) => {
       try {
-        setStoredValue((prev) => {
-          const valueToStore = typeof value === "function" ? (value as (val: T) => T)(prev) : value;
-          if (valueToStore === null) {
-            removeLocalStorageItem(key);
-          } else {
-            setLocalStorageItem(key, valueToStore, schema);
-          }
-          // Dispatch event after state update completes to avoid nested state updates
-          queueMicrotask(() => dispatchLocalStorageChange(key));
-          return valueToStore;
-        });
+        const nextValue = persistLocalStorageUpdate(key, storedValueRef.current, value, schema);
+        replaceStoredValue(nextValue);
+        queueMicrotask(() => dispatchLocalStorageChange(key));
       } catch (error) {
         console.error("[LOCALSTORAGE] Error:", error);
       }
     },
-    [key, schema],
+    [key, replaceStoredValue, schema],
   );
 
   const prevKeyRef = useRef(key);
@@ -104,19 +118,19 @@ export function useLocalStorage<T, E>(
       prevKeyRef.current = key;
       try {
         const newValue = getLocalStorageItem(key, schema);
-        setStoredValue(newValue ?? initialValue);
+        replaceStoredValue(newValue ?? initialValue);
       } catch (error) {
         console.error("[LOCALSTORAGE] Error:", error);
       }
     }
-  }, [key, initialValue, schema]);
+  }, [key, initialValue, replaceStoredValue, schema]);
 
   // Listen for storage events from other tabs AND custom events from the same tab
   useEffect(() => {
     const syncFromStorage = () => {
       try {
         const newValue = getLocalStorageItem(key, schema);
-        setStoredValue(newValue ?? initialValue);
+        replaceStoredValue(newValue ?? initialValue);
       } catch (error) {
         console.error("[LOCALSTORAGE] Error:", error);
       }
@@ -141,7 +155,7 @@ export function useLocalStorage<T, E>(
       window.removeEventListener("storage", handleStorageChange);
       window.removeEventListener(LOCAL_STORAGE_CHANGE_EVENT, handleLocalChange as EventListener);
     };
-  }, [key, initialValue, schema]);
+  }, [key, initialValue, replaceStoredValue, schema]);
 
   return [storedValue, setValue];
 }

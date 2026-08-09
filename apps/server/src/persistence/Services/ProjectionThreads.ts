@@ -7,6 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
+  CadReviewId,
   ExternalThreadContext,
   IsoDateTime,
   ModelSelection,
@@ -15,6 +16,7 @@ import {
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
+  ThreadPurpose,
   TurnId,
 } from "@cadsense/contracts";
 import * as Option from "effect/Option";
@@ -27,6 +29,9 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
+  purpose: ThreadPurpose,
+  parentThreadId: Schema.NullOr(ThreadId),
+  reviewRunId: Schema.NullOr(CadReviewId),
   title: Schema.String,
   externalContext: Schema.NullOr(ExternalThreadContext),
   modelSelection: ModelSelection,
