@@ -346,6 +346,9 @@ const make = Effect.gen(function* () {
       thread.session !== null && thread.session.status !== "stopped" && activeSession
         ? thread.session
         : null;
+    if (activeThreadSession === null) {
+      unregisterCadProviderThreadAliases(threadId);
+    }
     if (
       activeThreadSession !== null &&
       activeSession !== undefined &&

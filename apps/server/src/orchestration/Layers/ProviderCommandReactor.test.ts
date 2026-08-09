@@ -60,6 +60,7 @@ import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService, type GitWorkflowServiceShape } from "../../git/GitWorkflowService.ts";
 import {
   clearCadProviderThreadAliasesForTests,
+  registerCadProviderThreadAlias,
   resolveCadRequestThreadId,
 } from "../../cad/CadThreadAliases.ts";
 
@@ -1658,6 +1659,65 @@ describe.sequential("ProviderCommandReactor", () => {
     expect(harness.sendTurn.mock.calls[0]?.[0]).toMatchObject({
       threadId: ThreadId.make("thread-1"),
     });
+  });
+
+  it("releases a stale alias before replacing a missing runtime session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-missing-runtime"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    registerCadProviderThreadAlias({
+      cadThreadId: ThreadId.make("thread-1"),
+      ownerThreadId: ThreadId.make("thread-1"),
+      resumeCursor: { threadId: "missing-runtime-provider-thread" },
+    });
+    expect(resolveCadRequestThreadId(ThreadId.make("missing-runtime-provider-thread"))).toBe(
+      "thread-1",
+    );
+    harness.startSession.mockImplementationOnce(
+      (_: unknown, __: unknown) => Effect.fail("simulated replacement failure") as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-missing-runtime"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-missing-runtime"),
+          role: "user",
+          text: "replace missing session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await harness.drain();
+
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(resolveCadRequestThreadId(ThreadId.make("missing-runtime-provider-thread"))).toBe(
+      "missing-runtime-provider-thread",
+    );
   });
 
   it("rejects active runtime sessions that are missing provider instance ids", async () => {
