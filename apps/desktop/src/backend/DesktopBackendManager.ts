@@ -203,9 +203,7 @@ export function superviseBackendReadiness<R>(options: {
   return options.readiness.pipe(
     Effect.tap(() => options.onReady?.() ?? Effect.void),
     Effect.catch((error) =>
-      (options.onReadinessFailure?.(error) ?? Effect.void).pipe(
-        Effect.ensuring(options.terminate),
-      ),
+      (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.ensuring(options.terminate)),
     ),
   );
 }
@@ -289,9 +287,7 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     terminate: handle.kill().pipe(Effect.ignore),
     ...(options.onReady ? { onReady: options.onReady } : {}),
     ...(options.onReadinessFailure ? { onReadinessFailure: options.onReadinessFailure } : {}),
-  }).pipe(
-    Effect.forkScoped,
-  );
+  }).pipe(Effect.forkScoped);
 
   return describeProcessExit(yield* Effect.result(handle.exitCode));
 });
