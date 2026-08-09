@@ -47,8 +47,12 @@ import { resolveCadRequestThreadId } from "./cad/CadThreadAliases.ts";
 import { captureCadScreenshot } from "./cad/CadScreenshotClient.ts";
 import {
   CAD_HIERARCHY_HTTP_TIMEOUT_MS,
+  CAD_VIEW_MCP_HTTP_PATH,
+  CAD_VIEW_MCP_PROTOCOL_VERSION,
   CAD_VIEW_MCP_TOKEN,
   CAD_VIEW_MCP_TOKEN_HEADER,
+  handleCadViewMcpRequest,
+  parseCadViewMcpCapability,
 } from "./cad/CadViewMcp.ts";
 import {
   CAD_MODEL_HTTP_PATH,
@@ -637,6 +641,109 @@ export const cadScreenshotCaptureRouteLayer = HttpRouter.add(
         Effect.succeed(
           HttpServerResponse.text("Invalid CAD screenshot capture payload", { status: 400 }),
         ),
+    ),
+  ),
+);
+
+function cadMcpJsonRpcError(id: unknown, code: number, message: string): Record<string, unknown> {
+  return { jsonrpc: "2.0", id, error: { code, message } };
+}
+
+export const cadMcpRouteLayer = HttpRouter.add(
+  "POST",
+  CAD_VIEW_MCP_HTTP_PATH,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const capability = parseCadViewMcpCapability(request.headers[CAD_VIEW_MCP_TOKEN_HEADER]);
+    if (!capability) return HttpServerResponse.text("Unauthorized", { status: 401 });
+
+    const body = yield* request.json.pipe(Effect.mapError(() => "invalid-json" as const));
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return HttpServerResponse.jsonUnsafe(cadMcpJsonRpcError(null, -32600, "Invalid Request"), {
+        status: 400,
+      });
+    }
+    const rpcRequest = body as {
+      readonly id?: unknown;
+      readonly method?: unknown;
+      readonly params?: unknown;
+    };
+    const protocolVersion = request.headers["mcp-protocol-version"];
+    if (protocolVersion === CAD_VIEW_MCP_PROTOCOL_VERSION) {
+      const method = typeof rpcRequest.method === "string" ? rpcRequest.method : "";
+      const params =
+        rpcRequest.params && typeof rpcRequest.params === "object"
+          ? (rpcRequest.params as Record<string, unknown>)
+          : undefined;
+      const expectedName = method === "tools/call" ? params?.name : undefined;
+      if (
+        request.headers["mcp-method"] !== method ||
+        (typeof expectedName === "string" && request.headers["mcp-name"] !== expectedName)
+      ) {
+        return HttpServerResponse.jsonUnsafe(
+          cadMcpJsonRpcError(
+            rpcRequest.id ?? null,
+            -32020,
+            "MCP headers do not match the request.",
+          ),
+          { status: 400 },
+        );
+      }
+    }
+
+    const runtimeContext = yield* Effect.context<never>();
+    const runPromise = Effect.runPromiseWith(runtimeContext);
+    const response = yield* Effect.tryPromise(() =>
+      handleCadViewMcpRequest(
+        rpcRequest,
+        {
+          setView: (input) => runPromise(publishCadViewCommand(input).pipe(Effect.asVoid)),
+          sendControl: (input) => runPromise(publishCadControlCommand(input).pipe(Effect.asVoid)),
+          getHierarchy: (input) =>
+            runPromise(
+              Effect.race(
+                requestCadHierarchy(input.threadId),
+                Effect.sleep(`${CAD_HIERARCHY_HTTP_TIMEOUT_MS} millis`).pipe(
+                  Effect.flatMap(() =>
+                    Effect.fail(new OnshapeRpcError({ message: "CAD hierarchy timed out." })),
+                  ),
+                ),
+              ),
+            ),
+          captureScreenshot: (input) =>
+            runPromise(
+              captureCadScreenshot({
+                threadId: input.threadId,
+                exportRoot: input.exportRoot,
+                suggestedBaseName: input.suggestedBaseName,
+                view: input.view,
+                fit: input.fit,
+              }),
+            ),
+        },
+        { ...capability, ...(protocolVersion ? { protocolVersion } : {}) },
+      ),
+    );
+    return response === null
+      ? HttpServerResponse.empty({ status: 202 })
+      : HttpServerResponse.jsonUnsafe(response, { status: 200 });
+  }).pipe(
+    Effect.catchIf(
+      (error): error is "invalid-json" => error === "invalid-json",
+      () =>
+        Effect.succeed(
+          HttpServerResponse.jsonUnsafe(cadMcpJsonRpcError(null, -32700, "Parse error"), {
+            status: 400,
+          }),
+        ),
+    ),
+    Effect.catch((error) =>
+      Effect.succeed(
+        HttpServerResponse.jsonUnsafe(
+          cadMcpJsonRpcError(null, -32603, error instanceof Error ? error.message : String(error)),
+          { status: 500 },
+        ),
+      ),
     ),
   ),
 );

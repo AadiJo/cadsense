@@ -40,7 +40,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
-import { makeCadViewMcpStdioServer } from "../../cad/CadViewMcp.ts";
+import { makeCadViewMcpHttpServer } from "../../cad/CadViewMcp.ts";
 import { ServerConfig } from "../../config.ts";
 import {
   ProviderAdapterProcessError,
@@ -490,7 +490,7 @@ export function makeCursorAdapter(
             ? yield* options.resolveSettings
             : cursorSettings;
 
-          const cadViewMcp = makeCadViewMcpStdioServer(serverConfig, input.threadId);
+          const cadViewMcp = makeCadViewMcpHttpServer(serverConfig, input.threadId);
           const acp = yield* makeCursorAcpRuntime({
             cursorSettings: effectiveCursorSettings,
             ...(options?.environment ? { environment: options.environment } : {}),
@@ -498,10 +498,13 @@ export function makeCursorAdapter(
             cwd,
             mcpServers: [
               {
+                type: "http",
                 name: cadViewMcp.name,
-                command: cadViewMcp.command,
-                args: cadViewMcp.args,
-                env: cadViewMcp.env,
+                url: cadViewMcp.url,
+                headers: Object.entries(cadViewMcp.headers).map(([name, value]) => ({
+                  name,
+                  value,
+                })),
               },
             ],
             ...(resumeSessionId ? { resumeSessionId } : {}),

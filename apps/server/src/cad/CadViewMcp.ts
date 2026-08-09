@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import * as readline from "node:readline";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,8 @@ export const CAD_VIEW_MCP_ZOOM_TOOL_NAME = "zoom_cad_to_fit";
 export const CAD_VIEW_MCP_CALCULATOR_TOOL_NAME = "frc_mechanical_calculator";
 export const CAD_VIEW_MCP_TOKEN_HEADER = "x-cadsense-cad-view-token";
 export const CAD_VIEW_MCP_TOKEN = randomUUID();
+export const CAD_VIEW_MCP_HTTP_PATH = "/api/mcp/cad";
+export const CAD_VIEW_MCP_PROTOCOL_VERSION = "2026-07-28";
 export const CAD_VIEW_EXPORT_ROOT_ENV = "CADSENSE_CAD_VIEW_EXPORT_ROOT";
 export const CAD_HIERARCHY_HTTP_TIMEOUT_MS = 15_000;
 export const CAD_SCREENSHOT_HTTP_TIMEOUT_MS = 135_000;
@@ -196,6 +198,68 @@ export function makeCadViewMcpOrigin(config: Pick<ServerConfigShape, "host" | "p
   return `http://${hostname}:${config.port}`;
 }
 
+export interface CadViewMcpRequestContext {
+  readonly threadId?: string;
+  readonly exportRoot?: string;
+  readonly protocolVersion?: string;
+}
+
+function signCadViewMcpCapability(payload: string): string {
+  return createHmac("sha256", CAD_VIEW_MCP_TOKEN).update(payload).digest("base64url");
+}
+
+export function makeCadViewMcpCapability(threadId?: string, exportRoot?: string): string {
+  const payload = Buffer.from(
+    JSON.stringify({
+      ...(threadId ? { threadId } : {}),
+      ...(exportRoot?.trim() ? { exportRoot: exportRoot.trim() } : {}),
+    }),
+  ).toString("base64url");
+  return `${payload}.${signCadViewMcpCapability(payload)}`;
+}
+
+export function parseCadViewMcpCapability(
+  capability: string | undefined,
+): CadViewMcpRequestContext | undefined {
+  if (!capability) return undefined;
+  const separator = capability.lastIndexOf(".");
+  if (separator <= 0) return undefined;
+  const payload = capability.slice(0, separator);
+  const expected = Buffer.from(signCadViewMcpCapability(payload));
+  const actual = Buffer.from(capability.slice(separator + 1));
+  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) return undefined;
+  try {
+    const decoded = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as unknown;
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return undefined;
+    const record = decoded as Record<string, unknown>;
+    const threadId =
+      record.threadId === undefined ? undefined : decodeThreadIdUnknownSync(record.threadId);
+    const exportRoot =
+      typeof record.exportRoot === "string" && record.exportRoot.trim()
+        ? record.exportRoot.trim()
+        : undefined;
+    return { ...(threadId ? { threadId } : {}), ...(exportRoot ? { exportRoot } : {}) };
+  } catch {
+    return undefined;
+  }
+}
+
+export function makeCadViewMcpHttpServer(
+  config: Pick<ServerConfigShape, "host" | "port">,
+  threadId?: string,
+  exportRoot?: string,
+): {
+  readonly name: string;
+  readonly url: string;
+  readonly headers: Record<string, string>;
+} {
+  return {
+    name: CAD_VIEW_MCP_SERVER_NAME,
+    url: new URL(CAD_VIEW_MCP_HTTP_PATH, makeCadViewMcpOrigin(config)).toString(),
+    headers: { [CAD_VIEW_MCP_TOKEN_HEADER]: makeCadViewMcpCapability(threadId, exportRoot) },
+  };
+}
+
 export function makeCadViewMcpEnv(
   config: Pick<ServerConfigShape, "host" | "port">,
   threadId?: string,
@@ -245,13 +309,12 @@ export function makeCadViewCodexMcpConfig(
   threadId?: string,
   exportRoot?: string,
 ): Record<string, unknown> {
-  const server = makeCadViewMcpStdioServer(config, threadId, exportRoot);
+  const server = makeCadViewMcpHttpServer(config, threadId, exportRoot);
   return {
     mcp_servers: {
       [CAD_VIEW_MCP_SERVER_NAME]: {
-        command: server.command,
-        args: server.args,
-        env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])),
+        url: server.url,
+        http_headers: server.headers,
       },
     },
   };
@@ -264,20 +327,20 @@ export function makeCadViewOpenCodeMcpServerConfig(
 ): {
   readonly name: string;
   readonly config: {
-    readonly type: "local";
-    readonly command: string[];
-    readonly environment: Record<string, string>;
+    readonly type: "remote";
+    readonly url: string;
+    readonly headers: Record<string, string>;
     readonly enabled: true;
     readonly timeout: number;
   };
 } {
-  const server = makeCadViewMcpStdioServer(config, threadId, exportRoot);
+  const server = makeCadViewMcpHttpServer(config, threadId, exportRoot);
   return {
     name: server.name,
     config: {
-      type: "local",
-      command: [server.command, ...server.args],
-      environment: Object.fromEntries(server.env.map(({ name, value }) => [name, value])),
+      type: "remote",
+      url: server.url,
+      headers: server.headers,
       enabled: true,
       timeout: CAD_VIEW_MCP_TIMEOUT_MS,
     },
@@ -291,17 +354,17 @@ export function makeCadViewClaudeMcpServers(
 ): Record<
   string,
   {
-    readonly command: string;
-    readonly args: string[];
-    readonly env: Record<string, string>;
+    readonly type: "http";
+    readonly url: string;
+    readonly headers: Record<string, string>;
   }
 > {
-  const server = makeCadViewMcpStdioServer(config, threadId, exportRoot);
+  const server = makeCadViewMcpHttpServer(config, threadId, exportRoot);
   return {
     [CAD_VIEW_MCP_SERVER_NAME]: {
-      command: server.command,
-      args: [...server.args],
-      env: Object.fromEntries(server.env.map(({ name, value }) => [name, value])),
+      type: "http",
+      url: server.url,
+      headers: server.headers,
     },
   };
 }
@@ -418,7 +481,9 @@ function normalizeExportScreenshotArguments(
     return undefined;
   }
   const candidate = args as Record<string, unknown>;
-  const exportRoot = process.env[CAD_VIEW_EXPORT_ROOT_ENV]?.trim();
+  const exportRoot =
+    (typeof candidate.exportRoot === "string" ? candidate.exportRoot.trim() : undefined) ??
+    process.env[CAD_VIEW_EXPORT_ROOT_ENV]?.trim();
   if (!exportRoot) {
     return undefined;
   }
@@ -579,7 +644,7 @@ async function verifyCadComponentVisibility(
   );
 }
 
-export async function handleCadViewMcpRequest(
+async function handleCadViewMcpRequestLegacy(
   request: JsonRpcRequest,
   handlers: CadViewMcpHandlers,
 ): Promise<JsonRpcResponse | null> {
@@ -897,6 +962,64 @@ export async function handleCadViewMcpRequest(
     default:
       return jsonRpcError(id, -32601, "Method not found.");
   }
+}
+
+export async function handleCadViewMcpRequest(
+  request: JsonRpcRequest,
+  handlers: CadViewMcpHandlers,
+  context: CadViewMcpRequestContext = {},
+): Promise<JsonRpcResponse | null> {
+  const method = typeof request.method === "string" ? request.method : "";
+  if (method === "server/discover" && "id" in request) {
+    return jsonRpcResult(request.id, {
+      resultType: "complete",
+      supportedVersions: [CAD_VIEW_MCP_PROTOCOL_VERSION],
+      capabilities: { tools: {} },
+      serverInfo: { name: CAD_VIEW_MCP_SERVER_NAME, version: "0.1.0" },
+    });
+  }
+
+  let contextualRequest = request;
+  if (method === "tools/call" && (context.threadId || context.exportRoot)) {
+    const params =
+      request.params && typeof request.params === "object" && !Array.isArray(request.params)
+        ? (request.params as Record<string, unknown>)
+        : {};
+    const args =
+      params.arguments && typeof params.arguments === "object" && !Array.isArray(params.arguments)
+        ? (params.arguments as Record<string, unknown>)
+        : {};
+    contextualRequest = {
+      ...request,
+      params: {
+        ...params,
+        arguments: {
+          ...args,
+          ...(context.threadId ? { threadId: context.threadId } : {}),
+          ...(context.exportRoot ? { exportRoot: context.exportRoot } : {}),
+        },
+      },
+    };
+  }
+
+  const response = await handleCadViewMcpRequestLegacy(contextualRequest, handlers);
+  if (
+    context.protocolVersion !== CAD_VIEW_MCP_PROTOCOL_VERSION ||
+    !response ||
+    !("result" in response) ||
+    !response.result ||
+    typeof response.result !== "object"
+  ) {
+    return response;
+  }
+  return {
+    ...response,
+    result: {
+      ...(response.result as Record<string, unknown>),
+      ...(method === "tools/list" ? { ttlMs: 300_000, cacheScope: "private" } : {}),
+      resultType: "complete",
+    },
+  };
 }
 
 async function postCadViewCommand(input: CadSetViewInput): Promise<void> {
