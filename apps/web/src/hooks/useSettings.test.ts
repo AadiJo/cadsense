@@ -1,12 +1,12 @@
 import { DEFAULT_SERVER_SETTINGS } from "@cadsense/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const mocks = {
+const mocks = vi.hoisted(() => ({
   applySettingsUpdated: vi.fn(),
-  getServerConfig: vi.fn(() => null),
-  setClientSettings: vi.fn(async () => undefined),
-  updateServerSettings: vi.fn(async () => DEFAULT_SERVER_SETTINGS),
-};
+  getServerConfig: vi.fn(),
+  setClientSettings: vi.fn(),
+  updateServerSettings: vi.fn(),
+}));
 
 vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({
