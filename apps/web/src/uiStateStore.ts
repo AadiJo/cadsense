@@ -768,9 +768,39 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-export const useUiStateStore = create<UiStateStore>((set) => ({
+function revokeLocalCadFileUrls(files: readonly LocalCadFile[]): void {
+  for (const file of files) {
+    if (file.url.startsWith("blob:")) {
+      URL.revokeObjectURL(file.url);
+    }
+  }
+}
+
+export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
-  syncProjects: (projects) => set((state) => syncProjects(state, projects)),
+  syncProjects: (projects) => {
+    const activeScopeKeys = new Set(projects.map((project) => project.key));
+    const staleScopeEntries = Object.entries(get().localCadFilesByScopeKey).filter(
+      ([scopeKey]) => !activeScopeKeys.has(scopeKey),
+    );
+    set((state) => {
+      const nextState = syncProjects(state, projects);
+      if (staleScopeEntries.length === 0) {
+        return nextState;
+      }
+      return {
+        ...nextState,
+        localCadFilesByScopeKey: Object.fromEntries(
+          Object.entries(state.localCadFilesByScopeKey).filter(([scopeKey]) =>
+            activeScopeKeys.has(scopeKey),
+          ),
+        ),
+      };
+    });
+    for (const [, files] of staleScopeEntries) {
+      revokeLocalCadFileUrls(files);
+    }
+  },
   syncThreads: (threads) => set((state) => syncThreads(state, threads)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
@@ -895,15 +925,22 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
         [threadId]: (state.cadZoomToFitRequestByThreadId[threadId] ?? 0) + 1,
       },
     })),
-  setLocalCadFiles: (scopeKey, files) =>
+  setLocalCadFiles: (scopeKey, files) => {
+    const nextUrls = new Set(files.map((file) => file.url));
+    const replacedFiles = (get().localCadFilesByScopeKey[scopeKey] ?? []).filter(
+      (file) => !nextUrls.has(file.url),
+    );
     set((state) => ({
       ...state,
       localCadFilesByScopeKey: {
         ...state.localCadFilesByScopeKey,
         [scopeKey]: files,
       },
-    })),
-  clearLocalCadFiles: (scopeKey) =>
+    }));
+    revokeLocalCadFileUrls(replacedFiles);
+  },
+  clearLocalCadFiles: (scopeKey) => {
+    const removedFiles = get().localCadFilesByScopeKey[scopeKey] ?? [];
     set((state) => {
       if (!(scopeKey in state.localCadFilesByScopeKey)) {
         return state;
@@ -914,7 +951,9 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
         ...state,
         localCadFilesByScopeKey: nextFiles,
       };
-    }),
+    });
+    revokeLocalCadFileUrls(removedFiles);
+  },
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),

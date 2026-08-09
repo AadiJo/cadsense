@@ -16,6 +16,7 @@ import {
   syncProjects,
   syncThreads,
   type UiState,
+  useUiStateStore,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
@@ -528,6 +529,56 @@ describe("uiStateStore pure functions", () => {
     const next = setThreadChangedFilesExpanded(initialState, thread1, "turn-1", true);
 
     expect(next.threadChangedFilesExpandedById).toEqual({});
+  });
+});
+
+describe("local CAD object URL ownership", () => {
+  beforeEach(() => {
+    useUiStateStore.setState(makeUiState());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("revokes replaced and explicitly cleared object URLs", () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const store = useUiStateStore.getState();
+
+    store.setLocalCadFiles("project-a", [
+      { relativePath: "old.3mf", url: "blob:old", isPreferred: true },
+      { relativePath: "remote.mtl", url: "https://example.test/remote.mtl", isPreferred: false },
+    ]);
+    useUiStateStore
+      .getState()
+      .setLocalCadFiles("project-a", [
+        { relativePath: "next.3mf", url: "blob:next", isPreferred: true },
+      ]);
+    useUiStateStore.getState().clearLocalCadFiles("project-a");
+
+    expect(revokeObjectUrl.mock.calls).toEqual([["blob:old"], ["blob:next"]]);
+  });
+
+  it("revokes files belonging to project scopes that disappear", () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        "project-kept": [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }],
+        "project-removed": [
+          { relativePath: "removed.3mf", url: "blob:removed", isPreferred: true },
+        ],
+      },
+    });
+
+    useUiStateStore
+      .getState()
+      .syncProjects([{ key: "project-kept", logicalKey: "project-kept", cwd: "/kept" }]);
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "project-kept": [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }],
+    });
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:removed");
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:kept");
   });
 });
 

@@ -919,11 +919,6 @@ export default function CadPanel({
         isPreferred: index === 0,
         sizeBytes: file.size,
       }));
-      for (const file of localCadFiles) {
-        if (file.url.startsWith("blob:")) {
-          URL.revokeObjectURL(file.url);
-        }
-      }
       setLocalCadFiles(projectCadScopeKey, nextFiles);
       setLocalCadFileError(null);
       if (primaryFile.name.toLowerCase().endsWith(".obj")) {
@@ -945,7 +940,7 @@ export default function CadPanel({
           .catch(() => undefined);
       }
     },
-    [localCadFiles, projectCadScopeKey, setLocalCadFiles],
+    [projectCadScopeKey, setLocalCadFiles],
   );
 
   const modelFileIdentityKey = useMemo(
