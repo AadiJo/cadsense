@@ -4,7 +4,7 @@ import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
-import { isCadReviewChildThreadId } from "../cadReviewThreadVisibility";
+import { isCadReviewChildThread } from "../cadReviewThreadVisibility";
 
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-muted-foreground/80";
@@ -130,9 +130,7 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
   limit?: number;
 }): CommandPaletteActionItem[] {
   const sortedThreads = sortThreads(
-    input.threads.filter(
-      (thread) => thread.archivedAt === null && !isCadReviewChildThreadId(thread.id),
-    ),
+    input.threads.filter((thread) => thread.archivedAt === null && !isCadReviewChildThread(thread)),
     input.sortOrder,
   );
   const visibleThreads =

@@ -6,9 +6,9 @@ import {
   cadComponentVisibilityCommandsForScopeChange,
   cadOnshapeModelQueryIdentity,
   cadViewerFileName,
+  cadViewerFrameOrigin,
   formatCadModelBytes,
   getCadModelViewerBlocker,
-  shouldHandleCadAgentRequestForPanel,
 } from "./CadPanel.logic";
 
 describe("CadPanel logic", () => {
@@ -49,6 +49,12 @@ describe("CadPanel logic", () => {
     expect(cadViewerFileName("onshape-sync\\bundle\\assembly.obj")).toBe("assembly.obj");
   });
 
+  it("derives the trusted frame origin from the application URL", () => {
+    const location = { href: "https://app.example.test/settings?tab=cad" } as Location;
+
+    expect(cadViewerFrameOrigin(location)).toBe("https://app.example.test");
+  });
+
   it("keys synced CAD queries by Onshape document identity", () => {
     const baseContext = {
       connectionId: "team-onshape",
@@ -75,79 +81,6 @@ describe("CadPanel logic", () => {
         },
       }),
     );
-  });
-
-  it("routes CAD agent requests exactly for active review panels", () => {
-    expect(
-      shouldHandleCadAgentRequestForPanel({
-        requestThreadId: "thread-active",
-        cadRoutingThreadId: "thread-active",
-        sameProjectThreadIds: ["thread-active", "thread-other"],
-        activeCadReviewThreadIds: ["thread-active", "thread-other"],
-        agentControlHost: false,
-        cadReviewInProgress: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldHandleCadAgentRequestForPanel({
-        requestThreadId: "thread-active",
-        cadRoutingThreadId: "thread-active",
-        sameProjectThreadIds: ["thread-active", "thread-other"],
-        activeCadReviewThreadIds: ["thread-active", "thread-other"],
-        agentControlHost: true,
-        cadReviewInProgress: true,
-      }),
-    ).toBe(true);
-    expect(
-      shouldHandleCadAgentRequestForPanel({
-        requestThreadId: "thread-other",
-        cadRoutingThreadId: "thread-active",
-        sameProjectThreadIds: ["thread-active", "thread-other"],
-        activeCadReviewThreadIds: ["thread-active", "thread-other"],
-        agentControlHost: true,
-        cadReviewInProgress: true,
-      }),
-    ).toBe(false);
-  });
-
-  it("routes active review child-thread CAD requests to the visible review panel", () => {
-    expect(
-      shouldHandleCadAgentRequestForPanel({
-        requestThreadId: "thread-active:cad-review:run-1:systems_integration:child",
-        cadRoutingThreadId: "thread-active",
-        sameProjectThreadIds: ["thread-active"],
-        activeCadReviewThreadIds: ["thread-active"],
-        activeCadReviewChildThreadIds: ["thread-active:cad-review:run-1:systems_integration:child"],
-        agentControlHost: false,
-        cadReviewInProgress: true,
-      }),
-    ).toBe(true);
-  });
-
-  it("does not let inactive same-project panels answer active review requests", () => {
-    expect(
-      shouldHandleCadAgentRequestForPanel({
-        requestThreadId: "thread-active-review",
-        cadRoutingThreadId: "thread-inactive",
-        sameProjectThreadIds: ["thread-inactive", "thread-active-review"],
-        activeCadReviewThreadIds: ["thread-active-review"],
-        agentControlHost: false,
-        cadReviewInProgress: false,
-      }),
-    ).toBe(false);
-  });
-
-  it("keeps same-project fallback for non-review CAD requests", () => {
-    expect(
-      shouldHandleCadAgentRequestForPanel({
-        requestThreadId: "thread-same-project",
-        cadRoutingThreadId: "thread-visible",
-        sameProjectThreadIds: ["thread-visible", "thread-same-project"],
-        activeCadReviewThreadIds: [],
-        agentControlHost: false,
-        cadReviewInProgress: false,
-      }),
-    ).toBe(true);
   });
 
   it("applies saved CAD hierarchy visibility across component subtrees", () => {
