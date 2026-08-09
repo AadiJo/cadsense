@@ -31,24 +31,6 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     });
   }, []);
 
-  useEffect(() => {
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (preview.images.length <= 1) return;
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        event.stopPropagation();
-        navigateImage(-1);
-        return;
-      }
-      if (event.key !== "ArrowRight") return;
-      event.preventDefault();
-      event.stopPropagation();
-      navigateImage(1);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateImage, preview.images.length]);
-
   const item = preview.images[preview.index];
   if (!item) return null;
 
@@ -66,6 +48,19 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             className="relative flex size-full items-center justify-center outline-none"
             aria-label="Expanded image preview"
             initialFocus={closeButtonRef}
+            onKeyDownCapture={(event) => {
+              if (preview.images.length <= 1) return;
+              if (event.key === "ArrowLeft") {
+                event.preventDefault();
+                event.stopPropagation();
+                navigateImage(-1);
+                return;
+              }
+              if (event.key !== "ArrowRight") return;
+              event.preventDefault();
+              event.stopPropagation();
+              navigateImage(1);
+            }}
           >
             <Dialog.Close
               className="absolute inset-0 z-0 cursor-zoom-out"
