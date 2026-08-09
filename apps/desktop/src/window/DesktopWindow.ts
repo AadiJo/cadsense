@@ -77,6 +77,14 @@ function resolveDesktopDevServerUrl(
   });
 }
 
+export function isTrustedDesktopNavigation(applicationUrl: string, targetUrl: string): boolean {
+  try {
+    return new URL(targetUrl).origin === new URL(applicationUrl).origin;
+  } catch {
+    return false;
+  }
+}
+
 function getIconOption(
   iconPaths: DesktopAssets.DesktopIconPaths,
 ): { icon: string } | Record<string, never> {
@@ -164,6 +172,9 @@ const make = Effect.gen(function* () {
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
     backendHttpUrl: URL,
   ): Effect.fn.Return<Electron.BrowserWindow, DesktopWindowError> {
+    const applicationUrl = environment.isDevelopment
+      ? yield* resolveDesktopDevServerUrl(environment)
+      : backendHttpUrl.href;
     const iconPaths = yield* assets.iconPaths;
     const iconOption = getIconOption(iconPaths);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
@@ -241,6 +252,19 @@ const make = Effect.gen(function* () {
       return { action: "deny" };
     });
 
+    const guardNavigation = (event: Electron.Event, url: string) => {
+      if (isTrustedDesktopNavigation(applicationUrl, url)) {
+        return;
+      }
+
+      event.preventDefault();
+      if (Option.isSome(ElectronShell.parseSafeExternalUrl(url))) {
+        void runPromise(electronShell.openExternal(url));
+      }
+    };
+    window.webContents.on("will-navigate", guardNavigation);
+    window.webContents.on("will-redirect", guardNavigation);
+
     window.on("page-title-updated", (event) => {
       event.preventDefault();
       window.setTitle(environment.displayName);
@@ -281,11 +305,10 @@ const make = Effect.gen(function* () {
     });
 
     if (environment.isDevelopment) {
-      const devServerUrl = yield* resolveDesktopDevServerUrl(environment);
-      void window.loadURL(devServerUrl);
+      void window.loadURL(applicationUrl);
       window.webContents.openDevTools({ mode: "detach" });
     } else {
-      void window.loadURL(backendHttpUrl.href);
+      void window.loadURL(applicationUrl);
     }
 
     window.on("closed", () => {
