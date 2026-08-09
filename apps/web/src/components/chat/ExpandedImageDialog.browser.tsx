@@ -49,9 +49,9 @@ test("manages focus, navigation, and dismissal", async () => {
   await opener.click();
 
   const dialog = screen.getByRole("dialog", { name: "Expanded image preview" });
-  const closeButtons = screen.getByRole("button", { name: "Close image preview" });
+  const closeButton = screen.getByRole("button", { name: "Close image preview" });
   await expect.element(dialog).toBeVisible();
-  await expect.element(closeButtons.nth(1)).toHaveFocus();
+  await expect.element(closeButton).toHaveFocus();
 
   await userEvent.keyboard("{ArrowRight}");
   await expect.element(screen.getByRole("img", { name: "two.png" })).toBeVisible();
@@ -73,8 +73,10 @@ test("restores focus after clicking the full-screen close target", async () => {
   const opener = screen.getByRole("button", { name: "Open preview" });
   await opener.click();
 
-  const closeButtons = screen.getByRole("button", { name: "Close image preview" });
-  await closeButtons.nth(0).click({ position: { x: 5, y: 5 } });
+  await expect
+    .element(screen.getByRole("button", { name: "Close image preview" }))
+    .toBeInTheDocument();
+  await screen.getByTestId("expanded-image-backdrop-close").click({ position: { x: 5, y: 5 } });
   await expect
     .element(screen.getByRole("dialog", { name: "Expanded image preview" }))
     .not.toBeInTheDocument();
@@ -85,11 +87,11 @@ test("keeps the pointer-only close target out of the focus cycle", async () => {
   const screen = await render(<SingleImageHarness />);
   await screen.getByRole("button", { name: "Open single preview" }).click();
 
-  const closeButtons = screen.getByRole("button", { name: "Close image preview" });
-  await expect.element(closeButtons.nth(1)).toHaveFocus();
+  const closeButton = screen.getByRole("button", { name: "Close image preview" });
+  await expect.element(closeButton).toHaveFocus();
 
   await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
-  await expect.element(closeButtons.nth(1)).toHaveFocus();
+  await expect.element(closeButton).toHaveFocus();
   await userEvent.keyboard("{Tab}");
-  await expect.element(closeButtons.nth(1)).toHaveFocus();
+  await expect.element(closeButton).toHaveFocus();
 });

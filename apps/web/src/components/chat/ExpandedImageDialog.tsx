@@ -62,10 +62,11 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               navigateImage(1);
             }}
           >
-            <Dialog.Close
+            <div
               className="absolute inset-0 z-0 cursor-zoom-out"
-              aria-label="Close image preview"
-              tabIndex={-1}
+              data-testid="expanded-image-backdrop-close"
+              aria-hidden="true"
+              onPointerUp={onClose}
             />
             {preview.images.length > 1 && (
               <Button
