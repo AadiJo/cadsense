@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import { unregisterCadProviderThreadAliases } from "../../cad/CadThreadAliases.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -35,22 +36,31 @@ export const logCleanupCauseUnlessInterrupted = <R, E>({
     }),
   );
 
+export const cleanupDeletedThread = <R, E>({
+  stopProviderSession,
+  threadId,
+}: {
+  readonly stopProviderSession: Effect.Effect<void, E, R>;
+  readonly threadId: ThreadDeletedEvent["payload"]["threadId"];
+}): Effect.Effect<void, E, R> =>
+  logCleanupCauseUnlessInterrupted({
+    effect: stopProviderSession,
+    message: "thread deletion cleanup skipped provider session stop",
+    threadId,
+  }).pipe(Effect.ensuring(Effect.sync(() => unregisterCadProviderThreadAliases(threadId))));
+
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
-
-  const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
-    logCleanupCauseUnlessInterrupted({
-      effect: providerService.stopSession({ threadId }),
-      message: "thread deletion cleanup skipped provider session stop",
-      threadId,
-    });
 
   const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
     event: ThreadDeletedEvent,
   ) {
     const { threadId } = event.payload;
-    yield* stopProviderSession(threadId);
+    yield* cleanupDeletedThread({
+      stopProviderSession: providerService.stopSession({ threadId }),
+      threadId,
+    });
   });
 
   const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>
