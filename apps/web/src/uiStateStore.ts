@@ -773,10 +773,20 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-function revokeLocalCadFileUrls(files: readonly LocalCadFile[]): void {
+function revokeUnownedLocalCadFileUrls(
+  files: readonly LocalCadFile[],
+  retainedFilesByScopeKey: UiState["localCadFilesByScopeKey"],
+): void {
+  const retainedUrls = new Set(
+    Object.values(retainedFilesByScopeKey).flatMap((retainedFiles) =>
+      retainedFiles.map((file) => file.url),
+    ),
+  );
+  const revokedUrls = new Set<string>();
   for (const file of files) {
-    if (file.url.startsWith("blob:")) {
+    if (file.url.startsWith("blob:") && !retainedUrls.has(file.url) && !revokedUrls.has(file.url)) {
       URL.revokeObjectURL(file.url);
+      revokedUrls.add(file.url);
     }
   }
 }
@@ -802,9 +812,10 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
         ),
       };
     });
-    for (const [, files] of staleScopeEntries) {
-      revokeLocalCadFileUrls(files);
-    }
+    revokeUnownedLocalCadFileUrls(
+      staleScopeEntries.flatMap(([, files]) => files),
+      get().localCadFilesByScopeKey,
+    );
   },
   syncThreads: (threads) => set((state) => syncThreads(state, threads)),
   markThreadVisited: (threadId, visitedAt) =>
@@ -942,7 +953,7 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
         [scopeKey]: files,
       },
     }));
-    revokeLocalCadFileUrls(replacedFiles);
+    revokeUnownedLocalCadFileUrls(replacedFiles, get().localCadFilesByScopeKey);
   },
   clearLocalCadFiles: (scopeKey) => {
     const removedFiles = get().localCadFilesByScopeKey[scopeKey] ?? [];
@@ -957,7 +968,7 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
         localCadFilesByScopeKey: nextFiles,
       };
     });
-    revokeLocalCadFileUrls(removedFiles);
+    revokeUnownedLocalCadFileUrls(removedFiles, get().localCadFilesByScopeKey);
   },
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),

@@ -637,6 +637,38 @@ describe("local CAD object URL ownership", () => {
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:removed");
     expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:retained");
   });
+
+  it("keeps a shared URL until its final owning scope is removed", () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const sharedFile = { relativePath: "shared.3mf", url: "blob:shared", isPreferred: true };
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        "project-kept": [sharedFile],
+        "project-removed": [
+          sharedFile,
+          { relativePath: "removed.3mf", url: "blob:removed", isPreferred: false },
+        ],
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/kept",
+        cadScopeKey: "project-kept",
+        logicalKey: "project-kept",
+        cwd: "/kept",
+      },
+    ]);
+
+    expect(revokeObjectUrl).toHaveBeenCalledTimes(1);
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:removed");
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:shared");
+
+    useUiStateStore.getState().clearLocalCadFiles("project-kept");
+
+    expect(revokeObjectUrl).toHaveBeenCalledTimes(2);
+    expect(revokeObjectUrl).toHaveBeenLastCalledWith("blob:shared");
+  });
 });
 
 function createLocalStorageStub(): Storage {
