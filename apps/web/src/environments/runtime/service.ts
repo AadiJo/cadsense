@@ -1361,6 +1361,7 @@ export async function removeSavedEnvironment(environmentId: EnvironmentId): Prom
   useSavedEnvironmentRegistryStore.getState().remove(environmentId);
   useSavedEnvironmentRuntimeStore.getState().clear(environmentId);
   useStore.getState().removeEnvironmentState(environmentId);
+  syncProjectUiFromStore();
   await removeSavedEnvironmentBearerToken(environmentId);
 }
 
