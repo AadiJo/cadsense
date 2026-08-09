@@ -9,17 +9,27 @@ interface ExpandedImageDialogProps {
   onClose: () => void;
 }
 
+function normalizePreviewIndex(preview: ExpandedImagePreview): ExpandedImagePreview {
+  if (preview.images.length === 0) return preview;
+  const index = Math.min(Math.max(0, preview.index), preview.images.length - 1);
+  return index === preview.index ? preview : { ...preview, index };
+}
+
 export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   preview: initialPreview,
   onClose,
 }: ExpandedImageDialogProps) {
-  const [preview, setPreview] = useState(initialPreview);
+  const [preview, setPreview] = useState(() => normalizePreviewIndex(initialPreview));
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   // Sync when the parent hands us a new preview reference.
   useEffect(() => {
-    setPreview(initialPreview);
-  }, [initialPreview]);
+    if (initialPreview.images.length === 0) {
+      onClose();
+      return;
+    }
+    setPreview(normalizePreviewIndex(initialPreview));
+  }, [initialPreview, onClose]);
 
   const navigateImage = useCallback((direction: -1 | 1) => {
     setPreview((existing) => {

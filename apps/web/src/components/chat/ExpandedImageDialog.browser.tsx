@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { act, useMemo, useState } from "react";
 import { expect, test } from "vitest";
 import { userEvent } from "vitest/browser";
 import { render } from "vitest-browser-react";
@@ -12,6 +12,8 @@ const preview = {
   ],
   index: 0,
 };
+
+let setDynamicImagesForTest: ((images: typeof preview.images) => void) | null = null;
 
 function Harness() {
   const [open, setOpen] = useState(false);
@@ -39,6 +41,21 @@ function SingleImageHarness() {
           onClose={() => setOpen(false)}
         />
       )}
+    </>
+  );
+}
+
+function DynamicImagesHarness() {
+  const [open, setOpen] = useState(false);
+  const [images, setImages] = useState(preview.images);
+  setDynamicImagesForTest = setImages;
+  const dynamicPreview = useMemo(() => ({ images, index: 1 }), [images]);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open dynamic preview
+      </button>
+      {open && <ExpandedImageDialog preview={dynamicPreview} onClose={() => setOpen(false)} />}
     </>
   );
 }
@@ -107,4 +124,21 @@ test("keeps the pointer-only close target out of the focus cycle", async () => {
   await expect.element(closeButton).toHaveFocus();
   await userEvent.keyboard("{Tab}");
   await expect.element(closeButton).toHaveFocus();
+});
+
+test("normalizes a stale image index and closes when the image list becomes empty", async () => {
+  const screen = await render(<DynamicImagesHarness />);
+  const opener = screen.getByRole("button", { name: "Open dynamic preview" });
+  await opener.click();
+  await expect.element(screen.getByRole("img", { name: "two.png" })).toBeVisible();
+
+  await act(() => setDynamicImagesForTest?.([preview.images[0]!]));
+  await expect.element(screen.getByRole("img", { name: "one.png" })).toBeVisible();
+  await expect.element(screen.getByRole("button", { name: "Close image preview" })).toHaveFocus();
+
+  await act(() => setDynamicImagesForTest?.([]));
+  await expect
+    .element(screen.getByRole("dialog", { name: "Expanded image preview" }))
+    .not.toBeInTheDocument();
+  await expect.element(opener).toHaveFocus();
 });
