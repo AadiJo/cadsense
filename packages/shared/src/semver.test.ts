@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { compareSemverVersions, normalizeSemverVersion, satisfiesSemverRange } from "./semver.ts";
+import {
+  compareSemverVersions,
+  normalizeSemverVersion,
+  parseSemver,
+  satisfiesSemverRange,
+} from "./semver.ts";
 
 describe("semver helpers", () => {
   it("matches supported range groups", () => {
@@ -22,8 +27,58 @@ describe("semver helpers", () => {
     expect(compareSemverVersions("2.1.111-beta.1", "2.1.111")).toBeLessThan(0);
   });
 
-  it("falls back to lexical comparison for malformed numeric segments", () => {
-    expect(compareSemverVersions("1.2.3abc", "1.2.10")).toBeGreaterThan(0);
+  it("preserves hyphens inside prerelease identifiers", () => {
+    expect(normalizeSemverVersion("2.1-beta-feature.1")).toBe("2.1.0-beta-feature.1");
+    expect(compareSemverVersions("2.1.0-beta-feature.1", "2.1.0-beta-feature.2")).toBeLessThan(0);
+  });
+
+  it("preserves and ignores build metadata when comparing versions", () => {
+    expect(normalizeSemverVersion("2.1-beta-feature+build-7")).toBe("2.1.0-beta-feature+build-7");
+    expect(compareSemverVersions("2.1.0-beta-feature+build-7", "2.1.0-beta-feature+build-8")).toBe(
+      0,
+    );
+    expect(compareSemverVersions("2.1.0+build-7", "2.1.0")).toBe(0);
+  });
+
+  it("rejects malformed core and prerelease identifiers", () => {
+    expect(parseSemver("01.2.3")).toBeNull();
+    expect(parseSemver("1..2.3")).toBeNull();
+    expect(parseSemver(".1.2.3")).toBeNull();
+    expect(parseSemver("1.2.3.")).toBeNull();
+    expect(parseSemver("1.2.3-alpha..1")).toBeNull();
+    expect(parseSemver("1.2.3-alpha.01")).toBeNull();
+    expect(parseSemver("1.2.3-alpha_1")).toBeNull();
+    expect(parseSemver("1 .2.3")).toBeNull();
+  });
+
+  it("compares arbitrarily large numeric identifiers without losing precision", () => {
+    expect(compareSemverVersions("9007199254740992.0.0", "9007199254740993.0.0")).toBeLessThan(0);
+    expect(compareSemverVersions("1.0.0-9007199254740992", "1.0.0-9007199254740993")).toBeLessThan(
+      0,
+    );
+    expect(
+      compareSemverVersions("99999999999999999999.0.0", "100000000000000000000.0.0"),
+    ).toBeLessThan(0);
+  });
+
+  it("sorts malformed versions below valid versions and lexically among themselves", () => {
+    expect(compareSemverVersions("1.2.3abc", "1.2.10")).toBeLessThan(0);
+    expect(compareSemverVersions("also-invalid", "not-a-version")).toBeLessThan(0);
+  });
+
+  it("maintains a transitive ordering across valid and malformed versions", () => {
+    const ordered = ["15.invalid", "2.0.0", "10.0.0", "10.0.0-alpha", "10.0.0"];
+    ordered.sort(compareSemverVersions);
+
+    for (let left = 0; left < ordered.length; left += 1) {
+      for (let middle = left; middle < ordered.length; middle += 1) {
+        for (let right = middle; right < ordered.length; right += 1) {
+          expect(compareSemverVersions(ordered[left]!, ordered[middle]!)).toBeLessThanOrEqual(0);
+          expect(compareSemverVersions(ordered[middle]!, ordered[right]!)).toBeLessThanOrEqual(0);
+          expect(compareSemverVersions(ordered[left]!, ordered[right]!)).toBeLessThanOrEqual(0);
+        }
+      }
+    }
   });
 
   it("supports comparison comparators", () => {
