@@ -29,7 +29,11 @@ export class LRUCache<T> {
       this.cache.delete(key);
     }
 
-    if (approximateSize > this.maxMemoryBytes) {
+    if (
+      !Number.isFinite(approximateSize) ||
+      approximateSize < 0 ||
+      approximateSize > this.maxMemoryBytes
+    ) {
       return;
     }
 

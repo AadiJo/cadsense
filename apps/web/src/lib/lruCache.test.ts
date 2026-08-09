@@ -57,4 +57,17 @@ describe("LRUCache", () => {
 
     expect(cache.get("a")).toBeNull();
   });
+
+  it("rejects invalid sizes without poisoning memory accounting", () => {
+    const cache = new LRUCache<string>(10, 25);
+    cache.set("negative", "invalid", -100);
+    cache.set("not-a-number", "invalid", Number.NaN);
+    cache.set("a", "A", 20);
+    cache.set("b", "B", 10);
+
+    expect(cache.get("negative")).toBeNull();
+    expect(cache.get("not-a-number")).toBeNull();
+    expect(cache.get("a")).toBeNull();
+    expect(cache.get("b")).toBe("B");
+  });
 });
