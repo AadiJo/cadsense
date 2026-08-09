@@ -97,6 +97,66 @@ it("resolves pnpm Windows command shims without a shell", () => {
   }
 });
 
+it("applies Windows PATH overrides case-insensitively", () => {
+  if (process.platform !== "win32") return;
+  const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-path-casing-"));
+  const commandName = "codex-path-casing-fixture";
+  try {
+    const shim = NodePath.join(prefix, `${commandName}.cmd`);
+    writeFileSync(shim, "@echo off\n");
+    const inheritedPathKey =
+      Object.keys(process.env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+    const overridePathKey = inheritedPathKey === "PATH" ? "Path" : "PATH";
+
+    const resolved = CodexClient.resolveCommandForSpawn(
+      {
+        command: commandName,
+        env: { [overridePathKey]: prefix, PATHEXT: ".CMD" },
+      },
+      "win32",
+    );
+
+    assert.equal(resolved.command.toLowerCase(), shim.toLowerCase());
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+it("selects a native node runtime even when CMD precedes EXE in PATHEXT", () => {
+  if (process.platform !== "win32") return;
+  const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-node-runtime-"));
+  try {
+    const shimDirectory = NodePath.join(prefix, "shim");
+    const runtimeDirectory = NodePath.join(prefix, "runtime");
+    const script = NodePath.join(shimDirectory, "node_modules", "@openai", "codex", "codex.js");
+    mkdirSync(NodePath.dirname(script), { recursive: true });
+    mkdirSync(runtimeDirectory, { recursive: true });
+    writeFileSync(script, "");
+    writeFileSync(NodePath.join(runtimeDirectory, "node.cmd"), "@echo off\n");
+    writeFileSync(NodePath.join(runtimeDirectory, "node.exe"), "");
+    writeFileSync(
+      NodePath.join(shimDirectory, "codex.cmd"),
+      `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%" "%dp0%\\node_modules\\@openai\\codex\\codex.js" %*`,
+    );
+
+    const resolved = CodexClient.resolveCommandForSpawn(
+      {
+        command: "codex",
+        env: {
+          PATH: `${shimDirectory};${runtimeDirectory}`,
+          PATHEXT: ".CMD;.EXE",
+        },
+      },
+      "win32",
+    );
+
+    assert.equal(resolved.command, NodePath.join(runtimeDirectory, "node.exe"));
+    assert.deepEqual(resolved.args, [script]);
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
 it("does not execute a script mentioned only in unrecognized shim content", () => {
   if (process.platform !== "win32") return;
   const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-untrusted-shim-"));

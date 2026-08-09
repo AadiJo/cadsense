@@ -305,6 +305,24 @@ function readWindowsEnv(env: Record<string, string | undefined>, name: string): 
   return entry?.[1];
 }
 
+function mergeSpawnEnv(
+  overrides: Record<string, string> | undefined,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env };
+  for (const [key, value] of Object.entries(overrides ?? {})) {
+    if (platform === "win32") {
+      for (const existingKey of Object.keys(env)) {
+        if (existingKey !== key && existingKey.toLowerCase() === key.toLowerCase()) {
+          delete env[existingKey];
+        }
+      }
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
 function resolveWindowsCommandPath(
   command: string,
   cwd: string,
@@ -386,7 +404,7 @@ function resolveWindowsCommandShim(
         return {
           command: existsSync(adjacentNode)
             ? adjacentNode
-            : (resolveWindowsCommandPath("node", cwd, env) ?? "node"),
+            : (resolveWindowsCommandPath("node.exe", cwd, env) ?? "node"),
           args: [scriptPath, ...args],
         };
       }
@@ -408,7 +426,7 @@ export function resolveCommandForSpawn(
 ): ResolvedSpawnCommand {
   const args = options.args ?? [];
   if (platform !== "win32") return { command: options.command, args };
-  const env = { ...process.env, ...options.env };
+  const env = mergeSpawnEnv(options.env, platform);
   return resolveWindowsCommandShim(options.command, args, options.cwd ?? process.cwd(), env);
 }
 
@@ -426,7 +444,7 @@ export const layerCommand = (
       const resolved = resolveCommandForSpawn(options);
       const command = ChildProcess.make(resolved.command, [...resolved.args], {
         ...(options.cwd ? { cwd: options.cwd } : {}),
-        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+        ...(options.env ? { env: mergeSpawnEnv(options.env) } : {}),
         forceKillAfter: DEFAULT_APP_SERVER_FORCE_KILL_AFTER,
         // Keep command arguments out of a command shell. In particular, provider
         // settings can contain user-controlled paths and arguments that must be
