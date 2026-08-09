@@ -122,6 +122,28 @@ it("applies Windows PATH overrides case-insensitively", () => {
   }
 });
 
+it("resolves commands from quoted Windows PATH entries", () => {
+  if (process.platform !== "win32") return;
+  const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex quoted path "));
+  const commandName = "codex-quoted-path-fixture";
+  try {
+    const shim = NodePath.join(prefix, `${commandName}.cmd`);
+    writeFileSync(shim, "@echo off\n");
+
+    const resolved = CodexClient.resolveCommandForSpawn(
+      {
+        command: commandName,
+        env: { PATH: `"${prefix}"`, PATHEXT: ".CMD" },
+      },
+      "win32",
+    );
+
+    assert.equal(resolved.command.toLowerCase(), shim.toLowerCase());
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
 it("selects a native node runtime even when CMD precedes EXE in PATHEXT", () => {
   if (process.platform !== "win32") return;
   const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-node-runtime-"));

@@ -332,7 +332,13 @@ function resolveWindowsCommandPath(
     command.includes("/") || command.includes("\\") || /^[a-zA-Z]:/.test(command);
   const searchDirectories = hasPathSegment
     ? [NodePath.win32.resolve(cwd, NodePath.win32.dirname(command))]
-    : [cwd, ...(readWindowsEnv(env, "PATH") ?? "").split(";")].filter(
+    : [
+        cwd,
+        ...(readWindowsEnv(env, "PATH") ?? "").split(";").map((entry) => {
+          const trimmed = entry.trim();
+          return trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed;
+        }),
+      ].filter(
         (entry, index, entries) =>
           entry.length > 0 &&
           entries.findIndex((candidate) => candidate.toLowerCase() === entry.toLowerCase()) ===
