@@ -345,6 +345,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          purpose,
+          parent_thread_id AS "parentThreadId",
+          review_run_id AS "reviewRunId",
           title,
           external_context_json AS "externalContext",
           model_selection_json AS "modelSelection",
@@ -374,6 +377,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          purpose,
+          parent_thread_id AS "parentThreadId",
+          review_run_id AS "reviewRunId",
           title,
           external_context_json AS "externalContext",
           model_selection_json AS "modelSelection",
@@ -405,6 +411,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          purpose,
+          parent_thread_id AS "parentThreadId",
+          review_run_id AS "reviewRunId",
           title,
           external_context_json AS "externalContext",
           model_selection_json AS "modelSelection",
@@ -800,6 +809,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          purpose,
+          parent_thread_id AS "parentThreadId",
+          review_run_id AS "reviewRunId",
           title,
           external_context_json AS "externalContext",
           model_selection_json AS "modelSelection",
@@ -1283,6 +1295,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
               const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
                 id: row.threadId,
                 projectId: row.projectId,
+                purpose: row.purpose,
+                parentThreadId: row.parentThreadId,
+                reviewRunId: row.reviewRunId,
                 title: row.title,
                 externalContext: row.externalContext,
                 modelSelection: row.modelSelection,
@@ -1518,6 +1533,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                 threads.push({
                   id: row.threadId,
                   projectId: row.projectId,
+                  purpose: row.purpose,
+                  parentThreadId: row.parentThreadId,
+                  reviewRunId: row.reviewRunId,
                   title: row.title,
                   externalContext: row.externalContext,
                   modelSelection: row.modelSelection,
@@ -1662,6 +1680,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                     (row): OrchestrationThreadShell => ({
                       id: row.threadId,
                       projectId: row.projectId,
+                      purpose: row.purpose,
+                      parentThreadId: row.parentThreadId,
+                      reviewRunId: row.reviewRunId,
                       title: row.title,
                       externalContext: row.externalContext,
                       modelSelection: row.modelSelection,
@@ -1808,6 +1829,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
                   (row): OrchestrationThreadShell => ({
                     id: row.threadId,
                     projectId: row.projectId,
+                    purpose: row.purpose,
+                    parentThreadId: row.parentThreadId,
+                    reviewRunId: row.reviewRunId,
                     title: row.title,
                     externalContext: row.externalContext,
                     modelSelection: row.modelSelection,
@@ -2059,6 +2083,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       return Option.some({
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
+        purpose: threadRow.value.purpose,
+        parentThreadId: threadRow.value.parentThreadId,
+        reviewRunId: threadRow.value.reviewRunId,
         title: threadRow.value.title,
         externalContext: threadRow.value.externalContext,
         modelSelection: threadRow.value.modelSelection,
@@ -2164,6 +2191,9 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       const thread = {
         id: threadRow.value.threadId,
         projectId: threadRow.value.projectId,
+        purpose: threadRow.value.purpose,
+        parentThreadId: threadRow.value.parentThreadId,
+        reviewRunId: threadRow.value.reviewRunId,
         title: threadRow.value.title,
         externalContext: threadRow.value.externalContext,
         modelSelection: threadRow.value.modelSelection,
