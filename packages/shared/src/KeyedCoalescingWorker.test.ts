@@ -6,6 +6,43 @@ import * as Effect from "effect/Effect";
 import { makeKeyedCoalescingWorker } from "./KeyedCoalescingWorker.ts";
 
 describe("makeKeyedCoalescingWorker", () => {
+  it.live("processes null and undefined values without treating them as sentinels", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: Array<string | null | undefined> = [];
+        const firstStarted = yield* Deferred.make<void>();
+        const releaseFirst = yield* Deferred.make<void>();
+        const worker = yield* makeKeyedCoalescingWorker<
+          string,
+          string | null | undefined,
+          never,
+          never
+        >({
+          merge: (_current, next) => next,
+          process: (_key, value) =>
+            Effect.gen(function* () {
+              processed.push(value);
+              if (value === "first") {
+                yield* Deferred.succeed(firstStarted, undefined).pipe(Effect.orDie);
+                yield* Deferred.await(releaseFirst);
+              }
+            }),
+        });
+
+        yield* worker.enqueue("active", "first");
+        yield* Deferred.await(firstStarted);
+        yield* worker.enqueue("active", null);
+        yield* Deferred.succeed(releaseFirst, undefined);
+        yield* worker.drainKey("active");
+
+        yield* worker.enqueue("queued", undefined);
+        yield* worker.drainKey("queued");
+
+        expect(processed).toEqual(["first", null, undefined]);
+      }),
+    ),
+  );
+
   it.live("waits for latest work enqueued during active processing before draining the key", () =>
     Effect.scoped(
       Effect.gen(function* () {

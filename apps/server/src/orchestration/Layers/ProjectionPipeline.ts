@@ -578,6 +578,9 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           yield* projectionThreadRepository.upsert({
             threadId: event.payload.threadId,
             projectId: event.payload.projectId,
+            purpose: event.payload.purpose ?? "general",
+            parentThreadId: event.payload.parentThreadId ?? null,
+            reviewRunId: event.payload.reviewRunId ?? null,
             title: event.payload.title,
             externalContext: event.payload.externalContext ?? null,
             modelSelection: event.payload.modelSelection,

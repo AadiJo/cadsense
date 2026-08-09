@@ -76,6 +76,9 @@ describe("orchestration projector", () => {
       {
         id: "thread-1",
         projectId: "project-1",
+        purpose: "general",
+        parentThreadId: null,
+        reviewRunId: null,
         title: "demo",
         externalContext: null,
         modelSelection: {
@@ -99,6 +102,44 @@ describe("orchestration projector", () => {
         session: null,
       },
     ]);
+  });
+
+  it("projects explicit CAD review child ownership", async () => {
+    const now = "2026-01-01T00:00:00.000Z";
+    const next = await Effect.runPromise(
+      projectEvent(
+        createEmptyReadModel(now),
+        makeEvent({
+          sequence: 1,
+          type: "thread.created",
+          aggregateKind: "thread",
+          aggregateId: "review-child",
+          occurredAt: now,
+          commandId: "cmd-review-child-create",
+          payload: {
+            threadId: "review-child",
+            projectId: "project-1",
+            purpose: "cad-review",
+            parentThreadId: "parent-thread",
+            reviewRunId: "cad-review-1",
+            title: "review child",
+            modelSelection: { provider: "codex", model: "gpt-5-codex" },
+            runtimeMode: "full-access",
+            branch: null,
+            worktreePath: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        }),
+      ),
+    );
+
+    expect(next.threads[0]).toMatchObject({
+      id: "review-child",
+      purpose: "cad-review",
+      parentThreadId: "parent-thread",
+      reviewRunId: "cad-review-1",
+    });
   });
 
   it("fails when event payload cannot be decoded by runtime schema", async () => {

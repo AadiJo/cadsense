@@ -194,6 +194,20 @@ const waitForHttpReady = Effect.fn("desktop.backendManager.waitForHttpReady")(fu
   );
 });
 
+export function superviseBackendReadiness<R>(options: {
+  readonly readiness: Effect.Effect<void, BackendTimeoutError, R>;
+  readonly terminate: Effect.Effect<void>;
+  readonly onReady?: () => Effect.Effect<void>;
+  readonly onReadinessFailure?: (error: BackendTimeoutError) => Effect.Effect<void>;
+}): Effect.Effect<void, never, R> {
+  return options.readiness.pipe(
+    Effect.tap(() => options.onReady?.() ?? Effect.void),
+    Effect.catch((error) =>
+      (options.onReadinessFailure?.(error) ?? Effect.void).pipe(Effect.ensuring(options.terminate)),
+    ),
+  );
+}
+
 function describeProcessExit(
   result: Result.Result<ChildProcessSpawner.ExitCode, PlatformError.PlatformError>,
 ): BackendProcessExit {
@@ -265,14 +279,15 @@ const runBackendProcess = Effect.fn("runBackendProcess")(function* (
     yield* drainBackendOutput("stdout", handle.stdout, onOutput).pipe(Effect.forkScoped);
     yield* drainBackendOutput("stderr", handle.stderr, onOutput).pipe(Effect.forkScoped);
   }
-  yield* waitForHttpReady(
-    options.httpBaseUrl,
-    options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
-  ).pipe(
-    Effect.tap(() => options.onReady?.() ?? Effect.void),
-    Effect.catch((error) => options.onReadinessFailure?.(error) ?? Effect.void),
-    Effect.forkScoped,
-  );
+  yield* superviseBackendReadiness({
+    readiness: waitForHttpReady(
+      options.httpBaseUrl,
+      options.readinessTimeout ?? DEFAULT_BACKEND_READINESS_TIMEOUT,
+    ),
+    terminate: handle.kill().pipe(Effect.ignore),
+    ...(options.onReady ? { onReady: options.onReady } : {}),
+    ...(options.onReadinessFailure ? { onReadinessFailure: options.onReadinessFailure } : {}),
+  }).pipe(Effect.forkScoped);
 
   return describeProcessExit(yield* Effect.result(handle.exitCode));
 });

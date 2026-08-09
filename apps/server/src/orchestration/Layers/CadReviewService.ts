@@ -814,11 +814,21 @@ export function reviewerConcurrencyForThread(
   return Math.min(CAD_REVIEW_REVIEWER_CONCURRENCY, reviewerCount);
 }
 
-function reviewChildThreadIdsFromActivities(
+function reviewChildThreadIds(
   thread: OrchestrationThread,
   reviewRunId: string,
+  candidateThreads: Iterable<OrchestrationThread> = [],
 ): ThreadId[] {
   const childThreadIds = new Set<string>();
+  for (const candidate of candidateThreads) {
+    if (
+      candidate.purpose === "cad-review" &&
+      candidate.parentThreadId === thread.id &&
+      candidate.reviewRunId === reviewRunId
+    ) {
+      childThreadIds.add(candidate.id);
+    }
+  }
   for (const activity of thread.activities) {
     if (activity.kind !== "cad-review.child-thread.created") {
       continue;
@@ -898,11 +908,12 @@ function hasFreshLiveChildSessionForReview(input: {
   if (!Number.isFinite(nowMs)) {
     return false;
   }
-  return reviewChildThreadIdsFromActivities(input.thread, input.reviewRunId).some((childThreadId) =>
-    isFreshLiveChildSession({
-      childThread: input.threadById.get(childThreadId),
-      nowMs,
-    }),
+  return reviewChildThreadIds(input.thread, input.reviewRunId, input.threadById.values()).some(
+    (childThreadId) =>
+      isFreshLiveChildSession({
+        childThread: input.threadById.get(childThreadId),
+        nowMs,
+      }),
   );
 }
 
@@ -2048,6 +2059,9 @@ const make = Effect.gen(function* () {
         commandId: serverCommandId("cad-review-child-create"),
         threadId: childThreadId,
         projectId: input.parentThread.projectId,
+        purpose: "cad-review",
+        parentThreadId: input.parentThread.id,
+        reviewRunId: input.reviewRunId,
         title: childReviewThreadInitialTitle(input.title),
         ...(input.parentThread.externalContext !== null
           ? { externalContext: input.parentThread.externalContext }
@@ -2122,10 +2136,7 @@ const make = Effect.gen(function* () {
     readonly activeChildThreadIds?: ReadonlySet<ThreadId>;
   }) => {
     const childThreadIds = new Set(input.activeChildThreadIds ?? []);
-    for (const childThreadId of reviewChildThreadIdsFromActivities(
-      input.thread,
-      input.reviewRunId,
-    )) {
+    for (const childThreadId of reviewChildThreadIds(input.thread, input.reviewRunId)) {
       childThreadIds.add(childThreadId);
     }
     return stopChildSessions({
@@ -2142,10 +2153,7 @@ const make = Effect.gen(function* () {
     readonly createdAt: string;
   }) => {
     const childThreadIds = new Set<ThreadId>();
-    for (const childThreadId of reviewChildThreadIdsFromActivities(
-      input.thread,
-      input.reviewRunId,
-    )) {
+    for (const childThreadId of reviewChildThreadIds(input.thread, input.reviewRunId)) {
       if (input.liveThreadIds.has(childThreadId)) {
         childThreadIds.add(childThreadId);
       }
@@ -3210,7 +3218,11 @@ const make = Effect.gen(function* () {
           const currentReview =
             (currentThread.reviews ?? []).find((entry) => entry.id === review.id) ?? review;
           const failedAtMs = Date.parse(failedAt);
-          const childThreadIds = reviewChildThreadIdsFromActivities(currentThread, review.id);
+          const childThreadIds = reviewChildThreadIds(
+            currentThread,
+            review.id,
+            threadById.values(),
+          );
           const hasChildThreads = childThreadIds.length > 0;
           const detailedChildThreads = yield* Effect.forEach(
             childThreadIds,
