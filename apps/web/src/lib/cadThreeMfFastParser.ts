@@ -76,7 +76,7 @@ const ATTRIBUTE_PATTERN_CACHE = new Map<string, RegExp>();
 function getAttribute(source: string, name: string): string | null {
   let pattern = ATTRIBUTE_PATTERN_CACHE.get(name);
   if (!pattern) {
-    pattern = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "iu");
+    pattern = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "iu");
     ATTRIBUTE_PATTERN_CACHE.set(name, pattern);
   }
   const match = pattern.exec(source);

@@ -85,16 +85,16 @@ describe("cadThreeMfFastParser", () => {
 
   it("parses vertex and triangle attributes independent of XML ordering", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
-<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unit="meter">
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:ext="https://example.com/3mf-extension" unit="meter">
   <resources>
     <object name="reordered" type="model" id="1">
       <mesh>
         <vertices>
-          <vertex z="0" x="0" y="0" />
+          <vertex ext:x="99" z="0" x="0" y="0" />
           <vertex y="0" z="0" x="1" />
           <vertex z="0" y="1" x="0" />
         </vertices>
-        <triangles><triangle v3="2" v1="0" v2="1" /></triangles>
+        <triangles><triangle ext:v1="2" v3="2" v1="0" v2="1" /></triangles>
       </mesh>
     </object>
   </resources>
@@ -131,7 +131,7 @@ describe("cadThreeMfFastParser", () => {
       zipSync({
         "3D/decoy.model": textEncoder.encode("<not-a-model />"),
         "_rels/.rels": textEncoder.encode(
-          `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/Models/root.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" /></Relationships>`,
+          `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships" xmlns:ext="https://example.com/relationships-extension"><Relationship ext:Target="/Models/decoy.model" ext:Type="https://example.com/decoy" Target="/Models/root.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" /></Relationships>`,
         ),
         "Models/root.model": textEncoder.encode(rootModel),
       }),
