@@ -75,6 +75,7 @@ export interface SourceControlDiscoveryManagerConfig {
 
 export function createSourceControlDiscoveryManager(config: SourceControlDiscoveryManagerConfig) {
   const refreshInFlight = new Map<string, Promise<SourceControlDiscoveryResult | null>>();
+  let generation = 0;
 
   /* -- Atom helpers -------------------------------------------------- */
 
@@ -156,17 +157,26 @@ export function createSourceControlDiscoveryManager(config: SourceControlDiscove
     }
 
     markPending(targetKey);
+    const refreshGeneration = generation;
     const promise = resolvedClient.discoverSourceControl().then(
       (result) => {
-        setData(targetKey, result);
+        if (generation === refreshGeneration) {
+          setData(targetKey, result);
+        }
         return result;
       },
       (error: unknown) => {
-        setError(targetKey, error);
+        if (generation === refreshGeneration) {
+          setError(targetKey, error);
+        }
         return getSnapshot(target).data;
       },
     );
-    const tracked = promise.finally(() => refreshInFlight.delete(targetKey));
+    const tracked = promise.finally(() => {
+      if (refreshInFlight.get(targetKey) === tracked) {
+        refreshInFlight.delete(targetKey);
+      }
+    });
     refreshInFlight.set(targetKey, tracked);
     return tracked;
   }
@@ -191,6 +201,7 @@ export function createSourceControlDiscoveryManager(config: SourceControlDiscove
    * Primarily used by tests and runtime teardown.
    */
   function reset(): void {
+    generation += 1;
     refreshInFlight.clear();
     for (const key of knownSourceControlDiscoveryKeys) {
       setState(key, INITIAL_SOURCE_CONTROL_DISCOVERY_STATE);

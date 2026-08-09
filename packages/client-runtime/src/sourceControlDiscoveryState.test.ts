@@ -105,3 +105,44 @@ it("keeps the previous snapshot when refresh fails", async () => {
     isPending: false,
   });
 });
+
+it("ignores completions from refreshes invalidated by reset", async () => {
+  const staleResult: SourceControlDiscoveryResult = {
+    versionControlSystems: [],
+    sourceControlProviders: [],
+  };
+  const currentResult: SourceControlDiscoveryResult = {
+    versionControlSystems: [],
+    sourceControlProviders: [],
+  };
+  let resolveStale: (result: SourceControlDiscoveryResult) => void = unresolvedDiscovery;
+  let resolveCurrent: (result: SourceControlDiscoveryResult) => void = unresolvedDiscovery;
+  const staleClient = {
+    discoverSourceControl: () =>
+      new Promise<SourceControlDiscoveryResult>((resolve) => {
+        resolveStale = resolve;
+      }),
+  };
+  const currentClient = {
+    discoverSourceControl: () =>
+      new Promise<SourceControlDiscoveryResult>((resolve) => {
+        resolveCurrent = resolve;
+      }),
+  };
+  const manager = createSourceControlDiscoveryManager({
+    getRegistry: () => registry,
+    getClient: () => null,
+  });
+
+  const staleRefresh = manager.refresh({ key: "primary" }, staleClient);
+  manager.reset();
+  const currentRefresh = manager.refresh({ key: "primary" }, currentClient);
+
+  resolveStale(staleResult);
+  await staleRefresh;
+  assert.strictEqual(manager.refresh({ key: "primary" }, currentClient), currentRefresh);
+
+  resolveCurrent(currentResult);
+  await currentRefresh;
+  assert.strictEqual(manager.getSnapshot({ key: "primary" }).data, currentResult);
+});
