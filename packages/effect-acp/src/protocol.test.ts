@@ -65,34 +65,48 @@ const makeHandle = (env?: Record<string, string>) =>
   });
 
 it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
-  it.effect("does not retain a duplicate notification stream when a callback handles it", () =>
+  it.effect("bounds the mirrored notification stream when a callback handles notifications", () =>
     Effect.gen(function* () {
       const { stdio, input } = yield* makeInMemoryStdio();
-      const handled = yield* Deferred.make<AcpProtocol.AcpIncomingNotification>();
+      const handled = yield* Ref.make<string[]>([]);
+      const secondHandled = yield* Deferred.make<void>();
       const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
         stdio,
         serverRequestMethods: new Set(),
+        incomingNotificationQueueCapacity: 1,
         onNotification: (notification) =>
-          Deferred.succeed(handled, notification).pipe(Effect.asVoid),
+          notification._tag === "ElicitationComplete"
+            ? Ref.update(handled, (current) => [
+                ...current,
+                notification.params.elicitationId,
+              ]).pipe(
+                Effect.andThen(
+                  notification.params.elicitationId === "elicitation-2"
+                    ? Deferred.succeed(secondHandled, undefined).pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+              )
+            : Effect.void,
       });
-      const mirrored = yield* transport.incoming.pipe(
-        Stream.take(1),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
 
-      yield* Queue.offer(
-        input,
-        yield* encodeJsonl(ElicitationCompleteNotification, {
-          jsonrpc: "2.0",
-          method: "session/elicitation/complete",
-          params: { elicitationId: "elicitation-1" },
-        }),
-      );
+      for (const elicitationId of ["elicitation-1", "elicitation-2"]) {
+        yield* Queue.offer(
+          input,
+          yield* encodeJsonl(ElicitationCompleteNotification, {
+            jsonrpc: "2.0",
+            method: "session/elicitation/complete",
+            params: { elicitationId },
+          }),
+        );
+      }
 
-      assert.equal((yield* Deferred.await(handled))._tag, "ElicitationComplete");
+      yield* Deferred.await(secondHandled);
+      assert.deepEqual(yield* Ref.get(handled), ["elicitation-1", "elicitation-2"]);
+      const firstMirrored = yield* Stream.runHead(transport.incoming);
+      assert.equal(firstMirrored._tag, "Some");
+      const secondMirrored = yield* Stream.runHead(transport.incoming).pipe(Effect.forkScoped);
       yield* Effect.yieldNow;
-      assert.isUndefined(mirrored.pollUnsafe());
+      assert.isUndefined(secondMirrored.pollUnsafe());
     }),
   );
 

@@ -18,6 +18,7 @@ import { CLIENT_METHODS } from "./_generated/meta.gen.ts";
 import * as AcpError from "./errors.ts";
 const isAcpError = Schema.is(AcpError.AcpError);
 const isAcpRequestError = Schema.is(AcpError.AcpRequestError);
+const DEFAULT_INCOMING_NOTIFICATION_QUEUE_CAPACITY = 1024;
 
 export interface AcpProtocolLogEvent {
   readonly direction: "incoming" | "outgoing";
@@ -46,6 +47,7 @@ export interface AcpPatchedProtocolOptions {
   readonly stdio: Stdio.Stdio;
   readonly terminationError?: Effect.Effect<AcpError.AcpError>;
   readonly serverRequestMethods: ReadonlySet<string>;
+  readonly incomingNotificationQueueCapacity?: number;
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
   readonly logger?: (event: AcpProtocolLogEvent) => Effect.Effect<void, never>;
@@ -79,7 +81,11 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const parser = parserFactory.makeUnsafe();
   const serverQueue = yield* Queue.unbounded<RpcMessage.FromClientEncoded>();
   const clientQueue = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
-  const notificationQueue = yield* Queue.unbounded<AcpIncomingNotification>();
+  const notificationQueue = yield* options.onNotification
+    ? Queue.dropping<AcpIncomingNotification>(
+        options.incomingNotificationQueueCapacity ?? DEFAULT_INCOMING_NOTIFICATION_QUEUE_CAPACITY,
+      )
+    : Queue.unbounded<AcpIncomingNotification>();
   const disconnects = yield* Queue.unbounded<number>();
   const outgoing = yield* Queue.unbounded<string | Uint8Array, Cause.Done<void>>();
   const nextRequestId = yield* Ref.make(1n);
@@ -170,9 +176,14 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     );
 
   const dispatchNotification = (notification: AcpIncomingNotification) =>
-    options.onNotification
-      ? options.onNotification(notification).pipe(Effect.catch(() => Effect.void))
-      : Queue.offer(notificationQueue, notification).pipe(Effect.asVoid);
+    Queue.offer(notificationQueue, notification).pipe(
+      Effect.andThen(
+        options.onNotification
+          ? options.onNotification(notification).pipe(Effect.catch(() => Effect.void))
+          : Effect.void,
+      ),
+      Effect.asVoid,
+    );
 
   const emitClientProtocolError = (error: AcpError.AcpError) =>
     Queue.offer(clientQueue, {
