@@ -72,6 +72,7 @@ import { MECHBASE_API_KEY_SECRET_NAME } from "../../mechbase/MechbaseApi.ts";
 import { getCachedValidatedMechbaseApiKey } from "../../mechbase/MechbaseConnection.ts";
 import { makeMechbaseClaudeMcpServers } from "../../mechbase/MechbaseMcp.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
+import { CADSENSE_PROVIDER_DEVELOPER_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
 import {
   getClaudeModelCapabilities,
   normalizeClaudeCliEffort,
@@ -200,6 +201,8 @@ interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
 export interface ClaudeAdapterLiveOptions {
   readonly instanceId?: ProviderInstanceId;
   readonly environment?: NodeJS.ProcessEnv;
+  /** Resolved directory where CAD MCP screenshots are written. */
+  readonly cadViewMcpExportRoot?: string;
   readonly createQuery?: (input: {
     readonly prompt: AsyncIterable<SDKUserMessage>;
     readonly options: ClaudeQueryOptions;
@@ -439,8 +442,11 @@ function readClaudeResumeState(resumeCursor: unknown): ClaudeResumeState | undef
   };
 }
 
-function classifyToolItemType(toolName: string): CanonicalItemType {
+function classifyToolItemType(toolName: string, sourceType?: string): CanonicalItemType {
   const normalized = toolName.toLowerCase();
+  if (sourceType === "mcp_tool_use") {
+    return "mcp_tool_call";
+  }
   if (normalized.includes("agent")) {
     return "collab_agent_tool_call";
   }
@@ -1711,7 +1717,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
 
       const toolName = block.name;
-      const itemType = classifyToolItemType(toolName);
+      const itemType = classifyToolItemType(toolName, block.type);
       const toolInput =
         typeof block.input === "object" && block.input !== null
           ? (block.input as Record<string, unknown>)
@@ -2827,7 +2833,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(input.cwd ? { cwd: input.cwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
         pathToClaudeCodeExecutable: claudeBinaryPath,
-        systemPrompt: { type: "preset", preset: "claude_code" },
+        systemPrompt: {
+          type: "preset",
+          preset: "claude_code",
+          append: CADSENSE_PROVIDER_DEVELOPER_INSTRUCTIONS,
+        },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // The SDK type lags the CLI here: Opus 4.7 accepts `xhigh` even though
         // the published `Options["effort"]` union currently stops at `max`.
@@ -2847,7 +2857,11 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         canUseTool,
         env: claudeEnvironment,
         mcpServers: {
-          ...makeCadViewClaudeMcpServers(serverConfig, threadId),
+          ...makeCadViewClaudeMcpServers(
+            serverConfig,
+            input.cadViewThreadId ?? threadId,
+            options?.cadViewMcpExportRoot,
+          ),
           ...(validatedMechbase ? makeMechbaseClaudeMcpServers(validatedMechbase.apiKey) : {}),
         },
         ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
@@ -3034,10 +3048,13 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       };
     }
 
-    // Build mode always restores the session's original permission mode.
+    // Match Codex interaction modes through Claude Code's native plan permission mode.
     if (input.interactionMode !== undefined) {
       yield* Effect.tryPromise({
-        try: () => context.query.setPermissionMode(context.basePermissionMode ?? "default"),
+        try: () =>
+          context.query.setPermissionMode(
+            input.interactionMode === "plan" ? "plan" : (context.basePermissionMode ?? "default"),
+          ),
         catch: (cause) => toRequestError(input.threadId, "turn/setPermissionMode", cause),
       });
     }

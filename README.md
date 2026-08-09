@@ -2,9 +2,9 @@
 
 ![CadSense product demo](./apps/marketing/public/demo.png)
 
-CadSense is a fast, local-first GUI for running Codex against real projects.
+CadSense is a fast, local-first GUI for running coding agents against real projects.
 
-It gives Codex a desktop/web workspace with persistent threads, project-aware chat, terminals,
+It gives Codex and Claude Code a desktop/web workspace with persistent threads, project-aware chat, terminals,
 diffs, source-control context, and the operational state you need to understand what the agent is
 doing.
 
@@ -23,7 +23,7 @@ agent work easier to steer, inspect, and recover from.
 
 ## What It Does
 
-- **Codex sessions**: start, resume, and inspect Codex work without losing the underlying project
+- **Agent sessions**: start, resume, and inspect Codex or Claude Code work without losing the underlying project
   context.
 - **Agent-first chat**: persistent threads, model picking, streamed events, pending approvals,
   plans, terminal context, and file attachments.
@@ -53,8 +53,8 @@ agent work easier to steer, inspect, and recover from.
 
 ## Architecture Notes
 
-CadSense is currently Codex-only. The server starts `codex app-server` per session, speaks JSON-RPC
-over stdio, normalizes runtime activity, and pushes domain events to the browser over WebSocket.
+CadSense supports Codex and Claude Code sessions. Provider adapters normalize runtime activity and
+push domain events to the browser over WebSocket while preserving provider-native capabilities.
 
 Important entry points:
 

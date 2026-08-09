@@ -48,7 +48,11 @@ import {
   normalizeCommandPath,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
-import { makeClaudeCapabilitiesCacheKey, makeClaudeContinuationGroupKey } from "./ClaudeHome.ts";
+import {
+  makeClaudeCapabilitiesCacheKey,
+  makeClaudeContinuationGroupKey,
+  resolveClaudeHomePath,
+} from "./ClaudeHome.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -115,15 +119,17 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const httpClient = yield* HttpClient.HttpClient;
       const eventLoggers = yield* ProviderEventLoggers;
       const serverConfig = yield* ServerConfig;
+      const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
+      const claudeHomePath = yield* resolveClaudeHomePath(effectiveConfig);
+      const cadViewMcpExportRoot = path.join(claudeHomePath, "cadsense-cad-screenshots");
       const processEnv = {
         ...mergeProviderInstanceEnvironment(environment),
-        ...makeCadViewMcpEnv(serverConfig),
+        ...makeCadViewMcpEnv(serverConfig, undefined, cadViewMcpExportRoot),
       };
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
       });
-      const effectiveConfig = { ...config, enabled } satisfies ClaudeSettings;
       const maintenanceCapabilities = yield* resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
         binaryPath: effectiveConfig.binaryPath,
         env: processEnv,
@@ -139,6 +145,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const adapterOptions = {
         instanceId,
         environment: processEnv,
+        cadViewMcpExportRoot,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       };
       const adapter = yield* makeClaudeAdapter(effectiveConfig, adapterOptions);
