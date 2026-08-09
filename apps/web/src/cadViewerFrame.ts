@@ -597,6 +597,11 @@ function parseContentLength(headers: Headers): number | null {
 async function fetchDescriptorAsFilePayload(
   descriptor: CadViewerFrameFileDescriptor,
 ): Promise<CadViewerFrameFilePayload> {
+  if (descriptor.sizeBytes !== undefined && descriptor.sizeBytes > MAX_CAD_MODEL_DOWNLOAD_BYTES) {
+    throw new Error(
+      `CAD model download exceeds the ${MAX_CAD_MODEL_DOWNLOAD_BYTES / (1024 * 1024)} MiB safety limit.`,
+    );
+  }
   const response = await fetch(descriptor.url, { credentials: "same-origin" });
   if (!response.ok) {
     throw new Error(
@@ -604,7 +609,7 @@ async function fetchDescriptorAsFilePayload(
     );
   }
   const contentLength = parseContentLength(response.headers);
-  const buffer = await response.arrayBuffer();
+  const buffer = await readResponseArrayBufferWithinLimit(response, MAX_CAD_MODEL_DOWNLOAD_BYTES);
   const type =
     descriptor.type ??
     response.headers.get("content-type") ??
@@ -1324,9 +1329,9 @@ function parseThreeMfFastWithWorker(input: {
   readonly buffer: ArrayBuffer;
   readonly three: ThreeModule;
 }): Promise<ThreeGroup> {
-  const worker = new ThreeMfFastParserWorker();
   const requestId = ++threeMfWorkerRequestSequence;
   const workerBuffer = input.buffer.slice(0);
+  const worker = new ThreeMfFastParserWorker();
 
   return new Promise((resolve, reject) => {
     let timeoutId: number | undefined;
@@ -1336,6 +1341,7 @@ function parseThreeMfFastWithWorker(input: {
       }
       worker.removeEventListener("message", handleMessage);
       worker.removeEventListener("error", handleError);
+      worker.removeEventListener("messageerror", handleMessageError);
       worker.terminate();
     }
 
@@ -1364,13 +1370,24 @@ function parseThreeMfFastWithWorker(input: {
       reject(event.error instanceof Error ? event.error : new Error(event.message));
     }
 
+    function handleMessageError() {
+      cleanup();
+      reject(new Error("Failed to receive the parsed 3MF model from the worker."));
+    }
+
     worker.addEventListener("message", handleMessage);
     worker.addEventListener("error", handleError);
+    worker.addEventListener("messageerror", handleMessageError);
     timeoutId = window.setTimeout(() => {
       cleanup();
       reject(new Error("Timed out parsing 3MF model off the UI thread."));
     }, FAST_3MF_WORKER_TIMEOUT_MS);
-    worker.postMessage({ id: requestId, buffer: workerBuffer }, [workerBuffer]);
+    try {
+      worker.postMessage({ id: requestId, buffer: workerBuffer }, [workerBuffer]);
+    } catch (error) {
+      cleanup();
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 

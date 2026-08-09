@@ -83,4 +83,20 @@ describe("3MF resource limits", () => {
     );
     expect(cancelled).toBe(true);
   });
+
+  it("reads a response without Content-Length when the stream remains within the limit", async () => {
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(Uint8Array.from([1, 2]));
+          controller.enqueue(Uint8Array.from([3, 4, 5]));
+          controller.close();
+        },
+      }),
+    );
+
+    await expect(readResponseArrayBufferWithinLimit(response, 5)).resolves.toEqual(
+      Uint8Array.from([1, 2, 3, 4, 5]).buffer,
+    );
+  });
 });
