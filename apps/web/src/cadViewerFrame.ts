@@ -14,6 +14,7 @@ import {
 } from "./lib/cadThreeMfFastParser";
 import ThreeMfFastParserWorker from "./lib/cadThreeMfFastParser.worker?worker";
 import {
+  assertCadModelBuffersWithinLimit,
   inspectThreeMfArchive,
   loadCadModelResourcesWithinLimit,
   MAX_CAD_MODEL_DOWNLOAD_BYTES,
@@ -1605,6 +1606,10 @@ async function loadFiles(files: ReadonlyArray<CadViewerFrameFilePayload>): Promi
   if (files.length === 0) {
     throw new Error("No CAD files were provided to the viewer.");
   }
+  assertCadModelBuffersWithinLimit(
+    files.map((file) => file.buffer),
+    MAX_CAD_MODEL_DOWNLOAD_BYTES,
+  );
 
   destroyViewer();
   const module = await ensureModule();

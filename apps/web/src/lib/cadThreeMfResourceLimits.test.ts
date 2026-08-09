@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { zipSync } from "three/examples/jsm/libs/fflate.module.js";
 
 import {
+  assertCadModelBuffersWithinLimit,
   inspectThreeMfArchive,
   loadCadModelResourcesWithinLimit,
   MAX_3MF_ARCHIVE_ENTRIES,
@@ -125,5 +126,17 @@ describe("3MF resource limits", () => {
       }),
     ).rejects.toThrow(/download.*safety limit/);
     expect(secondCancelled).toBe(true);
+  });
+
+  it("enforces per-buffer and aggregate limits for materialized CAD payloads", () => {
+    expect(() => assertCadModelBuffersWithinLimit([new ArrayBuffer(11)], 10)).toThrow(
+      /model data.*safety limit/,
+    );
+    expect(() =>
+      assertCadModelBuffersWithinLimit([new ArrayBuffer(6), new ArrayBuffer(5)], 10),
+    ).toThrow(/model data.*safety limit/);
+    expect(() =>
+      assertCadModelBuffersWithinLimit([new ArrayBuffer(6), new ArrayBuffer(4)], 10),
+    ).not.toThrow();
   });
 });

@@ -132,3 +132,16 @@ export async function loadCadModelResourcesWithinLimit<
   }
   return results;
 }
+
+export function assertCadModelBuffersWithinLimit(
+  buffers: ReadonlyArray<ArrayBuffer>,
+  maximumBytes: number,
+): void {
+  let remainingBytes = maximumBytes;
+  for (const buffer of buffers) {
+    if (buffer.byteLength > remainingBytes) {
+      throw formatLimitError("CAD model data", maximumBytes);
+    }
+    remainingBytes -= buffer.byteLength;
+  }
+}
