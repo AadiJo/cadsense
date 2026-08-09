@@ -69,6 +69,31 @@ describe("updateSettingsAndWait", () => {
     await expect(updateSettingsAndWait({ providerInstances: {} })).rejects.toThrow("disk full");
   });
 
+  it("waits for every persistence target before surfacing a mixed-patch failure", async () => {
+    let finishClientWrite: (() => void) | undefined;
+    mocks.updateServerSettings.mockRejectedValueOnce(new Error("disk full"));
+    mocks.setClientSettings.mockReturnValueOnce(
+      new Promise<void>((resolve) => {
+        finishClientWrite = resolve;
+      }),
+    );
+
+    let settled = false;
+    const write = updateSettingsAndWait({
+      providerInstances: {},
+      timestampFormat: "12-hour",
+    }).finally(() => {
+      settled = true;
+    });
+
+    await vi.waitFor(() => expect(mocks.setClientSettings).toHaveBeenCalledTimes(1));
+    expect(settled).toBe(false);
+
+    finishClientWrite?.();
+    await expect(write).rejects.toThrow("disk full");
+    expect(settled).toBe(true);
+  });
+
   it("rolls back client settings when persistence fails", async () => {
     const previousSettings = getClientSettings();
     mocks.setClientSettings.mockRejectedValueOnce(new Error("storage unavailable"));

@@ -248,7 +248,11 @@ export async function updateSettingsAndWait(patch: Partial<UnifiedSettings>): Pr
     writes.push(persistClientSettings(clientPatch));
   }
 
-  await Promise.all(writes);
+  const results = await Promise.allSettled(writes);
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") {
+    throw failure.reason;
+  }
 }
 
 /**

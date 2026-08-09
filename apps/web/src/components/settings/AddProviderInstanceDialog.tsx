@@ -165,6 +165,14 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     setIsSaving(false);
   }, [open]);
 
+  useEffect(
+    () => () => {
+      openRef.current = false;
+      dialogSessionRef.current += 1;
+    },
+    [],
+  );
+
   // Auto-derive the instance id from driver + label until the user types
   // in the Instance ID field directly (after which they own its value).
   useEffect(() => {
