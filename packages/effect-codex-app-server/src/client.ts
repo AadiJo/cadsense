@@ -336,7 +336,9 @@ function resolveWindowsCommandPath(
         cwd,
         ...(readWindowsEnv(env, "PATH") ?? "").split(";").map((entry) => {
           const trimmed = entry.trim();
-          return trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed;
+          const unquoted =
+            trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed;
+          return unquoted.length > 0 ? NodePath.win32.resolve(cwd, unquoted) : unquoted;
         }),
       ].filter(
         (entry, index, entries) =>

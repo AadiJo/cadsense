@@ -144,6 +144,36 @@ it("resolves commands from quoted Windows PATH entries", () => {
   }
 });
 
+it("resolves command shims from Windows PATH entries relative to the spawn cwd", () => {
+  if (process.platform !== "win32") return;
+  const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-relative-path-"));
+  try {
+    const binDirectory = NodePath.join(prefix, "bin");
+    const script = NodePath.join(binDirectory, "node_modules", "@openai", "codex", "codex.js");
+    mkdirSync(NodePath.dirname(script), { recursive: true });
+    writeFileSync(script, "");
+    writeFileSync(NodePath.join(binDirectory, "node.exe"), "");
+    writeFileSync(
+      NodePath.join(binDirectory, "codex.cmd"),
+      `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%" "%dp0%\\node_modules\\@openai\\codex\\codex.js" %*`,
+    );
+
+    const resolved = CodexClient.resolveCommandForSpawn(
+      {
+        command: "codex",
+        cwd: prefix,
+        env: { PATH: "bin", PATHEXT: ".CMD" },
+      },
+      "win32",
+    );
+
+    assert.equal(resolved.command, NodePath.join(binDirectory, "node.exe"));
+    assert.deepEqual(resolved.args, [script]);
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
 it("selects a native node runtime even when CMD precedes EXE in PATHEXT", () => {
   if (process.platform !== "win32") return;
   const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-node-runtime-"));
