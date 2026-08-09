@@ -1,5 +1,6 @@
 import type {
   CadReviewReport,
+  CadReviewId,
   EnvironmentId,
   ExternalProjectContext,
   ExternalThreadContext,
@@ -11,6 +12,7 @@ import type {
   OrchestrationThreadActivity,
   ProjectScript as ContractProjectScript,
   ThreadId,
+  ThreadPurpose,
   ProjectId,
   TurnId,
   MessageId,
@@ -95,6 +97,9 @@ export interface Thread {
   environmentId: EnvironmentId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  purpose?: ThreadPurpose;
+  parentThreadId?: ThreadId | null;
+  reviewRunId?: CadReviewId | null;
   title: string;
   externalContext?: ExternalThreadContext | null;
   modelSelection: ModelSelection;
@@ -122,6 +127,9 @@ export interface ThreadShell {
   environmentId: EnvironmentId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  purpose?: ThreadPurpose;
+  parentThreadId?: ThreadId | null;
+  reviewRunId?: CadReviewId | null;
   title: string;
   externalContext?: ExternalThreadContext | null;
   modelSelection: ModelSelection;
@@ -145,6 +153,9 @@ export interface SidebarThreadSummary {
   id: ThreadId;
   environmentId: EnvironmentId;
   projectId: ProjectId;
+  purpose?: ThreadPurpose;
+  parentThreadId?: ThreadId | null;
+  reviewRunId?: CadReviewId | null;
   title: string;
   externalContext?: ExternalThreadContext | null;
   interactionMode: ProviderInteractionMode;

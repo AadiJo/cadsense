@@ -124,6 +124,30 @@ export function cadReviewChildThreadIdsForActiveReviews(thread: Thread): ThreadI
   return [...childThreadIds];
 }
 
+export function cadReviewChildThreadIdsForActiveReviewsInEnvironment(
+  environmentState: EnvironmentState,
+  thread: Thread,
+): ThreadId[] {
+  const activeReviewIds = new Set(
+    (thread.reviews ?? [])
+      .filter((review) => CAD_REVIEW_ACTIVE_STATUSES.has(review.status))
+      .map((review) => review.id),
+  );
+  const childThreadIds = new Set(cadReviewChildThreadIdsForActiveReviews(thread));
+  for (const threadId of environmentState.threadIds) {
+    const child = environmentState.threadShellById[threadId];
+    if (
+      child?.purpose === "cad-review" &&
+      child.parentThreadId === thread.id &&
+      child.reviewRunId != null &&
+      activeReviewIds.has(child.reviewRunId)
+    ) {
+      childThreadIds.add(threadId);
+    }
+  }
+  return [...childThreadIds];
+}
+
 function childThreadMetadataForReview(
   thread: Thread,
   reviewRunId: string,
@@ -294,7 +318,9 @@ export function deriveCadAgentViewStateForThread(
     return null;
   }
 
-  const childThreadIds = childThreadIdsForReview(thread, reviewRunId);
+  const childThreadIds = new Set(
+    cadReviewChildThreadIdsForActiveReviewsInEnvironment(environmentState, thread),
+  );
   const childPrefix = `${thread.id}:cad-review:${reviewRunId}:`;
   let derivedState: CadAgentViewState | null = null;
 

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const visibleThreadId = ThreadId.make("thread-visible-review");
 const backgroundThreadId = ThreadId.make("thread-background-review");
+const secondBackgroundThreadId = ThreadId.make("thread-second-background-review");
 const environmentId = EnvironmentId.make("environment-local");
 
 vi.mock("@tanstack/react-router", () => ({
@@ -11,6 +12,10 @@ vi.mock("@tanstack/react-router", () => ({
     const params = { environmentId, threadId: visibleThreadId };
     return input.select ? input.select(params) : params;
   },
+}));
+
+vi.mock("../environmentApi", () => ({
+  readEnvironmentApi: () => undefined,
 }));
 
 vi.mock("./CadPanel", () => ({
@@ -31,7 +36,7 @@ vi.mock("../store", () => ({
     selector({
       environmentStateById: {
         [environmentId]: {
-          threadIds: [visibleThreadId, backgroundThreadId],
+          threadIds: [visibleThreadId, backgroundThreadId, secondBackgroundThreadId],
           threadShellById: {
             [visibleThreadId]: {
               id: visibleThreadId,
@@ -42,6 +47,11 @@ vi.mock("../store", () => ({
               id: backgroundThreadId,
               environmentId,
               projectId: "project-1",
+            },
+            [secondBackgroundThreadId]: {
+              id: secondBackgroundThreadId,
+              environmentId,
+              projectId: "project-2",
             },
           },
           threadSessionById: {},
@@ -57,6 +67,7 @@ vi.mock("../store", () => ({
           reviewIdsByThreadId: {
             [visibleThreadId]: ["review-visible"],
             [backgroundThreadId]: ["review-background"],
+            [secondBackgroundThreadId]: ["review-second-background"],
           },
           reviewByThreadId: {
             [visibleThreadId]: {
@@ -64,6 +75,9 @@ vi.mock("../store", () => ({
             },
             [backgroundThreadId]: {
               "review-background": review("reviewing"),
+            },
+            [secondBackgroundThreadId]: {
+              "review-second-background": review("reviewing"),
             },
           },
         },
@@ -79,5 +93,7 @@ describe("CadReviewAgentControlHost", () => {
 
     expect(markup).toContain(backgroundThreadId);
     expect(markup).not.toContain(visibleThreadId);
+    expect(markup.match(/data-testid="cad-panel"/g)).toHaveLength(1);
+    expect(markup).toContain('data-cad-review-host-candidate-count="2"');
   });
 });

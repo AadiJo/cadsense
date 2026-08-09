@@ -34,6 +34,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         INSERT INTO projection_threads (
           thread_id,
           project_id,
+          purpose,
+          parent_thread_id,
+          review_run_id,
           title,
           external_context_json,
           model_selection_json,
@@ -54,6 +57,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         VALUES (
           ${row.threadId},
           ${row.projectId},
+          ${row.purpose},
+          ${row.parentThreadId},
+          ${row.reviewRunId},
           ${row.title},
           ${row.externalContext !== null ? JSON.stringify(row.externalContext) : null},
           ${JSON.stringify(row.modelSelection)},
@@ -74,6 +80,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         ON CONFLICT (thread_id)
         DO UPDATE SET
           project_id = excluded.project_id,
+          purpose = excluded.purpose,
+          parent_thread_id = excluded.parent_thread_id,
+          review_run_id = excluded.review_run_id,
           title = excluded.title,
           external_context_json = excluded.external_context_json,
           model_selection_json = excluded.model_selection_json,
@@ -101,6 +110,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          purpose,
+          parent_thread_id AS "parentThreadId",
+          review_run_id AS "reviewRunId",
           title,
           external_context_json AS "externalContext",
           model_selection_json AS "modelSelection",
@@ -130,6 +142,9 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          purpose,
+          parent_thread_id AS "parentThreadId",
+          review_run_id AS "reviewRunId",
           title,
           external_context_json AS "externalContext",
           model_selection_json AS "modelSelection",

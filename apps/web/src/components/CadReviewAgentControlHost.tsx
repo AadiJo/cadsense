@@ -1,11 +1,14 @@
-import { EnvironmentId, type ScopedThreadRef, ThreadId } from "@cadsense/contracts";
+import { type ScopedThreadRef } from "@cadsense/contracts";
 import { scopeThreadRef } from "@cadsense/client-runtime";
 import { useParams } from "@tanstack/react-router";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 
 import { getThreadFromEnvironmentState } from "../threadDerivation";
 import { hasRunningCadReview } from "../lib/cadReviewStatus";
+import { cadReviewChildThreadIdsForActiveReviewsInEnvironment } from "../lib/cadAgentViewState";
+import { registerCadBrokerActivator } from "../lib/cadRequestBroker";
+import { readEnvironmentApi } from "../environmentApi";
 import { type AppState, useStore } from "../store";
 import { resolveThreadRouteRef } from "../threadRoutes";
 import CadPanel from "./CadPanel";
@@ -16,16 +19,14 @@ function threadRefKey(ref: ScopedThreadRef): string {
   return `${ref.environmentId}${THREAD_REF_KEY_SEPARATOR}${ref.threadId}`;
 }
 
-function parseThreadRefKey(key: string): ScopedThreadRef | null {
-  const [environmentId, threadId, ...extra] = key.split(THREAD_REF_KEY_SEPARATOR);
-  if (!environmentId || !threadId || extra.length > 0) {
-    return null;
-  }
-  return scopeThreadRef(EnvironmentId.make(environmentId), ThreadId.make(threadId));
+interface CadReviewHostCandidate {
+  readonly key: string;
+  readonly threadRef: ScopedThreadRef;
+  readonly childThreadIds: readonly string[];
 }
 
-function selectActiveCadReviewThreadKeys(state: AppState): string[] {
-  const keys: string[] = [];
+export function selectActiveCadReviewHostCandidates(state: AppState): CadReviewHostCandidate[] {
+  const candidates: CadReviewHostCandidate[] = [];
   for (const environmentState of Object.values(state.environmentStateById)) {
     for (const threadId of environmentState.threadIds) {
       const thread = getThreadFromEnvironmentState(environmentState, threadId);
@@ -33,11 +34,19 @@ function selectActiveCadReviewThreadKeys(state: AppState): string[] {
         continue;
       }
       if (hasRunningCadReview(thread.reviews)) {
-        keys.push(threadRefKey(scopeThreadRef(thread.environmentId, thread.id)));
+        const threadRef = scopeThreadRef(thread.environmentId, thread.id);
+        candidates.push({
+          key: threadRefKey(threadRef),
+          threadRef,
+          childThreadIds: cadReviewChildThreadIdsForActiveReviewsInEnvironment(
+            environmentState,
+            thread,
+          ),
+        });
       }
     }
   }
-  return keys.toSorted();
+  return candidates.toSorted((left, right) => left.key.localeCompare(right.key));
 }
 
 export function CadReviewAgentControlHost() {
@@ -45,18 +54,46 @@ export function CadReviewAgentControlHost() {
     strict: false,
     select: (params) => resolveThreadRouteRef(params),
   });
-  const activeReviewThreadKeys = useStore(useShallow(selectActiveCadReviewThreadKeys));
+  const activeReviewCandidates = useStore(useShallow(selectActiveCadReviewHostCandidates));
   const visibleThreadKey = visibleThreadRef ? threadRefKey(visibleThreadRef) : null;
-  const activeReviewThreadRefs = useMemo(
-    () =>
-      activeReviewThreadKeys
-        .filter((key) => key !== visibleThreadKey)
-        .map(parseThreadRefKey)
-        .filter((ref): ref is ScopedThreadRef => ref !== null),
-    [activeReviewThreadKeys, visibleThreadKey],
+  const backgroundCandidates = useMemo(
+    () => activeReviewCandidates.filter((candidate) => candidate.key !== visibleThreadKey),
+    [activeReviewCandidates, visibleThreadKey],
   );
+  const [activatedThreadKey, setActivatedThreadKey] = useState<string | null>(null);
+  const activeCandidate =
+    backgroundCandidates.find((candidate) => candidate.key === activatedThreadKey) ??
+    backgroundCandidates[0] ??
+    null;
 
-  if (activeReviewThreadRefs.length === 0) {
+  useEffect(() => {
+    const unregister: Array<() => void> = [];
+    for (const candidate of backgroundCandidates) {
+      const api = readEnvironmentApi(candidate.threadRef.environmentId);
+      if (!api) {
+        continue;
+      }
+      unregister.push(
+        registerCadBrokerActivator(candidate.threadRef.environmentId, api, {
+          activatorId: `cad-review-host:${candidate.key}`,
+          routingThreadId: candidate.threadRef.threadId,
+          sameProjectThreadIds: [candidate.threadRef.threadId],
+          activeReviewThreadIds: [candidate.threadRef.threadId],
+          reviewChildThreadIds: candidate.childThreadIds,
+          controlsReviewChildren: true,
+          allowProjectFallback: false,
+          activate: () => setActivatedThreadKey(candidate.key),
+        }),
+      );
+    }
+    return () => {
+      for (const remove of unregister) {
+        remove();
+      }
+    };
+  }, [backgroundCandidates]);
+
+  if (!activeCandidate) {
     return null;
   }
 
@@ -65,12 +102,11 @@ export function CadReviewAgentControlHost() {
       aria-hidden="true"
       className="pointer-events-none fixed top-0 left-[-10000px] z-[-1] h-[720px] w-[960px] overflow-hidden opacity-0"
       data-cad-review-agent-control-host="true"
+      data-cad-review-host-candidate-count={backgroundCandidates.length}
     >
-      {activeReviewThreadRefs.map((threadRef) => (
-        <div key={threadRefKey(threadRef)} className="h-[720px] w-[960px]">
-          <CadPanel mode="inline" threadRef={threadRef} agentControlHost />
-        </div>
-      ))}
+      <div key={activeCandidate.key} className="h-[720px] w-[960px]">
+        <CadPanel mode="inline" threadRef={activeCandidate.threadRef} agentControlHost />
+      </div>
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
   ThreadId,
   type OrchestrationCommand,
   type OrchestrationReadModel,
+  type OrchestrationThread,
   ProviderInstanceId,
 } from "@cadsense/contracts";
 import * as Effect from "effect/Effect";
@@ -17,6 +18,7 @@ import {
   requireNonNegativeInteger,
   requireThread,
   requireThreadAbsent,
+  requireValidThreadCreationRelationship,
 } from "./commandInvariants.ts";
 
 const now = "2026-01-01T00:00:00.000Z";
@@ -215,5 +217,102 @@ describe("commandInvariants", () => {
         }),
       ),
     ).rejects.toThrow("greater than or equal to 0");
+  });
+
+  it("validates explicit CAD review child relationships", async () => {
+    const parentThreadId = ThreadId.make("thread-1");
+    const reviewRunId = "cad-review-1";
+    const parentWithReview: OrchestrationThread = {
+      ...readModel.threads[0]!,
+      reviews: [{ id: reviewRunId } as NonNullable<OrchestrationThread["reviews"]>[number]],
+    };
+    const relationshipReadModel: OrchestrationReadModel = {
+      ...readModel,
+      threads: [parentWithReview, ...readModel.threads.slice(1)],
+    };
+    const baseCommand = {
+      type: "thread.create" as const,
+      commandId: CommandId.make("cmd-cad-review-child"),
+      threadId: ThreadId.make("review-child"),
+      projectId: ProjectId.make("project-a"),
+      title: "review child",
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5-codex",
+      },
+      interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+      runtimeMode: "full-access" as const,
+      branch: null,
+      worktreePath: null,
+      createdAt: now,
+    };
+
+    await expect(
+      Effect.runPromise(
+        requireValidThreadCreationRelationship({
+          readModel: relationshipReadModel,
+          command: {
+            ...baseCommand,
+            parentThreadId,
+            reviewRunId,
+          },
+        }),
+      ),
+    ).rejects.toThrow("General threads cannot declare");
+
+    await expect(
+      Effect.runPromise(
+        requireValidThreadCreationRelationship({
+          readModel: relationshipReadModel,
+          command: {
+            ...baseCommand,
+            purpose: "cad-review",
+            parentThreadId: ThreadId.make("missing-parent"),
+            reviewRunId,
+          },
+        }),
+      ),
+    ).rejects.toThrow("does not exist");
+
+    await expect(
+      Effect.runPromise(
+        requireValidThreadCreationRelationship({
+          readModel: relationshipReadModel,
+          command: {
+            ...baseCommand,
+            projectId: ProjectId.make("project-b"),
+            purpose: "cad-review",
+            parentThreadId,
+            reviewRunId,
+          },
+        }),
+      ),
+    ).rejects.toThrow("different project");
+
+    await expect(
+      Effect.runPromise(
+        requireValidThreadCreationRelationship({
+          readModel,
+          command: {
+            ...baseCommand,
+            purpose: "cad-review",
+            parentThreadId,
+            reviewRunId,
+          },
+        }),
+      ),
+    ).rejects.toThrow("does not contain CAD review");
+
+    await Effect.runPromise(
+      requireValidThreadCreationRelationship({
+        readModel: relationshipReadModel,
+        command: {
+          ...baseCommand,
+          purpose: "cad-review",
+          parentThreadId,
+          reviewRunId,
+        },
+      }),
+    );
   });
 });

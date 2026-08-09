@@ -18,6 +18,7 @@ import {
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireValidThreadCreationRelationship,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 
@@ -236,6 +237,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      yield* requireValidThreadCreationRelationship({ readModel, command });
       const project = yield* requireProject({
         readModel,
         command,
@@ -252,6 +254,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          purpose: command.purpose ?? "general",
+          parentThreadId: command.parentThreadId ?? null,
+          reviewRunId: command.reviewRunId ?? null,
           title: command.title,
           ...(command.externalContext !== undefined
             ? { externalContext: command.externalContext }
