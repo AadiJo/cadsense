@@ -233,6 +233,24 @@ describe("cadThreeMfFastParser", () => {
     expect(parseThreeMfFast({ three: THREE, unzipped }).children[0]?.name).toBe("root");
   });
 
+  it("ignores relationship and geometry decoys inside processing instructions", () => {
+    const modelXml = `<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1" name="root"><mesh><vertices><?decoy <vertex x="invalid" y="0" z="0"/> ?><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>`;
+    const unzipped = unzipSync(
+      zipSync({
+        "_rels/.rels": textEncoder.encode(
+          `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><?decoy <Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/missing.model"/> ?><Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/3D/root.model"/></Relationships>`,
+        ),
+        "3D/root.model": textEncoder.encode(modelXml),
+      }),
+    );
+
+    expect(parseThreeMfFast({ three: THREE, unzipped }).children[0]?.name).toBe("root");
+  });
+
   it("rejects DTD declarations rather than interpreting custom entity markup", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0"?>
 <!DOCTYPE model [<!ENTITY decoy "<vertex x='0' y='0' z='0'/>">]>

@@ -97,13 +97,17 @@ function structuralXml(source: string): string {
   if (/<!--|-->|<!\[CDATA\[|\]\]>/u.test(withoutCdata)) {
     throw new Error("3MF XML contains an unterminated comment or CDATA section.");
   }
-  if (/<!DOCTYPE\b/iu.test(withoutCdata)) {
+  const withoutProcessingInstructions = withoutCdata.replace(/<\?[\s\S]*?\?>/gu, "");
+  if (/<\?/u.test(withoutProcessingInstructions)) {
+    throw new Error("3MF XML contains an unterminated processing instruction.");
+  }
+  if (/<!DOCTYPE\b/iu.test(withoutProcessingInstructions)) {
     throw new Error("3MF XML document type declarations are not supported.");
   }
-  if (/<!/u.test(withoutCdata)) {
+  if (/<!/u.test(withoutProcessingInstructions)) {
     throw new Error("3MF XML contains an unsupported markup declaration.");
   }
-  return withoutCdata;
+  return withoutProcessingInstructions;
 }
 
 function decodeXmlAttributeValue(value: string): string {
