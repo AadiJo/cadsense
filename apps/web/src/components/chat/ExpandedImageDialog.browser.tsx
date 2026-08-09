@@ -26,6 +26,23 @@ function Harness() {
   );
 }
 
+function SingleImageHarness() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)}>
+        Open single preview
+      </button>
+      {open && (
+        <ExpandedImageDialog
+          preview={{ images: [preview.images[0]!], index: 0 }}
+          onClose={() => setOpen(false)}
+        />
+      )}
+    </>
+  );
+}
+
 test("manages focus, navigation, and dismissal", async () => {
   const screen = await render(<Harness />);
   const opener = screen.getByRole("button", { name: "Open preview" });
@@ -62,4 +79,17 @@ test("restores focus after clicking the full-screen close target", async () => {
     .element(screen.getByRole("dialog", { name: "Expanded image preview" }))
     .not.toBeInTheDocument();
   await expect.element(opener).toHaveFocus();
+});
+
+test("keeps the pointer-only close target out of the focus cycle", async () => {
+  const screen = await render(<SingleImageHarness />);
+  await screen.getByRole("button", { name: "Open single preview" }).click();
+
+  const closeButtons = screen.getByRole("button", { name: "Close image preview" });
+  await expect.element(closeButtons.nth(1)).toHaveFocus();
+
+  await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
+  await expect.element(closeButtons.nth(1)).toHaveFocus();
+  await userEvent.keyboard("{Tab}");
+  await expect.element(closeButtons.nth(1)).toHaveFocus();
 });

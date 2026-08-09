@@ -65,6 +65,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
             <Dialog.Close
               className="absolute inset-0 z-0 cursor-zoom-out"
               aria-label="Close image preview"
+              tabIndex={-1}
             />
             {preview.images.length > 1 && (
               <Button
