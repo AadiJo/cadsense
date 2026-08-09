@@ -541,7 +541,7 @@ describe("local CAD object URL ownership", () => {
     vi.restoreAllMocks();
   });
 
-  it("revokes replaced and explicitly cleared object URLs", () => {
+  it("revokes replaced and explicitly cleared object URLs", async () => {
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const store = useUiStateStore.getState();
 
@@ -555,11 +555,12 @@ describe("local CAD object URL ownership", () => {
         { relativePath: "next.3mf", url: "blob:next", isPreferred: true },
       ]);
     useUiStateStore.getState().clearLocalCadFiles("project-a");
+    await Promise.resolve();
 
     expect(revokeObjectUrl.mock.calls).toEqual([["blob:old"], ["blob:next"]]);
   });
 
-  it("revokes files belonging to project scopes that disappear", () => {
+  it("revokes files belonging to project scopes that disappear", async () => {
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     useUiStateStore.setState({
       localCadFilesByScopeKey: {
@@ -578,6 +579,7 @@ describe("local CAD object URL ownership", () => {
         cwd: "/kept",
       },
     ]);
+    await Promise.resolve();
 
     expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
       "project-kept": [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }],
@@ -586,7 +588,7 @@ describe("local CAD object URL ownership", () => {
     expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:kept");
   });
 
-  it("keeps files when the project's physical key differs from its CAD scope key", () => {
+  it("keeps files when the project's physical key differs from its CAD scope key", async () => {
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const files = [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }];
     useUiStateStore.setState({
@@ -601,6 +603,7 @@ describe("local CAD object URL ownership", () => {
         cwd: "/project/path",
       },
     ]);
+    await Promise.resolve();
 
     expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
       "environment:project-id": files,
@@ -608,7 +611,7 @@ describe("local CAD object URL ownership", () => {
     expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
 
-  it("revokes only the removed environment when project ids are shared", () => {
+  it("revokes only the removed environment when project ids are shared", async () => {
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const retainedFiles = [
       { relativePath: "retained.3mf", url: "blob:retained", isPreferred: true },
@@ -630,6 +633,7 @@ describe("local CAD object URL ownership", () => {
         cwd: "/project/path",
       },
     ]);
+    await Promise.resolve();
 
     expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
       "environment-b:shared-project": retainedFiles,
@@ -638,7 +642,7 @@ describe("local CAD object URL ownership", () => {
     expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:retained");
   });
 
-  it("keeps a shared URL until its final owning scope is removed", () => {
+  it("keeps a shared URL until its final owning scope is removed", async () => {
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const sharedFile = { relativePath: "shared.3mf", url: "blob:shared", isPreferred: true };
     useUiStateStore.setState({
@@ -659,15 +663,40 @@ describe("local CAD object URL ownership", () => {
         cwd: "/kept",
       },
     ]);
+    await Promise.resolve();
 
     expect(revokeObjectUrl).toHaveBeenCalledTimes(1);
     expect(revokeObjectUrl).toHaveBeenCalledWith("blob:removed");
     expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:shared");
 
     useUiStateStore.getState().clearLocalCadFiles("project-kept");
+    await Promise.resolve();
 
     expect(revokeObjectUrl).toHaveBeenCalledTimes(2);
     expect(revokeObjectUrl).toHaveBeenLastCalledWith("blob:shared");
+  });
+
+  it("preserves a URL reattached asynchronously by a state subscriber", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const sharedFile = { relativePath: "shared.3mf", url: "blob:shared", isPreferred: true };
+    useUiStateStore.setState({ localCadFilesByScopeKey: { source: [sharedFile] } });
+    let reattachmentScheduled = false;
+    const unsubscribe = useUiStateStore.subscribe((state) => {
+      if (!reattachmentScheduled && !("source" in state.localCadFilesByScopeKey)) {
+        reattachmentScheduled = true;
+        queueMicrotask(() =>
+          useUiStateStore.getState().setLocalCadFiles("destination", [sharedFile]),
+        );
+      }
+    });
+
+    useUiStateStore.getState().clearLocalCadFiles("source");
+    await Promise.resolve();
+    await Promise.resolve();
+    unsubscribe();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey.destination).toEqual([sharedFile]);
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
 });
 

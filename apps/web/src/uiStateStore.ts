@@ -773,22 +773,36 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-function revokeUnownedLocalCadFileUrls(
+const pendingLocalCadFileUrlRevocations = new Set<string>();
+let localCadFileUrlRevocationScheduled = false;
+
+function scheduleUnownedLocalCadFileUrlRevocations(
   files: readonly LocalCadFile[],
-  retainedFilesByScopeKey: UiState["localCadFilesByScopeKey"],
+  readFilesByScopeKey: () => UiState["localCadFilesByScopeKey"],
 ): void {
-  const retainedUrls = new Set(
-    Object.values(retainedFilesByScopeKey).flatMap((retainedFiles) =>
-      retainedFiles.map((file) => file.url),
-    ),
-  );
-  const revokedUrls = new Set<string>();
   for (const file of files) {
-    if (file.url.startsWith("blob:") && !retainedUrls.has(file.url) && !revokedUrls.has(file.url)) {
-      URL.revokeObjectURL(file.url);
-      revokedUrls.add(file.url);
+    if (file.url.startsWith("blob:")) {
+      pendingLocalCadFileUrlRevocations.add(file.url);
     }
   }
+  if (localCadFileUrlRevocationScheduled || pendingLocalCadFileUrlRevocations.size === 0) {
+    return;
+  }
+  localCadFileUrlRevocationScheduled = true;
+  queueMicrotask(() => {
+    localCadFileUrlRevocationScheduled = false;
+    const retainedUrls = new Set(
+      Object.values(readFilesByScopeKey()).flatMap((retainedFiles) =>
+        retainedFiles.map((file) => file.url),
+      ),
+    );
+    for (const url of pendingLocalCadFileUrlRevocations) {
+      if (!retainedUrls.has(url)) {
+        URL.revokeObjectURL(url);
+      }
+    }
+    pendingLocalCadFileUrlRevocations.clear();
+  });
 }
 
 export const useUiStateStore = create<UiStateStore>((set, get) => ({
@@ -812,9 +826,9 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
         ),
       };
     });
-    revokeUnownedLocalCadFileUrls(
+    scheduleUnownedLocalCadFileUrlRevocations(
       staleScopeEntries.flatMap(([, files]) => files),
-      get().localCadFilesByScopeKey,
+      () => get().localCadFilesByScopeKey,
     );
   },
   syncThreads: (threads) => set((state) => syncThreads(state, threads)),
@@ -953,7 +967,7 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
         [scopeKey]: files,
       },
     }));
-    revokeUnownedLocalCadFileUrls(replacedFiles, get().localCadFilesByScopeKey);
+    scheduleUnownedLocalCadFileUrlRevocations(replacedFiles, () => get().localCadFilesByScopeKey);
   },
   clearLocalCadFiles: (scopeKey) => {
     const removedFiles = get().localCadFilesByScopeKey[scopeKey] ?? [];
@@ -968,7 +982,7 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
         localCadFilesByScopeKey: nextFiles,
       };
     });
-    revokeUnownedLocalCadFileUrls(removedFiles, get().localCadFilesByScopeKey);
+    scheduleUnownedLocalCadFileUrlRevocations(removedFiles, () => get().localCadFilesByScopeKey);
   },
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
