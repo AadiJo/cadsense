@@ -28,6 +28,8 @@ const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 const clientSettingsListeners = new Set<() => void>();
 const clientSettingsHydrationListeners = new Set<() => void>();
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+let persistedClientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+let clientSettingsPersistenceTail = Promise.resolve();
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 
@@ -92,7 +94,9 @@ async function hydrateClientSettings(): Promise<void> {
     try {
       const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
       if (persistedSettings) {
-        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+        const hydratedSettings = { ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings };
+        persistedClientSettingsSnapshot = hydratedSettings;
+        replaceClientSettingsSnapshot(hydratedSettings);
       }
     } catch (error) {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);
@@ -112,13 +116,17 @@ async function hydrateClientSettings(): Promise<void> {
 }
 
 async function persistClientSettings(settings: ClientSettings): Promise<void> {
-  const previousSettings = getClientSettingsSnapshot();
   replaceClientSettingsSnapshot(settings);
-  try {
+  const write = clientSettingsPersistenceTail.then(async () => {
     await ensureLocalApi().persistence.setClientSettings(settings);
+    persistedClientSettingsSnapshot = settings;
+  });
+  clientSettingsPersistenceTail = write.catch(() => undefined);
+  try {
+    await write;
   } catch (error) {
     if (getClientSettingsSnapshot() === settings) {
-      replaceClientSettingsSnapshot(previousSettings);
+      replaceClientSettingsSnapshot(persistedClientSettingsSnapshot);
     }
     throw error;
   }
@@ -253,6 +261,8 @@ export function useUpdateSettings() {
 
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  persistedClientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  clientSettingsPersistenceTail = Promise.resolve();
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
   clientSettingsListeners.clear();

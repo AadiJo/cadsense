@@ -76,4 +76,43 @@ describe("updateSettingsAndWait", () => {
     );
     expect(getClientSettings()).toBe(previousSettings);
   });
+
+  it("serializes client writes so the newest settings persist last", async () => {
+    const finishes: Array<() => void> = [];
+    mocks.setClientSettings.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          finishes.push(resolve);
+        }),
+    );
+
+    const first = updateSettingsAndWait({ timestampFormat: "12-hour" });
+    const second = updateSettingsAndWait({ timestampFormat: "24-hour" });
+    await Promise.resolve();
+    expect(mocks.setClientSettings).toHaveBeenCalledTimes(1);
+
+    finishes[0]?.();
+    await first;
+    await Promise.resolve();
+    expect(mocks.setClientSettings).toHaveBeenCalledTimes(2);
+    finishes[1]?.();
+    await second;
+
+    expect(
+      mocks.setClientSettings.mock.calls.map(([settings]) => settings.timestampFormat),
+    ).toEqual(["12-hour", "24-hour"]);
+  });
+
+  it("rolls back to the last persisted settings when concurrent writes fail", async () => {
+    const previousSettings = getClientSettings();
+    mocks.setClientSettings.mockRejectedValue(new Error("storage unavailable"));
+
+    const results = await Promise.allSettled([
+      updateSettingsAndWait({ timestampFormat: "12-hour" }),
+      updateSettingsAndWait({ timestampFormat: "24-hour" }),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(getClientSettings()).toBe(previousSettings);
+  });
 });
