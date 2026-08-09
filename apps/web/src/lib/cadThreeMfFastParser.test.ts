@@ -158,4 +158,70 @@ describe("cadThreeMfFastParser", () => {
       /declared root model part 'Models\/missing\.model'/,
     );
   });
+
+  it("decodes XML character references in geometry, names, and relationship targets", () => {
+    const modelXml = `<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unit="meter">
+  <resources>
+    <object id="1" name="A &amp; B" type="model">
+      <mesh>
+        <vertices>
+          <vertex x="&#48;" y="0" z="0" />
+          <vertex x="&#x31;" y="0" z="0" />
+          <vertex x="0" y="1" z="0" />
+        </vertices>
+        <triangles><triangle v1="0" v2="1" v3="2" /></triangles>
+      </mesh>
+    </object>
+  </resources>
+  <build><item objectid="1" /></build>
+</model>`;
+    const unzipped = unzipSync(
+      zipSync({
+        "_rels/.rels": textEncoder.encode(
+          `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/Models/root&#46;model" /></Relationships>`,
+        ),
+        "Models/root.model": textEncoder.encode(modelXml),
+      }),
+    );
+
+    const group = parseThreeMfFast({ three: THREE, unzipped });
+
+    expect(group.children[0]?.name).toBe("A & B");
+    const mesh = group.children[0] as THREE.Mesh<THREE.BufferGeometry>;
+    expect(mesh.geometry.getAttribute("position").array).toEqual(
+      new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    );
+  });
+
+  it("ignores relationships from extension namespaces", () => {
+    const rootModel = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1" name="root"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>`)["3D/3dmodel.model"]!;
+    const unzipped = unzipSync(
+      zipSync({
+        "_rels/.rels": textEncoder.encode(
+          `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships" xmlns:ext="https://example.com/extension"><ext:Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/3D/decoy.model"/><Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/3D/3dmodel.model"/></Relationships>`,
+        ),
+        "3D/decoy.model": textEncoder.encode("<not-a-model />"),
+        "3D/3dmodel.model": rootModel,
+      }),
+    );
+
+    expect(parseThreeMfFast({ three: THREE, unzipped }).children[0]?.name).toBe("root");
+  });
+
+  it("rejects triangle indices outside the vertex buffer instead of narrowing them", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="65538"/></triangles></mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>`);
+
+    expect(() => parseThreeMfFast({ three: THREE, unzipped })).toThrow(
+      /triangle that references an invalid vertex/,
+    );
+  });
 });

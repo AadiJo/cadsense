@@ -64,7 +64,9 @@ interface ParsedBuildItem {
 
 const ROOT_RELATIONSHIPS_ENTRY = "_rels/.rels";
 const ROOT_MODEL_RELATIONSHIP_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel";
-const RELATIONSHIP_PATTERN = /<(?:[a-z_][\w.-]*:)?relationship\b([^>]*)\/?>/giu;
+const PACKAGE_RELATIONSHIPS_NAMESPACE =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+const RELATIONSHIP_PATTERN = /<(?:([a-z_][\w.-]*):)?relationship\b([^>]*)\/?>/giu;
 const OBJECT_PATTERN = /<object\b([^>]*)>([\s\S]*?)<\/object>/giu;
 const COMPONENT_PATTERN = /<component\b([^>]*)\/?>/giu;
 const ITEM_PATTERN = /<item\b([^>]*)\/?>/giu;
@@ -73,14 +75,53 @@ const VERTEX_PATTERN = /<vertex\b([^>]*)\/?>/giu;
 const TRIANGLE_PATTERN = /<triangle\b([^>]*)\/?>/giu;
 const ATTRIBUTE_PATTERN_CACHE = new Map<string, RegExp>();
 
+function decodeXmlAttributeValue(value: string): string {
+  if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\dA-Fa-f]+);)/u.test(value)) {
+    throw new Error("3MF XML attribute contains an invalid character reference.");
+  }
+  return value.replace(
+    /&(amp|lt|gt|quot|apos|#(\d+)|#x([\dA-Fa-f]+));/gu,
+    (_reference, entity: string, decimal: string | undefined, hexadecimal: string | undefined) => {
+      if (decimal !== undefined || hexadecimal !== undefined) {
+        const codePoint = Number.parseInt(decimal ?? hexadecimal!, decimal === undefined ? 16 : 10);
+        if (
+          !Number.isSafeInteger(codePoint) ||
+          codePoint <= 0 ||
+          codePoint > 0x10ffff ||
+          (codePoint >= 0xd800 && codePoint <= 0xdfff)
+        ) {
+          throw new Error("3MF XML attribute contains an invalid character reference.");
+        }
+        return String.fromCodePoint(codePoint);
+      }
+      switch (entity.toLowerCase()) {
+        case "amp":
+          return "&";
+        case "lt":
+          return "<";
+        case "gt":
+          return ">";
+        case "quot":
+          return '"';
+        case "apos":
+          return "'";
+        default:
+          return "";
+      }
+    },
+  );
+}
+
 function getAttribute(source: string, name: string): string | null {
   let pattern = ATTRIBUTE_PATTERN_CACHE.get(name);
   if (!pattern) {
-    pattern = new RegExp(`(?:^|\\s)${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "iu");
+    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    pattern = new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "iu");
     ATTRIBUTE_PATTERN_CACHE.set(name, pattern);
   }
   const match = pattern.exec(source);
-  return match?.[1] ?? match?.[2] ?? null;
+  const value = match?.[1] ?? match?.[2];
+  return value === undefined ? null : decodeXmlAttributeValue(value);
 }
 
 function parseOptionalInteger(value: string | null): number | null {
@@ -152,6 +193,16 @@ function countParsedTags<T>(
     if (parse(match[1]!) !== null) {
       count += 1;
     }
+  }
+  pattern.lastIndex = 0;
+  return count;
+}
+
+function countTags(pattern: RegExp, source: string): number {
+  pattern.lastIndex = 0;
+  let count = 0;
+  while (pattern.exec(source) !== null) {
+    count += 1;
   }
   pattern.lastIndex = 0;
   return count;
@@ -264,7 +315,17 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   };
 
   const vertexCount = countParsedTags(VERTEX_PATTERN, meshBlock, parseVertex);
-  const triangleCount = countParsedTags(TRIANGLE_PATTERN, meshBlock, parseTriangle);
+  if (vertexCount !== countTags(VERTEX_PATTERN, meshBlock)) {
+    throw new Error("3MF mesh contains a vertex with invalid coordinates.");
+  }
+  const parseBoundedTriangle = (attributes: string): readonly [number, number, number] | null => {
+    const triangle = parseTriangle(attributes);
+    return triangle?.every((index) => index < vertexCount) ? triangle : null;
+  };
+  const triangleCount = countParsedTags(TRIANGLE_PATTERN, meshBlock, parseBoundedTriangle);
+  if (triangleCount !== countTags(TRIANGLE_PATTERN, meshBlock)) {
+    throw new Error("3MF mesh contains a triangle that references an invalid vertex.");
+  }
   const positions = new Float32Array(vertexCount * 3);
   const indices =
     vertexCount > 65_535 ? new Uint32Array(triangleCount * 3) : new Uint16Array(triangleCount * 3);
@@ -289,7 +350,7 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   let triangleIndex = 0;
   let triangleMatch: RegExpExecArray | null;
   while ((triangleMatch = TRIANGLE_PATTERN.exec(meshBlock)) !== null) {
-    const triangle = parseTriangle(triangleMatch[1]!);
+    const triangle = parseBoundedTriangle(triangleMatch[1]!);
     if (!triangle) {
       continue;
     }
@@ -302,6 +363,31 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   TRIANGLE_PATTERN.lastIndex = 0;
 
   return { positions, indices };
+}
+
+function rootNamespaceDeclarations(xml: string, localName: string): Map<string, string> {
+  const rootPattern = new RegExp(`<(?:[a-z_][\\w.-]*:)?${localName}\\b([^>]*)>`, "iu");
+  const rootAttributes = rootPattern.exec(xml)?.[1] ?? "";
+  const declarations = new Map<string, string>();
+  const declarationPattern = /(?:^|\s)xmlns(?::([a-z_][\w.-]*))?\s*=\s*(?:"([^"]*)"|'([^']*)')/giu;
+  let match: RegExpExecArray | null;
+  while ((match = declarationPattern.exec(rootAttributes)) !== null) {
+    declarations.set(match[1]?.toLowerCase() ?? "", decodeXmlAttributeValue(match[2] ?? match[3]!));
+  }
+  return declarations;
+}
+
+function elementNamespace(
+  prefix: string | undefined,
+  attributes: string,
+  rootDeclarations: ReadonlyMap<string, string>,
+): string | null {
+  const namespaceAttribute = prefix ? `xmlns:${prefix}` : "xmlns";
+  return (
+    getAttribute(attributes, namespaceAttribute) ??
+    rootDeclarations.get(prefix?.toLowerCase() ?? "") ??
+    null
+  );
 }
 
 function geometryForParsedMesh(
@@ -375,11 +461,19 @@ function findRootModelXml(unzipped: Record<string, Uint8Array>): Uint8Array {
   }
 
   const relationshipsXml = new TextDecoder().decode(relationshipsBytes);
+  const relationshipNamespaces = rootNamespaceDeclarations(relationshipsXml, "relationships");
   RELATIONSHIP_PATTERN.lastIndex = 0;
   let relationshipMatch: RegExpExecArray | null;
   let rootPartName: string | null = null;
   while ((relationshipMatch = RELATIONSHIP_PATTERN.exec(relationshipsXml)) !== null) {
-    const attributes = relationshipMatch[1]!;
+    const prefix = relationshipMatch[1];
+    const attributes = relationshipMatch[2]!;
+    if (
+      elementNamespace(prefix, attributes, relationshipNamespaces) !==
+      PACKAGE_RELATIONSHIPS_NAMESPACE
+    ) {
+      continue;
+    }
     if (getAttribute(attributes, "Type") !== ROOT_MODEL_RELATIONSHIP_TYPE) {
       continue;
     }
