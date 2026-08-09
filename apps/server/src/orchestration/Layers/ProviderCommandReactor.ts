@@ -31,7 +31,10 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
-import { registerCadProviderThreadAlias } from "../../cad/CadThreadAliases.ts";
+import {
+  registerCadProviderThreadAlias,
+  unregisterCadProviderThreadAliases,
+} from "../../cad/CadThreadAliases.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -443,6 +446,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         registerCadProviderThreadAlias({
           cadThreadId: cadViewThreadId ?? threadId,
+          ownerThreadId: threadId,
           resumeCursor: session.resumeCursor,
         });
         if (session.providerInstanceId === undefined) {
@@ -740,6 +744,7 @@ const make = Effect.gen(function* () {
 
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
+      unregisterCadProviderThreadAliases(event.payload.threadId);
       return;
     }
 
@@ -986,6 +991,7 @@ const make = Effect.gen(function* () {
       },
       createdAt: now,
     });
+    unregisterCadProviderThreadAliases(thread.id);
   });
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
