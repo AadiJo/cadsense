@@ -69,6 +69,63 @@ describe("updateSettingsAndWait", () => {
     await expect(updateSettingsAndWait({ providerInstances: {} })).rejects.toThrow("disk full");
   });
 
+  it("rolls concurrent server failures back to the confirmed snapshot", async () => {
+    mocks.getServerConfig.mockReturnValue({ settings: DEFAULT_SERVER_SETTINGS });
+    mocks.updateServerSettings.mockRejectedValue(new Error("disk full"));
+
+    const results = await Promise.allSettled([
+      updateSettingsAndWait({ enableAssistantStreaming: false }),
+      updateSettingsAndWait({ enableAssistantStreaming: true }),
+    ]);
+
+    expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
+    expect(mocks.applySettingsUpdated).toHaveBeenLastCalledWith(DEFAULT_SERVER_SETTINGS);
+  });
+
+  it("rebases a queued server write after an earlier write fails", async () => {
+    mocks.getServerConfig.mockReturnValue({ settings: DEFAULT_SERVER_SETTINGS });
+    mocks.updateServerSettings.mockRejectedValueOnce(new Error("disk full")).mockResolvedValueOnce({
+      ...DEFAULT_SERVER_SETTINGS,
+      enableAssistantStreaming: false,
+    });
+
+    const failedWrite = updateSettingsAndWait({ providerInstances: {} });
+    const successfulWrite = updateSettingsAndWait({ enableAssistantStreaming: false });
+
+    await expect(failedWrite).rejects.toThrow("disk full");
+    await successfulWrite;
+    expect(mocks.updateServerSettings.mock.calls).toEqual([
+      [{ providerInstances: {} }],
+      [{ enableAssistantStreaming: false }],
+    ]);
+    expect(mocks.applySettingsUpdated).toHaveBeenLastCalledWith(
+      expect.objectContaining({ enableAssistantStreaming: false }),
+    );
+  });
+
+  it("preserves an external server snapshot when a pending write fails", async () => {
+    const initialSettings = DEFAULT_SERVER_SETTINGS;
+    const externalSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      enableAssistantStreaming: false,
+    };
+    mocks.getServerConfig.mockReturnValue({ settings: initialSettings });
+    let failWrite: ((error: Error) => void) | undefined;
+    mocks.updateServerSettings.mockReturnValueOnce(
+      new Promise((_, reject) => {
+        failWrite = reject;
+      }),
+    );
+
+    const write = updateSettingsAndWait({ providerInstances: {} });
+    await vi.waitFor(() => expect(mocks.updateServerSettings).toHaveBeenCalledTimes(1));
+    mocks.getServerConfig.mockReturnValue({ settings: externalSettings });
+    failWrite?.(new Error("disk full"));
+
+    await expect(write).rejects.toThrow("disk full");
+    expect(mocks.applySettingsUpdated).toHaveBeenLastCalledWith(externalSettings);
+  });
+
   it("waits for every persistence target before surfacing a mixed-patch failure", async () => {
     let finishClientWrite: (() => void) | undefined;
     mocks.updateServerSettings.mockRejectedValueOnce(new Error("disk full"));

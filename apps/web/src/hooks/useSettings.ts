@@ -10,7 +10,11 @@
  * store.
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { ServerSettings, type ServerSettingsPatch } from "@cadsense/contracts";
+import {
+  ServerSettings,
+  type ServerSettings as ServerSettingsValue,
+  type ServerSettingsPatch,
+} from "@cadsense/contracts";
 import {
   type ClientSettingsPatch,
   type ClientSettings,
@@ -37,6 +41,14 @@ let pendingClientSettingsWrites: Array<{
 }> = [];
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
+let persistedServerSettingsSnapshot: ServerSettingsValue | null = null;
+let lastOptimisticServerSettingsSnapshot: ServerSettingsValue | null = null;
+let serverSettingsPersistenceTail = Promise.resolve();
+let nextServerSettingsWriteId = 0;
+let pendingServerSettingsWrites: Array<{
+  id: number;
+  patch: ServerSettingsPatch;
+}> = [];
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -153,6 +165,68 @@ async function persistClientSettings(patch: ClientSettingsPatch): Promise<void> 
   }
 }
 
+function refreshOptimisticServerSettingsSnapshot(): void {
+  if (!persistedServerSettingsSnapshot) {
+    return;
+  }
+  let settings = persistedServerSettingsSnapshot;
+  for (const pendingWrite of pendingServerSettingsWrites) {
+    settings = applyServerSettingsPatch(settings, pendingWrite.patch);
+  }
+  lastOptimisticServerSettingsSnapshot = settings;
+  applySettingsUpdated(settings);
+}
+
+async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> {
+  if (pendingServerSettingsWrites.length === 0) {
+    persistedServerSettingsSnapshot = getServerConfig()?.settings ?? null;
+  } else {
+    const currentSettings = getServerConfig()?.settings;
+    if (
+      currentSettings &&
+      lastOptimisticServerSettingsSnapshot &&
+      currentSettings !== lastOptimisticServerSettingsSnapshot
+    ) {
+      persistedServerSettingsSnapshot = currentSettings;
+    }
+  }
+  const pendingWrite = {
+    id: nextServerSettingsWriteId++,
+    patch,
+  };
+  pendingServerSettingsWrites.push(pendingWrite);
+  refreshOptimisticServerSettingsSnapshot();
+
+  const write = serverSettingsPersistenceTail.then(async () => {
+    const settings = await ensureLocalApi().server.updateSettings(patch);
+    persistedServerSettingsSnapshot = settings;
+  });
+  serverSettingsPersistenceTail = write.catch(() => undefined);
+  let succeeded = false;
+  try {
+    await write;
+    succeeded = true;
+  } finally {
+    const currentSettings = getServerConfig()?.settings;
+    if (
+      !succeeded &&
+      currentSettings &&
+      lastOptimisticServerSettingsSnapshot &&
+      currentSettings !== lastOptimisticServerSettingsSnapshot
+    ) {
+      persistedServerSettingsSnapshot = currentSettings;
+    }
+    pendingServerSettingsWrites = pendingServerSettingsWrites.filter(
+      (candidate) => candidate.id !== pendingWrite.id,
+    );
+    refreshOptimisticServerSettingsSnapshot();
+    if (pendingServerSettingsWrites.length === 0) {
+      persistedServerSettingsSnapshot = null;
+      lastOptimisticServerSettingsSnapshot = null;
+    }
+  }
+}
+
 // ── Key sets for routing patches ─────────────────────────────────────
 
 const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields));
@@ -224,24 +298,7 @@ export async function updateSettingsAndWait(patch: Partial<UnifiedSettings>): Pr
   const writes: Promise<void>[] = [];
 
   if (Object.keys(serverPatch).length > 0) {
-    const previousServerConfig = getServerConfig();
-    const optimisticSettings = previousServerConfig
-      ? applyServerSettingsPatch(previousServerConfig.settings, serverPatch)
-      : null;
-    if (optimisticSettings) {
-      applySettingsUpdated(optimisticSettings);
-    }
-    writes.push(
-      ensureLocalApi()
-        .server.updateSettings(serverPatch)
-        .then(() => undefined)
-        .catch((error) => {
-          if (optimisticSettings && getServerConfig()?.settings === optimisticSettings) {
-            applySettingsUpdated(previousServerConfig!.settings);
-          }
-          throw error;
-        }),
-    );
+    writes.push(persistServerSettings(serverPatch));
   }
 
   if (Object.keys(clientPatch).length > 0) {
@@ -287,6 +344,11 @@ export function __resetClientSettingsPersistenceForTests(): void {
   pendingClientSettingsWrites = [];
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
+  persistedServerSettingsSnapshot = null;
+  lastOptimisticServerSettingsSnapshot = null;
+  serverSettingsPersistenceTail = Promise.resolve();
+  nextServerSettingsWriteId = 0;
+  pendingServerSettingsWrites = [];
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }
