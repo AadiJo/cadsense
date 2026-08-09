@@ -170,14 +170,9 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     );
 
   const dispatchNotification = (notification: AcpIncomingNotification) =>
-    Queue.offer(notificationQueue, notification).pipe(
-      Effect.andThen(
-        options.onNotification
-          ? options.onNotification(notification).pipe(Effect.catch(() => Effect.void))
-          : Effect.void,
-      ),
-      Effect.asVoid,
-    );
+    options.onNotification
+      ? options.onNotification(notification).pipe(Effect.catch(() => Effect.void))
+      : Queue.offer(notificationQueue, notification).pipe(Effect.asVoid);
 
   const emitClientProtocolError = (error: AcpError.AcpError) =>
     Queue.offer(clientQueue, {

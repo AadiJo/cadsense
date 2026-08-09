@@ -65,6 +65,37 @@ const makeHandle = (env?: Record<string, string>) =>
   });
 
 it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
+  it.effect("does not retain a duplicate notification stream when a callback handles it", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Deferred.make<AcpProtocol.AcpIncomingNotification>();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: (notification) =>
+          Deferred.succeed(handled, notification).pipe(Effect.asVoid),
+      });
+      const mirrored = yield* transport.incoming.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
+
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(ElicitationCompleteNotification, {
+          jsonrpc: "2.0",
+          method: "session/elicitation/complete",
+          params: { elicitationId: "elicitation-1" },
+        }),
+      );
+
+      assert.equal((yield* Deferred.await(handled))._tag, "ElicitationComplete");
+      yield* Effect.yieldNow;
+      assert.isUndefined(mirrored.pollUnsafe());
+    }),
+  );
+
   it.effect(
     "emits exact JSON-RPC notifications and decodes inbound session/update and elicitation completion",
     () =>
