@@ -17,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 import {
   SecretStoreError,
   ServerSecretStore,
@@ -744,6 +745,49 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
     }),
   );
+
+  it.effect("emits the materialized secret snapshot committed by each update", () => {
+    const values = new Map<string, Uint8Array>();
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) => Effect.sync(() => values.get(name) ?? null),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, Uint8Array.from(value));
+        }),
+      remove: (name) => Effect.sync(() => values.delete(name)).pipe(Effect.asVoid),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const updatesFiber = yield* serverSettings.streamChanges.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      const instance = (value: string) => ({
+        driver: ProviderDriverKind.make("codex"),
+        environment: [{ name: "SECRET", value, sensitive: true }],
+        config: {},
+      });
+      yield* serverSettings.updateSettings({
+        providerInstances: { [instanceId]: instance("first-secret") },
+      });
+      yield* serverSettings.updateSettings({
+        providerInstances: { [instanceId]: instance("second-secret") },
+      });
+
+      const updates = Array.from(yield* Fiber.join(updatesFiber));
+      assert.deepEqual(
+        updates.map((settings) => settings.providerInstances[instanceId]?.environment?.[0]?.value),
+        ["first-secret", "second-secret"],
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
 
   it.effect("restores the exact settings file when a secret write fails", () => {
     const secretStore: ServerSecretStoreShape = {

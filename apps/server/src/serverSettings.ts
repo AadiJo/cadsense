@@ -586,7 +586,8 @@ const makeServerSettings = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* Cache.invalidate(settingsCache, cacheKey);
       const settings = yield* getSettingsFromCache;
-      yield* emitChange(settings);
+      const materialized = yield* materializeProviderEnvironmentSecrets(settings);
+      yield* emitChange(materialized);
     }),
   );
 
@@ -707,20 +708,7 @@ const makeServerSettings = Effect.gen(function* () {
         }),
       ),
     get streamChanges() {
-      return Stream.fromPubSub(changesPubSub).pipe(
-        Stream.mapEffect((settings) =>
-          materializeProviderEnvironmentSecrets(settings).pipe(
-            Effect.map((materialized): ServerSettings | null => materialized),
-            Effect.catch((error: ServerSettingsError) =>
-              Effect.logWarning("failed to materialize provider environment secrets", {
-                detail: error.detail,
-              }).pipe(Effect.as<ServerSettings | null>(null)),
-            ),
-          ),
-        ),
-        Stream.filter((settings): settings is ServerSettings => settings !== null),
-        Stream.map(resolveTextGenerationProvider),
-      );
+      return Stream.fromPubSub(changesPubSub).pipe(Stream.map(resolveTextGenerationProvider));
     },
   } satisfies ServerSettingsShape;
 });
