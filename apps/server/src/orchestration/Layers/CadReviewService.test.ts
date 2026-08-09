@@ -33,7 +33,7 @@ import {
   dedupeCadReviewActionItems,
   extractJsonObject,
   firstPendingInteractiveChildPrompt,
-  isUnsupportedCodexCadScreenshotExportRootError,
+  isUnsupportedCadScreenshotExportRootError,
   mechanismPlanOutputIsReady,
   outputTokensFromChildThread,
   personaReviewOutputIsReady,
@@ -287,22 +287,20 @@ describe("CadReviewService", () => {
     expect(
       userVisibleErrorMessage(
         [
-          "CadReviewRunError: Provider instance 'opencode' does not expose a Codex CAD screenshot export root.",
+          "CadReviewRunError: Provider instance 'opencode' does not expose a CAD screenshot export root.",
           "    at file:///internal/CadReviewService.ts:1281:15",
         ].join("\n"),
       ),
-    ).toBe("Provider instance 'opencode' does not expose a Codex CAD screenshot export root.");
+    ).toBe("Provider instance 'opencode' does not expose a CAD screenshot export root.");
   });
 
   it("recognizes provider instances that cannot run automatic baseline screenshot export", () => {
     expect(
-      isUnsupportedCodexCadScreenshotExportRootError(
-        "Provider instance 'opencode' does not expose a Codex CAD screenshot export root.",
+      isUnsupportedCadScreenshotExportRootError(
+        "Provider instance 'opencode' does not expose a CAD screenshot export root.",
       ),
     ).toBe(true);
-    expect(isUnsupportedCodexCadScreenshotExportRootError("Failed to capture iso view.")).toBe(
-      false,
-    );
+    expect(isUnsupportedCadScreenshotExportRootError("Failed to capture iso view.")).toBe(false);
   });
 
   it("estimates child output tokens from assistant text when provider token usage is absent", () => {

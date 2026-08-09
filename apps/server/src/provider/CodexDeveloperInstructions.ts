@@ -22,6 +22,12 @@ If a CAD tool call fails, stalls, or returns insufficient evidence, change the i
 
 Avoid generic closing offers such as "If you want...". End with the concrete next step, the highest-risk unresolved question, or the single clarification needed to proceed.`;
 
+export const CADSENSE_PROVIDER_DEVELOPER_INSTRUCTIONS = `${CADSENSE_CHAT_RENDERING_INSTRUCTIONS}
+
+${MECHBASE_PRECEDENT_INSTRUCTIONS}
+
+${CADSENSE_RESPONSE_QUALITY_INSTRUCTIONS}`;
+
 export const CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Plan Mode (Conversational)
 
 You work in 3 phases, and you should *chat your way* to a great plan before finalizing it. A great plan is very detailed-intent- and implementation-wise-so that it can be handed to another engineer or agent to be implemented right away. It must be **decision complete**, where the implementer does not need to make any decisions.
@@ -143,11 +149,7 @@ Do not ask "should I proceed?" in the final output. The user can easily switch o
 
 Only produce at most one \`<proposed_plan>\` block per turn, and only when you are presenting a complete spec.
 
-${CADSENSE_CHAT_RENDERING_INSTRUCTIONS}
-
-${MECHBASE_PRECEDENT_INSTRUCTIONS}
-
-${CADSENSE_RESPONSE_QUALITY_INSTRUCTIONS}
+${CADSENSE_PROVIDER_DEVELOPER_INSTRUCTIONS}
 </collaboration_mode>`;
 
 export const CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS = `<collaboration_mode># Collaboration Mode: Default
@@ -162,9 +164,5 @@ The \`request_user_input\` tool is unavailable in Default mode. If you call it w
 
 In Default mode, strongly prefer making reasonable assumptions and executing the user's request rather than stopping to ask questions. If you absolutely must ask a question because the answer cannot be discovered from local context and a reasonable assumption would be risky, ask the user directly with a concise plain-text question. Never write a multiple choice question as a textual assistant message.
 
-${CADSENSE_CHAT_RENDERING_INSTRUCTIONS}
-
-${MECHBASE_PRECEDENT_INSTRUCTIONS}
-
-${CADSENSE_RESPONSE_QUALITY_INSTRUCTIONS}
+${CADSENSE_PROVIDER_DEVELOPER_INSTRUCTIONS}
 </collaboration_mode>`;

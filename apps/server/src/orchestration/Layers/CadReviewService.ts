@@ -185,8 +185,8 @@ function userVisibleCauseMessage(cause: Cause.Cause<unknown>): string {
   return userVisibleErrorMessage(Cause.pretty(cause));
 }
 
-export function isUnsupportedCodexCadScreenshotExportRootError(error: string): boolean {
-  return error.toLowerCase().includes("does not expose a codex cad screenshot export root");
+export function isUnsupportedCadScreenshotExportRootError(error: string): boolean {
+  return error.toLowerCase().includes("does not expose a cad screenshot export root");
 }
 
 function assistantText(messages: ReadonlyArray<OrchestrationMessage>): string {
@@ -1997,7 +1997,7 @@ const make = Effect.gen(function* () {
         Effect.map((exit): BaselineCaptureResult => {
           if (Exit.isFailure(exit)) {
             const error = userVisibleCauseMessage(exit.cause);
-            if (isUnsupportedCodexCadScreenshotExportRootError(error)) {
+            if (isUnsupportedCadScreenshotExportRootError(error)) {
               return {
                 ok: true,
                 skipped: true,

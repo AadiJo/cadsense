@@ -81,8 +81,8 @@ const SET_CAD_CAMERA_TOOL_DESCRIPTION = [
 ].join("\n");
 
 const EXPORT_CAD_SCREENSHOT_TOOL_DESCRIPTION = [
-  "Capture a PNG screenshot of the CAD side panel (the live WebGL view of the synced assembly/model) and save it under the Codex export directory.",
-  `Files are written to ${CAD_VIEW_EXPORT_ROOT_ENV}/<threadId>/ (by default the cadsense-cad-screenshots folder inside the configured Codex home or shadow home).`,
+  "Capture a PNG screenshot of the CAD side panel (the live WebGL view of the synced assembly/model) and save it under the provider export directory.",
+  `Files are written to ${CAD_VIEW_EXPORT_ROOT_ENV}/<threadId>/ (by default the cadsense-cad-screenshots folder inside the configured provider home).`,
   "The agent can read the returned absolute path with normal file tools.",
   "Optional `view` applies that fixed camera first (same names as set_cad_view, including -close-up detail presets). Omit `view` to capture the user's current camera.",
   "",

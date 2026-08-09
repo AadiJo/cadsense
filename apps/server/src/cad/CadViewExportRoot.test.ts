@@ -1,5 +1,4 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { describe, expect, it } from "vitest";
@@ -54,9 +53,9 @@ describe("CadViewExportRoot", () => {
     expect(result.replaceAll("\\", "/")).toContain("/legacy-codex-home/cadsense-cad-screenshots");
   });
 
-  it("rejects non-Codex instances", async () => {
+  it("resolves the Claude screenshot export root for explicit instances", async () => {
     const claudeInstanceId = providerInstanceId("claudeAgent");
-    const exit = await Effect.runPromiseExit(
+    const result = await Effect.runPromise(
       resolveCadViewExportRootForInstance(claudeInstanceId).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -65,7 +64,7 @@ describe("CadViewExportRoot", () => {
               providerInstances: {
                 [claudeInstanceId]: {
                   driver: "claudeAgent",
-                  config: {},
+                  config: { homePath: "~/cad-claude-home" },
                 },
               },
             }),
@@ -74,11 +73,25 @@ describe("CadViewExportRoot", () => {
       ),
     );
 
-    expect(exit._tag).toBe("Failure");
-    if (exit._tag === "Failure") {
-      expect(Cause.pretty(exit.cause)).toContain(
-        "does not expose a Codex CAD screenshot export root",
-      );
-    }
+    expect(result.replaceAll("\\", "/")).toContain("/cad-claude-home/cadsense-cad-screenshots");
+  });
+
+  it("falls back to legacy providers.claudeAgent settings for the default instance id", async () => {
+    const result = await Effect.runPromise(
+      resolveCadViewExportRootForInstance(providerInstanceId("claudeAgent")).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            ServerSettingsService.layerTest({
+              providers: {
+                claudeAgent: { homePath: "~/legacy-claude-home" },
+              },
+            }),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.replaceAll("\\", "/")).toContain("/legacy-claude-home/cadsense-cad-screenshots");
   });
 });

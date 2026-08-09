@@ -33,8 +33,10 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
+import { CAD_VIEW_EXPORT_ROOT_ENV } from "../../cad/CadViewMcp.ts";
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import { CADSENSE_PROVIDER_DEVELOPER_INSTRUCTIONS } from "../CodexDeveloperInstructions.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
@@ -156,6 +158,7 @@ function makeHarness(config?: {
   readonly baseDir?: string;
   readonly claudeConfig?: Partial<ClaudeSettings>;
   readonly instanceId?: ProviderInstanceId;
+  readonly cadViewMcpExportRoot?: string;
 }) {
   const query = new FakeClaudeQuery();
   let createInput:
@@ -167,6 +170,7 @@ function makeHarness(config?: {
 
   const adapterOptions: ClaudeAdapterLiveOptions = {
     ...(config?.instanceId ? { instanceId: config.instanceId } : {}),
+    ...(config?.cadViewMcpExportRoot ? { cadViewMcpExportRoot: config.cadViewMcpExportRoot } : {}),
     createQuery: (input) => {
       createInput = input;
       return query;
@@ -332,6 +336,51 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settingSources, ["user", "project", "local"]);
       assert.equal(createInput?.options.permissionMode, undefined);
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("appends CadSense provider instructions to the Claude Code prompt", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "approval-required",
+      });
+
+      assert.deepEqual(harness.getLastCreateQueryInput()?.options.systemPrompt, {
+        type: "preset",
+        preset: "claude_code",
+        append: CADSENSE_PROVIDER_DEVELOPER_INSTRUCTIONS,
+      });
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("targets the visible CAD thread and configures Claude screenshot exports", () => {
+    const exportRoot = "C:/tmp/cadsense-claude-cad-screenshots";
+    const visibleCadThreadId = ThreadId.make("thread-visible-cad-panel");
+    const harness = makeHarness({ cadViewMcpExportRoot: exportRoot });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        cadViewThreadId: visibleCadThreadId,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const cadServer =
+        harness.getLastCreateQueryInput()?.options.mcpServers?.["cadsense-cad-view"];
+      if (!cadServer || typeof cadServer === "string" || "type" in cadServer) return;
+      assert.equal(cadServer.env?.CADSENSE_CAD_VIEW_THREAD_ID, visibleCadThreadId);
+      assert.equal(cadServer.env?.[CAD_VIEW_EXPORT_ROOT_ENV], exportRoot);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -860,6 +909,57 @@ describe("ClaudeAdapterLive", () => {
       if (turnCompleted?.type === "turn.completed") {
         assert.equal(String(turnCompleted.turnId), String(turn.turnId));
         assert.equal(turnCompleted.payload.state, "completed");
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("classifies Claude MCP content blocks as canonical MCP tool calls", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const runtimeEventsFiber = yield* Stream.take(adapter.streamEvents, 6).pipe(
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "inspect the CAD model",
+        attachments: [],
+      });
+
+      harness.query.emit({
+        type: "stream_event",
+        session_id: "sdk-session-mcp",
+        uuid: "stream-mcp-1",
+        parent_tool_use_id: null,
+        event: {
+          type: "content_block_start",
+          index: 0,
+          content_block: {
+            type: "mcp_tool_use",
+            id: "mcp-tool-1",
+            name: "set_cad_view",
+            server_name: "cadsense-cad-view",
+            input: { view: "isometric" },
+          },
+        },
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const toolStarted = runtimeEvents.find((event) => event.type === "item.started");
+      assert.equal(toolStarted?.type, "item.started");
+      if (toolStarted?.type === "item.started") {
+        assert.equal(toolStarted.payload.itemType, "mcp_tool_call");
+        assert.equal(toolStarted.payload.title, "MCP tool call");
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -2982,7 +3082,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("restores base permission mode on sendTurn when interactionMode is plan", () => {
+  it.effect("uses Claude's native plan permission mode for plan turns", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2999,7 +3099,7 @@ describe("ClaudeAdapterLive", () => {
         attachments: [],
       });
 
-      assert.deepEqual(harness.query.setPermissionModeCalls, ["bypassPermissions"]);
+      assert.deepEqual(harness.query.setPermissionModeCalls, ["plan"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -3011,7 +3111,7 @@ describe("ClaudeAdapterLive", () => {
     { runtimeMode: "approval-required", expectedBase: "default" },
     { runtimeMode: "auto-accept-edits", expectedBase: "acceptEdits" },
   ])(
-    "keeps $expectedBase permission mode after plan turn ($runtimeMode)",
+    "restores $expectedBase permission mode after a plan turn ($runtimeMode)",
     ({ runtimeMode, expectedBase }) => {
       const harness = makeHarness();
       return Effect.gen(function* () {
@@ -3056,7 +3156,7 @@ describe("ClaudeAdapterLive", () => {
           attachments: [],
         });
 
-        assert.deepEqual(harness.query.setPermissionModeCalls, [expectedBase, expectedBase]);
+        assert.deepEqual(harness.query.setPermissionModeCalls, ["plan", expectedBase]);
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),
