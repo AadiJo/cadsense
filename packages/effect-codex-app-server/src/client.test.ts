@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -5,11 +6,39 @@ import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Scope from "effect/Scope";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 
 import * as CodexClient from "./client.ts";
+
+it("resolves Windows npm command shims without passing arguments through cmd.exe", () => {
+  if (process.platform !== "win32") return;
+  const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-command-shim-"));
+  try {
+    const script = NodePath.join(prefix, "node_modules", "@openai", "codex", "bin", "codex.js");
+    mkdirSync(NodePath.dirname(script), { recursive: true });
+    writeFileSync(script, "");
+    writeFileSync(
+      NodePath.join(prefix, "codex.cmd"),
+      '@echo off\n"%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\n',
+    );
+    const args = ["app-server", "--config", "value & whoami"];
+
+    const resolved = CodexClient.resolveCommandForSpawn(
+      { command: "codex", args, env: { PATH: prefix, PATHEXT: ".EXE;.CMD" } },
+      "win32",
+    );
+
+    assert.equal(resolved.command, process.execPath);
+    assert.deepEqual(resolved.args, [script, ...args]);
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
 
 const mockPeerPath = Effect.map(Effect.service(Path.Path), (path) =>
   path.join(import.meta.dirname, "../test/fixtures/codex-app-server-mock-peer.ts"),

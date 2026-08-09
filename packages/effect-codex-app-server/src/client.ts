@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -5,6 +6,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { existsSync, readFileSync } from "node:fs";
+import * as NodePath from "node:path";
 
 import * as CodexRpc from "./_generated/meta.gen.ts";
 import * as CodexError from "./errors.ts";
@@ -292,6 +295,86 @@ export interface CodexAppServerCommandLayerOptions extends CodexAppServerClientO
   readonly env?: Record<string, string>;
 }
 
+interface ResolvedSpawnCommand {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
+function readWindowsEnv(env: Record<string, string | undefined>, name: string): string | undefined {
+  const entry = Object.entries(env).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return entry?.[1];
+}
+
+function resolveWindowsCommandPath(
+  command: string,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): string | null {
+  const hasPathSegment = command.includes("/") || command.includes("\\");
+  const searchDirectories = hasPathSegment
+    ? [NodePath.win32.resolve(cwd, NodePath.win32.dirname(command))]
+    : (readWindowsEnv(env, "PATH") ?? "").split(";").filter((entry) => entry.length > 0);
+  const commandName = hasPathSegment ? NodePath.win32.basename(command) : command;
+  const extensions = NodePath.win32.extname(commandName)
+    ? [""]
+    : (readWindowsEnv(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD").split(";");
+
+  for (const directory of searchDirectories) {
+    for (const extension of extensions) {
+      const candidate = NodePath.win32.join(directory, `${commandName}${extension}`);
+      if (existsSync(candidate)) return candidate;
+    }
+  }
+  return null;
+}
+
+function resolveWindowsCommandShim(
+  command: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  env: Record<string, string | undefined>,
+  depth = 0,
+): ResolvedSpawnCommand {
+  if (depth > 5) return { command, args };
+  const resolvedPath = resolveWindowsCommandPath(command, cwd, env);
+  if (!resolvedPath || !/\.(?:cmd|bat)$/i.test(resolvedPath)) {
+    return { command: resolvedPath ?? command, args };
+  }
+
+  try {
+    const source = readFileSync(resolvedPath, "utf8");
+    const npmScript = source.match(/["']%dp0%[\\/]([^"'\r\n]+\.js)["']\s+%\*/i)?.[1];
+    if (npmScript) {
+      const scriptPath = NodePath.win32.resolve(NodePath.win32.dirname(resolvedPath), npmScript);
+      if (existsSync(scriptPath)) {
+        const adjacentNode = NodePath.win32.join(NodePath.win32.dirname(resolvedPath), "node.exe");
+        return {
+          command: existsSync(adjacentNode) ? adjacentNode : process.execPath,
+          args: [scriptPath, ...args],
+        };
+      }
+    }
+
+    const forwardingShim = source.match(/^\s*["']([^"'\r\n]+\.(?:cmd|bat))["']\s+%\*\s*$/im)?.[1];
+    if (forwardingShim) {
+      return resolveWindowsCommandShim(forwardingShim, args, cwd, env, depth + 1);
+    }
+  } catch {
+    // Preserve the normal spawn error when a shim cannot be inspected.
+  }
+  return { command: resolvedPath, args };
+}
+
+export function resolveCommandForSpawn(
+  options: Pick<CodexAppServerCommandLayerOptions, "command" | "args" | "cwd" | "env">,
+  platform: NodeJS.Platform = process.platform,
+): ResolvedSpawnCommand {
+  const args = options.args ?? [];
+  if (platform !== "win32") return { command: options.command, args };
+  const env = { ...process.env, ...options.env };
+  return resolveWindowsCommandShim(options.command, args, options.cwd ?? process.cwd(), env);
+}
+
 export const layerCommand = (
   options: CodexAppServerCommandLayerOptions,
 ): Layer.Layer<
@@ -303,7 +386,8 @@ export const layerCommand = (
     CodexAppServerClient,
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
+      const resolved = resolveCommandForSpawn(options);
+      const command = ChildProcess.make(resolved.command, [...resolved.args], {
         ...(options.cwd ? { cwd: options.cwd } : {}),
         ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
         forceKillAfter: DEFAULT_APP_SERVER_FORCE_KILL_AFTER,
