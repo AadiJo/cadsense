@@ -8,13 +8,13 @@ import {
   cadViewerViewCommandSettleMs,
 } from "./lib/cadViewerCameraTransition";
 import { cadEmbeddedViewerEdgeSettings } from "./lib/cadEmbeddedViewerTuning";
-import {
-  buildThreeMfFastGroup,
-  getThreeMfRootModelByteLength,
-  parseThreeMfFast,
-  type CadThreeMfParsedModel,
-} from "./lib/cadThreeMfFastParser";
+import { buildThreeMfFastGroup, type CadThreeMfParsedModel } from "./lib/cadThreeMfFastParser";
 import ThreeMfFastParserWorker from "./lib/cadThreeMfFastParser.worker?worker";
+import {
+  inspectThreeMfArchive,
+  MAX_CAD_MODEL_DOWNLOAD_BYTES,
+  readResponseArrayBufferWithinLimit,
+} from "./lib/cadThreeMfResourceLimits";
 import {
   CAD_VIEWER_FRAME_PARENT_SOURCE,
   CAD_VIEWER_FRAME_SOURCE,
@@ -666,7 +666,7 @@ function normalizeFallbackViewerToCadAxes(
  * Below this threshold, the standard online-3d-viewer pipeline is fast enough.
  */
 const DIRECT_3MF_THRESHOLD_BYTES = 5 * 1024 * 1024;
-const FAST_3MF_XML_THRESHOLD_BYTES = 32 * 1024 * 1024;
+const FAST_3MF_WORKER_EXPANDED_THRESHOLD_BYTES = 32 * 1024 * 1024;
 const FAST_3MF_WORKER_ARCHIVE_THRESHOLD_BYTES = 8 * 1024 * 1024;
 const FAST_3MF_WORKER_TIMEOUT_MS = 45_000;
 
@@ -1363,15 +1363,12 @@ async function loadFilesDirect3mfUrl(
   onStage?: (stage: CadViewerFrameLoadStage) => void,
 ): Promise<void> {
   destroyViewer();
-  const [threeModule, threeMfModule, orbitControlsModule, fflateModule] = await Promise.all([
+  const [threeModule, threeMfModule, orbitControlsModule] = await Promise.all([
     import("three"),
     import("three/examples/jsm/loaders/3MFLoader.js") as Promise<{
       ThreeMFLoader: { new (): ThreeMFLoaderInstance };
     }>,
     import("three/examples/jsm/controls/OrbitControls.js"),
-    import("three/examples/jsm/libs/fflate.module.js") as Promise<{
-      unzipSync: (data: Uint8Array) => Record<string, Uint8Array>;
-    }>,
   ]);
   onStage?.("direct-3mf-imports-loaded");
 
@@ -1383,29 +1380,24 @@ async function loadFilesDirect3mfUrl(
     model = cloneCachedThreeModel(cachedModel);
     prepareExplodedMeshes(model.group, threeModule, model.boundingSphere);
   } else {
+    if (file.sizeBytes !== undefined && file.sizeBytes > MAX_CAD_MODEL_DOWNLOAD_BYTES) {
+      throw new Error(
+        `CAD model download exceeds the ${MAX_CAD_MODEL_DOWNLOAD_BYTES / (1024 * 1024)} MiB safety limit.`,
+      );
+    }
     const response = await fetch(file.url, { credentials: "same-origin" });
     if (!response.ok) {
       throw new Error(`Failed to fetch CAD model asset '${file.name}': HTTP ${response.status}`);
     }
-    const buffer = await response.arrayBuffer();
+    const buffer = await readResponseArrayBufferWithinLimit(response, MAX_CAD_MODEL_DOWNLOAD_BYTES);
+    const archiveStats = inspectThreeMfArchive(new Uint8Array(buffer));
     let group: ThreeGroup | null = null;
-    if (buffer.byteLength >= FAST_3MF_WORKER_ARCHIVE_THRESHOLD_BYTES) {
-      try {
-        group = await parseThreeMfFastWithWorker({ buffer, three: threeModule });
-        onStage?.("direct-3mf-fast-parsed");
-      } catch (error) {
-        console.warn("CAD viewer worker 3MF fast path failed; falling back to main parser.", error);
-      }
-    }
-
-    if (!group) {
-      const unzipped = fflateModule.unzipSync(new Uint8Array(buffer));
-      onStage?.("direct-3mf-archive-expanded");
-      const rootModelByteLength = getThreeMfRootModelByteLength(unzipped);
-      if (rootModelByteLength !== null && rootModelByteLength > FAST_3MF_XML_THRESHOLD_BYTES) {
-        group = parseThreeMfFast({ three: threeModule, unzipped });
-        onStage?.("direct-3mf-fast-parsed");
-      }
+    if (
+      buffer.byteLength >= FAST_3MF_WORKER_ARCHIVE_THRESHOLD_BYTES ||
+      archiveStats.expandedBytes >= FAST_3MF_WORKER_EXPANDED_THRESHOLD_BYTES
+    ) {
+      group = await parseThreeMfFastWithWorker({ buffer, three: threeModule });
+      onStage?.("direct-3mf-fast-parsed");
     }
 
     if (!group) {

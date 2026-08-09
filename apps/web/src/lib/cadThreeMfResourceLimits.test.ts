@@ -1,0 +1,73 @@
+import { describe, expect, it } from "vitest";
+import { zipSync } from "three/examples/jsm/libs/fflate.module.js";
+
+import {
+  inspectThreeMfArchive,
+  MAX_3MF_ARCHIVE_ENTRIES,
+  MAX_3MF_EXPANDED_ENTRY_BYTES,
+  readResponseArrayBufferWithinLimit,
+  unzipThreeMfWithinLimits,
+} from "./cadThreeMfResourceLimits";
+
+describe("3MF resource limits", () => {
+  it("inspects and expands archives within the configured bounds", () => {
+    const archive = zipSync({ "3D/model.model": new TextEncoder().encode("model") });
+
+    expect(inspectThreeMfArchive(archive)).toEqual({ entries: 1, expandedBytes: 5 });
+    expect(new TextDecoder().decode(unzipThreeMfWithinLimits(archive)["3D/model.model"])).toBe(
+      "model",
+    );
+  });
+
+  it("rejects archives with too many entries before expansion", () => {
+    const files = Object.fromEntries(
+      Array.from({ length: MAX_3MF_ARCHIVE_ENTRIES + 1 }, (_, index) => [
+        `3D/${index}.model`,
+        new Uint8Array(0),
+      ]),
+    );
+    const archive = zipSync(files);
+
+    expect(() => inspectThreeMfArchive(archive)).toThrow(/entry safety limit/);
+  });
+
+  it("rejects an archive entry larger than the expanded-size limit", () => {
+    const archive = zipSync({ "3D/model.model": new Uint8Array(1) });
+    const bytes = new Uint8Array(archive);
+    const centralDirectorySignature = [0x50, 0x4b, 0x01, 0x02];
+    const offset = bytes.findIndex((value, index) =>
+      centralDirectorySignature.every(
+        (signatureByte, delta) => bytes[index + delta] === signatureByte,
+      ),
+    );
+    expect(offset).toBeGreaterThanOrEqual(0);
+    const oversized = MAX_3MF_EXPANDED_ENTRY_BYTES + 1;
+    new DataView(bytes.buffer).setUint32(offset + 24, oversized, true);
+
+    expect(() => inspectThreeMfArchive(bytes)).toThrow(/entry.*safety limit/);
+  });
+
+  it("rejects a declared response length before reading the body", async () => {
+    const response = new Response("small", { headers: { "content-length": "11" } });
+
+    await expect(readResponseArrayBufferWithinLimit(response, 10)).rejects.toThrow(
+      /download.*safety limit/,
+    );
+  });
+
+  it("stops streaming a response once the byte limit is crossed", async () => {
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array(6));
+          controller.enqueue(new Uint8Array(5));
+          controller.close();
+        },
+      }),
+    );
+
+    await expect(readResponseArrayBufferWithinLimit(response, 10)).rejects.toThrow(
+      /download.*safety limit/,
+    );
+  });
+});
