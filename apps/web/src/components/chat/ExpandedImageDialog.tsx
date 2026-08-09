@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useState } from "react";
+import { Dialog } from "@base-ui/react/dialog";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { ChevronLeftIcon, ChevronRightIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -13,6 +14,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
   onClose,
 }: ExpandedImageDialogProps) {
   const [preview, setPreview] = useState(initialPreview);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   // Sync when the parent hands us a new preview reference.
   useEffect(() => {
@@ -31,12 +33,6 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
 
   useEffect(() => {
     const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        onClose();
-        return;
-      }
       if (preview.images.length <= 1) return;
       if (event.key === "ArrowLeft") {
         event.preventDefault();
@@ -51,70 +47,85 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [navigateImage, onClose, preview.images.length]);
+  }, [navigateImage, preview.images.length]);
 
   const item = preview.images[preview.index];
   if (!item) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 px-4 py-6 [-webkit-app-region:no-drag]"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Expanded image preview"
+    <Dialog.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
     >
-      <button
-        type="button"
-        className="absolute inset-0 z-0 cursor-zoom-out"
-        aria-label="Close image preview"
-        onClick={onClose}
-      />
-      {preview.images.length > 1 && (
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="absolute left-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white motion-safe:not-disabled:hover:-translate-y-1/2 motion-safe:not-disabled:active:-translate-y-1/2 sm:left-6"
-          aria-label="Previous image"
-          onClick={() => navigateImage(-1)}
-        >
-          <ChevronLeftIcon className="size-5" />
-        </Button>
-      )}
-      <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw]">
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          className="absolute right-2 top-2"
-          onClick={onClose}
-          aria-label="Close image preview"
-        >
-          <XIcon />
-        </Button>
-        <img
-          src={item.src}
-          alt={item.name}
-          className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
-          draggable={false}
-        />
-        <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
-          {item.name}
-          {preview.images.length > 1 ? ` (${preview.index + 1}/${preview.images.length})` : ""}
-        </p>
-      </div>
-      {preview.images.length > 1 && (
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          className="absolute right-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white motion-safe:not-disabled:hover:-translate-y-1/2 motion-safe:not-disabled:active:-translate-y-1/2 sm:right-6"
-          aria-label="Next image"
-          onClick={() => navigateImage(1)}
-        >
-          <ChevronRightIcon className="size-5" />
-        </Button>
-      )}
-    </div>
+      <Dialog.Portal>
+        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/75" />
+        <Dialog.Viewport className="fixed inset-0 z-50 flex items-center justify-center px-4 py-6 [-webkit-app-region:no-drag]">
+          <Dialog.Popup
+            className="relative flex size-full items-center justify-center outline-none"
+            aria-label="Expanded image preview"
+            initialFocus={closeButtonRef}
+          >
+            <Dialog.Close
+              className="absolute inset-0 z-0 cursor-zoom-out"
+              aria-label="Close image preview"
+            />
+            {preview.images.length > 1 && (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="absolute left-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white motion-safe:not-disabled:hover:-translate-y-1/2 motion-safe:not-disabled:active:-translate-y-1/2 sm:left-6"
+                aria-label="Previous image"
+                onClick={() => navigateImage(-1)}
+              >
+                <ChevronLeftIcon className="size-5" />
+              </Button>
+            )}
+            <div className="relative isolate z-10 max-h-[92vh] max-w-[92vw]">
+              <Dialog.Close
+                ref={closeButtonRef}
+                aria-label="Close image preview"
+                render={
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    className="absolute right-2 top-2"
+                  />
+                }
+              >
+                <XIcon />
+              </Dialog.Close>
+              <img
+                src={item.src}
+                alt={item.name}
+                className="max-h-[86vh] max-w-[92vw] select-none rounded-lg border border-border/70 bg-background object-contain shadow-2xl"
+                draggable={false}
+              />
+              <p className="mt-2 max-w-[92vw] truncate text-center text-xs text-muted-foreground/80">
+                {item.name}
+                {preview.images.length > 1
+                  ? ` (${preview.index + 1}/${preview.images.length})`
+                  : ""}
+              </p>
+            </div>
+            {preview.images.length > 1 && (
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="absolute right-2 top-1/2 z-20 -translate-y-1/2 text-white/90 hover:bg-white/10 hover:text-white motion-safe:not-disabled:hover:-translate-y-1/2 motion-safe:not-disabled:active:-translate-y-1/2 sm:right-6"
+                aria-label="Next image"
+                onClick={() => navigateImage(1)}
+              >
+                <ChevronRightIcon className="size-5" />
+              </Button>
+            )}
+          </Dialog.Popup>
+        </Dialog.Viewport>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 });
