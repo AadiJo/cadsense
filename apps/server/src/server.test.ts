@@ -52,6 +52,24 @@ import { vi } from "vitest";
 
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
 
+const activeProjectLookup = (id: string, workspaceRoot: string) => (candidate: string) =>
+  Effect.succeed(
+    candidate === workspaceRoot
+      ? Option.some({
+          id: ProjectId.make(id),
+          title: "Write Test",
+          workspaceRoot,
+          repositoryIdentity: null,
+          externalContext: null,
+          defaultModelSelection: null,
+          scripts: [],
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          deletedAt: null,
+        })
+      : Option.none(),
+  );
+
 import type { ServerConfigShape } from "./config.ts";
 import { deriveServerPaths, ServerConfig } from "./config.ts";
 import { makeRoutesLayer } from "./server.ts";
@@ -2486,7 +2504,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         prefix: "cadsense-ws-project-write-",
       });
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getActiveProjectByWorkspaceRoot: activeProjectLookup(
+              "project-write-register",
+              workspaceDir,
+            ),
+          },
+        },
+      });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const response = yield* Effect.scoped(
@@ -2548,7 +2575,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         prefix: "cadsense-ws-project-write-",
       });
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getActiveProjectByWorkspaceRoot: activeProjectLookup(
+              "project-write-error-register",
+              workspaceDir,
+            ),
+          },
+        },
+      });
 
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
@@ -2567,6 +2603,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         result.failure.message,
         "Workspace file path must stay within the project root.",
       );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("rejects websocket file writes outside active projects", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const unregisteredDir = yield* fs.makeTempDirectoryScoped({
+        prefix: "cadsense-ws-project-write-unregistered-",
+      });
+
+      yield* buildAppUnderTest();
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[WS_METHODS.projectsWriteFile]({
+            cwd: unregisteredDir,
+            relativePath: "outside.txt",
+            contents: "nope",
+          }),
+        ).pipe(Effect.result),
+      );
+
+      assertTrue(result._tag === "Failure");
+      assertTrue(result.failure._tag === "ProjectWriteFileError");
+      assert.equal(result.failure.message, "Workspace file writes require an active project root.");
+      const stat = yield* fs
+        .stat(path.join(unregisteredDir, "outside.txt"))
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      assert.equal(stat, null);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
