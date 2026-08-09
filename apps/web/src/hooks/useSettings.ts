@@ -111,13 +111,17 @@ async function hydrateClientSettings(): Promise<void> {
   return clientSettingsHydrationPromise;
 }
 
-function persistClientSettings(settings: ClientSettings): void {
+async function persistClientSettings(settings: ClientSettings): Promise<void> {
+  const previousSettings = getClientSettingsSnapshot();
   replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
-    .catch((error) => {
-      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, error);
-    });
+  try {
+    await ensureLocalApi().persistence.setClientSettings(settings);
+  } catch (error) {
+    if (getClientSettingsSnapshot() === settings) {
+      replaceClientSettingsSnapshot(previousSettings);
+    }
+    throw error;
+  }
 }
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -186,6 +190,43 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
 }
 
+export async function updateSettingsAndWait(patch: Partial<UnifiedSettings>): Promise<void> {
+  const { serverPatch, clientPatch } = splitPatch(patch);
+  const writes: Promise<void>[] = [];
+
+  if (Object.keys(serverPatch).length > 0) {
+    const previousServerConfig = getServerConfig();
+    const optimisticSettings = previousServerConfig
+      ? applyServerSettingsPatch(previousServerConfig.settings, serverPatch)
+      : null;
+    if (optimisticSettings) {
+      applySettingsUpdated(optimisticSettings);
+    }
+    writes.push(
+      ensureLocalApi()
+        .server.updateSettings(serverPatch)
+        .then(() => undefined)
+        .catch((error) => {
+          if (optimisticSettings && getServerConfig()?.settings === optimisticSettings) {
+            applySettingsUpdated(previousServerConfig!.settings);
+          }
+          throw error;
+        }),
+    );
+  }
+
+  if (Object.keys(clientPatch).length > 0) {
+    writes.push(
+      persistClientSettings({
+        ...getClientSettingsSnapshot(),
+        ...clientPatch,
+      }),
+    );
+  }
+
+  await Promise.all(writes);
+}
+
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
@@ -193,24 +234,10 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
  * persisted via RPC. Client keys go through client persistence.
  */
 export function useUpdateSettings() {
-  const updateSettings = useCallback((patch: Partial<UnifiedSettings>) => {
-    const { serverPatch, clientPatch } = splitPatch(patch);
-
-    if (Object.keys(serverPatch).length > 0) {
-      const currentServerConfig = getServerConfig();
-      if (currentServerConfig) {
-        applySettingsUpdated(applyServerSettingsPatch(currentServerConfig.settings, serverPatch));
-      }
-      // Fire-and-forget RPC — push will reconcile on success
-      void ensureLocalApi().server.updateSettings(serverPatch);
-    }
-
-    if (Object.keys(clientPatch).length > 0) {
-      persistClientSettings({
-        ...getClientSettingsSnapshot(),
-        ...clientPatch,
-      });
-    }
+  const updateSettings = useCallback((patch: Partial<UnifiedSettings>): void => {
+    void updateSettingsAndWait(patch).catch((error) => {
+      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, error);
+    });
   }, []);
 
   const resetSettings = useCallback(() => {
@@ -219,6 +246,7 @@ export function useUpdateSettings() {
 
   return {
     updateSettings,
+    updateSettingsAndWait,
     resetSettings,
   };
 }

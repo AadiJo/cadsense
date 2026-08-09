@@ -115,7 +115,7 @@ interface AddProviderInstanceDialogProps {
 
 export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderInstanceDialogProps) {
   const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+  const { updateSettingsAndWait } = useUpdateSettings();
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
@@ -129,6 +129,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   // Errors are suppressed until the user has tried to submit once. After that
   // they update live so fixing the problem clears the message in place.
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   const existingIds = useMemo(
     () => new Set(Object.keys(settings.providerInstances ?? {})),
@@ -147,6 +148,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     setInstanceIdDirty(false);
     setConfigByDriver({});
     setHasAttemptedSubmit(false);
+    setIsSaving(false);
   }, [open]);
 
   // Auto-derive the instance id from driver + label until the user types
@@ -183,9 +185,9 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     [driver],
   );
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     setHasAttemptedSubmit(true);
-    if (instanceIdError !== null) return;
+    if (instanceIdError !== null || isSaving) return;
 
     const config = configByDriver[driver] ?? {};
     const hasConfig = Object.keys(config).length > 0;
@@ -207,8 +209,9 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
       ...settings.providerInstances,
       [brandedId]: nextInstance,
     };
+    setIsSaving(true);
     try {
-      updateSettings({ providerInstances: nextMap });
+      await updateSettingsAndWait({ providerInstances: nextMap });
       toastManager.add({
         type: "success",
         title: "Provider instance added",
@@ -221,6 +224,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
         title: "Could not add provider instance",
         description: error instanceof Error ? error.message : "Update failed.",
       });
+    } finally {
+      setIsSaving(false);
     }
   }, [
     driver,
@@ -232,7 +237,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     accentColor,
     onOpenChange,
     settings.providerInstances,
-    updateSettings,
+    isSaving,
+    updateSettingsAndWait,
   ]);
 
   return (
@@ -479,8 +485,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                 Next
               </Button>
             ) : (
-              <Button size="sm" onClick={handleSave}>
-                Add instance
+              <Button size="sm" disabled={isSaving} onClick={() => void handleSave()}>
+                {isSaving ? "Adding…" : "Add instance"}
               </Button>
             )}
           </DialogFooter>
