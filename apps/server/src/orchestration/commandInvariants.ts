@@ -142,6 +142,67 @@ export function requireThreadAbsent(input: {
   );
 }
 
+export function requireValidThreadCreationRelationship(input: {
+  readonly readModel: OrchestrationReadModel;
+  readonly command: Extract<OrchestrationCommand, { readonly type: "thread.create" }>;
+}): Effect.Effect<void, OrchestrationCommandInvariantError> {
+  const purpose = input.command.purpose ?? "general";
+  const parentThreadId = input.command.parentThreadId ?? null;
+  const reviewRunId = input.command.reviewRunId ?? null;
+
+  if (purpose === "general") {
+    return parentThreadId === null && reviewRunId === null
+      ? Effect.void
+      : Effect.fail(
+          invariantError(
+            input.command.type,
+            "General threads cannot declare a parentThreadId or reviewRunId.",
+          ),
+        );
+  }
+
+  if (parentThreadId === null || reviewRunId === null) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        "CAD review threads require both parentThreadId and reviewRunId.",
+      ),
+    );
+  }
+  if (parentThreadId === input.command.threadId) {
+    return Effect.fail(
+      invariantError(input.command.type, "A CAD review thread cannot be its own parent."),
+    );
+  }
+
+  const parentThread = findThreadById(input.readModel, parentThreadId);
+  if (!parentThread) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Parent thread '${parentThreadId}' does not exist for CAD review thread creation.`,
+      ),
+    );
+  }
+  if (parentThread.projectId !== input.command.projectId) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Parent thread '${parentThreadId}' belongs to a different project.`,
+      ),
+    );
+  }
+  if (!(parentThread.reviews ?? []).some((review) => review.id === reviewRunId)) {
+    return Effect.fail(
+      invariantError(
+        input.command.type,
+        `Parent thread '${parentThreadId}' does not contain CAD review '${reviewRunId}'.`,
+      ),
+    );
+  }
+  return Effect.void;
+}
+
 export function requireNonNegativeInteger(input: {
   readonly commandType: OrchestrationCommand["type"];
   readonly field: string;

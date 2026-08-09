@@ -7,10 +7,12 @@ import { describe, expect, it } from "vitest";
 import {
   cadViewCommandStream,
   cadHierarchyRequestStream,
+  claimCadHierarchyRequest,
   completeCadHierarchyRequest,
   publishCadControlCommand,
   requestCadHierarchy,
 } from "./CadViewCommands.ts";
+import { CAD_REQUEST_LEASE_MS } from "./CadRequestLease.ts";
 
 describe("CadViewCommands", () => {
   it("replays recent CAD view commands to late subscribers", async () => {
@@ -65,22 +67,133 @@ describe("CadViewCommands", () => {
           expect(requests).toHaveLength(1);
           expect(request?.threadId).toBe("thread-late-cad-hierarchy-subscriber");
 
+          const claim = claimCadHierarchyRequest({
+            requestId: request!.requestId,
+            responderId: "viewer-hierarchy",
+          });
+          expect(claim.status).toBe("claimed");
+          if (claim.status !== "claimed") return;
+
           expect(
-            completeCadHierarchyRequest(request!.requestId, {
-              components: [
-                {
-                  id: "component-1",
-                  name: "Arm",
-                  kind: "assembly",
-                  hasChildren: false,
-                  visible: true,
-                },
-              ],
-            }),
+            completeCadHierarchyRequest(
+              request!.requestId,
+              { responderId: "viewer-hierarchy", leaseId: claim.leaseId },
+              {
+                components: [
+                  {
+                    id: "component-1",
+                    name: "Arm",
+                    kind: "assembly",
+                    hasChildren: false,
+                    visible: true,
+                  },
+                ],
+              },
+            ),
           ).toBe(true);
 
           const result = yield* Fiber.join(requestFiber);
           expect(result.components.map((component) => component.id)).toEqual(["component-1"]);
+        }),
+      ),
+    );
+  });
+
+  it("replays claimed hierarchy work to a reconnecting subscriber", async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const threadId = ThreadId.make("thread-claimed-cad-hierarchy-reconnect");
+          const requestFiber = yield* requestCadHierarchy(threadId).pipe(Effect.forkScoped);
+          yield* Effect.sleep("10 millis");
+
+          const initialEvents = yield* cadHierarchyRequestStream.pipe(
+            Stream.filter((request) => request.threadId === threadId),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout("1 second"),
+          );
+          const request = Array.from(initialEvents)[0]!;
+          const claim = claimCadHierarchyRequest({
+            requestId: request.requestId,
+            responderId: "viewer-before-reconnect",
+          });
+          expect(claim.status).toBe("claimed");
+          if (claim.status !== "claimed") return;
+
+          const replayedEvents = yield* cadHierarchyRequestStream.pipe(
+            Stream.filter((event) => event.requestId === request.requestId),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout("1 second"),
+          );
+          expect(Array.from(replayedEvents)).toEqual([request]);
+
+          expect(
+            completeCadHierarchyRequest(
+              request.requestId,
+              { responderId: "viewer-before-reconnect", leaseId: claim.leaseId },
+              { components: [] },
+            ),
+          ).toBe(true);
+          yield* Fiber.join(requestFiber);
+        }),
+      ),
+    );
+  });
+
+  it("rejects competing and stale hierarchy responders after lease reclaim", async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const requestFiber = yield* requestCadHierarchy(
+            ThreadId.make("thread-hierarchy-lease"),
+          ).pipe(Effect.forkScoped);
+          yield* Effect.sleep("10 millis");
+          const requests = yield* cadHierarchyRequestStream.pipe(
+            Stream.filter((request) => request.threadId === "thread-hierarchy-lease"),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout("1 second"),
+          );
+          const request = Array.from(requests)[0]!;
+          const first = claimCadHierarchyRequest(
+            { requestId: request.requestId, responderId: "viewer-first" },
+            5_000,
+          );
+          expect(first.status).toBe("claimed");
+          if (first.status !== "claimed") return;
+          expect(
+            claimCadHierarchyRequest(
+              { requestId: request.requestId, responderId: "viewer-loser" },
+              5_001,
+            ),
+          ).toMatchObject({ status: "unavailable", reason: "already-claimed" });
+
+          const second = claimCadHierarchyRequest(
+            { requestId: request.requestId, responderId: "viewer-second" },
+            5_000 + CAD_REQUEST_LEASE_MS,
+          );
+          expect(second.status).toBe("claimed");
+          if (second.status !== "claimed") return;
+          expect(second).toMatchObject({ attempt: 2 });
+          expect(
+            completeCadHierarchyRequest(
+              request.requestId,
+              { responderId: "viewer-first", leaseId: first.leaseId },
+              { components: [] },
+              5_000 + CAD_REQUEST_LEASE_MS + 1,
+            ),
+          ).toBe(false);
+          expect(
+            completeCadHierarchyRequest(
+              request.requestId,
+              { responderId: "viewer-second", leaseId: second.leaseId },
+              { components: [], status: "loaded" },
+              5_000 + CAD_REQUEST_LEASE_MS * 2 - 1,
+            ),
+          ).toBe(true);
+          expect((yield* Fiber.join(requestFiber)).status).toBe("loaded");
         }),
       ),
     );

@@ -581,11 +581,20 @@ export const cadHierarchyUploadRouteLayer = HttpRouter.add(
     const input = yield* decodeCadHierarchyUploadInput(body).pipe(
       Effect.mapError(() => "invalid" as const),
     );
-    completeCadHierarchyRequest(input.requestId, {
-      components: input.components,
-      ...(input.status ? { status: input.status } : {}),
-      ...(input.message ? { message: input.message } : {}),
-    });
+    const completed = completeCadHierarchyRequest(
+      input.requestId,
+      { responderId: input.responderId, leaseId: input.leaseId },
+      {
+        components: input.components,
+        ...(input.status ? { status: input.status } : {}),
+        ...(input.message ? { message: input.message } : {}),
+      },
+    );
+    if (!completed) {
+      return HttpServerResponse.text("Unknown, expired, or unclaimed CAD hierarchy request", {
+        status: 409,
+      });
+    }
     return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 200 });
   }).pipe(
     Effect.catchTag("AuthError", respondToAuthError),
@@ -775,7 +784,12 @@ export const staticAndDevRouteLayer = HttpRouter.add(
 
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const staticRoot = path.resolve(staticDir);
+    const staticRoot = yield* fileSystem
+      .realPath(path.resolve(staticDir))
+      .pipe(Effect.catch(() => Effect.succeed(null)));
+    if (staticRoot === null) {
+      return HttpServerResponse.text("Static directory is unavailable.", { status: 503 });
+    }
     const staticRequestPath = url.value.pathname === "/" ? "/index.html" : url.value.pathname;
     const rawStaticRelativePath = staticRequestPath.replace(/^[/\\]+/, "");
     const hasRawLeadingParentSegment = rawStaticRelativePath.startsWith("..");
@@ -794,24 +808,37 @@ export const staticAndDevRouteLayer = HttpRouter.add(
       candidate === staticRoot ||
       candidate.startsWith(staticRoot.endsWith(path.sep) ? staticRoot : `${staticRoot}${path.sep}`);
 
-    let filePath = path.resolve(staticRoot, staticRelativePath);
-    if (!isWithinStaticRoot(filePath)) {
+    let requestedFilePath = path.resolve(staticRoot, staticRelativePath);
+    if (!isWithinStaticRoot(requestedFilePath)) {
       return HttpServerResponse.text("Invalid static file path", { status: 400 });
     }
 
-    const ext = path.extname(filePath);
+    const ext = path.extname(requestedFilePath);
     if (!ext) {
-      filePath = path.resolve(filePath, "index.html");
-      if (!isWithinStaticRoot(filePath)) {
+      requestedFilePath = path.resolve(requestedFilePath, "index.html");
+      if (!isWithinStaticRoot(requestedFilePath)) {
         return HttpServerResponse.text("Invalid static file path", { status: 400 });
       }
     }
 
-    const fileInfo = yield* fileSystem
-      .stat(filePath)
+    const filePath = yield* fileSystem
+      .realPath(requestedFilePath)
       .pipe(Effect.catch(() => Effect.succeed(null)));
-    if (!fileInfo || fileInfo.type !== "File") {
-      const indexPath = path.resolve(staticRoot, "index.html");
+    if (filePath !== null && !isWithinStaticRoot(filePath)) {
+      return HttpServerResponse.text("Invalid static file path", { status: 400 });
+    }
+
+    const fileInfo =
+      filePath === null
+        ? null
+        : yield* fileSystem.stat(filePath).pipe(Effect.catch(() => Effect.succeed(null)));
+    if (filePath === null || !fileInfo || fileInfo.type !== "File") {
+      const indexPath = yield* fileSystem
+        .realPath(path.resolve(staticRoot, "index.html"))
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      if (indexPath === null || !isWithinStaticRoot(indexPath)) {
+        return HttpServerResponse.text("Not Found", { status: 404 });
+      }
       return yield* HttpServerResponse.file(indexPath, {
         status: 200,
         contentType: "text/html; charset=utf-8",

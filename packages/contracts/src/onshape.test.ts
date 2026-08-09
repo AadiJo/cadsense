@@ -5,6 +5,8 @@ import {
   CadSetCameraInput,
   CadSetViewInput,
   CadScreenshotMcpCaptureInput,
+  CadScreenshotBrowserRequest,
+  CadScreenshotUploadInput,
   OnshapeImportUrlInput,
   OnshapeSearchIndexInput,
   OnshapeSetupConnectionInput,
@@ -13,6 +15,8 @@ import {
 const decodeCadSetCameraInput = Schema.decodeUnknownSync(CadSetCameraInput);
 const decodeCadSetViewInput = Schema.decodeUnknownSync(CadSetViewInput);
 const decodeCadScreenshotMcpCaptureInput = Schema.decodeUnknownSync(CadScreenshotMcpCaptureInput);
+const decodeCadScreenshotBrowserRequest = Schema.decodeUnknownSync(CadScreenshotBrowserRequest);
+const decodeCadScreenshotUploadInput = Schema.decodeUnknownSync(CadScreenshotUploadInput);
 const decodeOnshapeImportUrlInput = Schema.decodeUnknownSync(OnshapeImportUrlInput);
 const decodeOnshapeSearchIndexInput = Schema.decodeUnknownSync(OnshapeSearchIndexInput);
 const decodeOnshapeSetupConnectionInput = Schema.decodeUnknownSync(OnshapeSetupConnectionInput);
@@ -102,5 +106,28 @@ describe("CAD viewer command contracts", () => {
         up: [0, 0, 1],
       }),
     ).not.toThrow();
+  });
+
+  it("requires timestamped browser requests and claimed terminal screenshot completions", () => {
+    expect(() =>
+      decodeCadScreenshotBrowserRequest({
+        requestId: "request-1",
+        threadId: "thread-cad",
+        fit: true,
+      }),
+    ).toThrow();
+    expect(() =>
+      decodeCadScreenshotUploadInput({ requestId: "request-1", pngBase64: "" }),
+    ).toThrow();
+
+    expect(
+      decodeCadScreenshotUploadInput({
+        requestId: "request-1",
+        responderId: "viewer-1",
+        leaseId: "lease-1",
+        status: "cancelled",
+        message: "Viewer was disposed while the model was loading.",
+      }),
+    ).toMatchObject({ status: "cancelled", responderId: "viewer-1" });
   });
 });

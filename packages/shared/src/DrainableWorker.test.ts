@@ -6,6 +6,27 @@ import * as Effect from "effect/Effect";
 import { makeDrainableWorker } from "./DrainableWorker.ts";
 
 describe("makeDrainableWorker", () => {
+  it.effect("continues processing after an item fails", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const processed: string[] = [];
+        const worker = yield* makeDrainableWorker((item: string) =>
+          item === "first"
+            ? Effect.fail("expected failure")
+            : Effect.sync(() => {
+                processed.push(item);
+              }),
+        );
+
+        yield* worker.enqueue("first");
+        yield* worker.enqueue("second");
+        yield* worker.drain;
+
+        expect(processed).toEqual(["second"]);
+      }),
+    ),
+  );
+
   it.live("waits for work enqueued during active processing before draining", () =>
     Effect.scoped(
       Effect.gen(function* () {

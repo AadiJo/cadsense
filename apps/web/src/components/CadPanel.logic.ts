@@ -51,6 +51,10 @@ export function cadViewerFrameUrl(location: Location = window.location): string 
   return new URL("/cad-viewer-frame", location.href).toString();
 }
 
+export function cadViewerFrameOrigin(location: Location = window.location): string {
+  return new URL(cadViewerFrameUrl(location)).origin;
+}
+
 export function cadViewerFileName(relativePath: string): string {
   const normalized = relativePath.replaceAll("\\", "/");
   const slashIndex = normalized.lastIndexOf("/");
@@ -91,36 +95,6 @@ export function cadOnshapeModelQueryIdentity(
     onshapeContext.lastSyncedRelativePath ?? null,
     onshapeContext.lastSyncedAt ?? null,
   ];
-}
-
-export function shouldHandleCadAgentRequestForPanel(input: {
-  readonly requestThreadId: string;
-  readonly cadRoutingThreadId: string | undefined;
-  readonly sameProjectThreadIds: ReadonlyArray<string>;
-  readonly activeCadReviewThreadIds: ReadonlyArray<string>;
-  readonly activeCadReviewChildThreadIds?: ReadonlyArray<string>;
-  readonly agentControlHost: boolean;
-  readonly cadReviewInProgress: boolean;
-}): boolean {
-  if (!input.cadRoutingThreadId) {
-    return false;
-  }
-  if (input.requestThreadId === input.cadRoutingThreadId) {
-    return true;
-  }
-  if (
-    input.cadReviewInProgress &&
-    input.activeCadReviewChildThreadIds?.includes(input.requestThreadId)
-  ) {
-    return true;
-  }
-  if (input.agentControlHost || input.cadReviewInProgress) {
-    return false;
-  }
-  if (input.activeCadReviewThreadIds.includes(input.requestThreadId)) {
-    return false;
-  }
-  return input.sameProjectThreadIds.includes(input.requestThreadId);
 }
 
 export function applyCadComponentVisibility(

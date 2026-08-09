@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { useMatch, useNavigate } from "@tanstack/react-router";
+import { useShallow } from "zustand/react/shallow";
 
 import { CadPanelInlineSidebar, ChatCadSheetPanel } from "./ChatCadRoutePanels";
 import {
@@ -35,6 +36,7 @@ import { buildThreadRouteParams } from "../threadRoutes";
 import { isProjectlessChatProject } from "../projectlessChat";
 import { readEnvironmentApi } from "../environmentApi";
 import { hasRunningCadReview } from "../lib/cadReviewStatus";
+import { registerCadBrokerActivator } from "../lib/cadRequestBroker";
 
 const THREAD_ROUTE_ID = "/_chat/$environmentId/$threadId" as const;
 const DRAFT_ROUTE_ID = "/_chat/draft/$draftId" as const;
@@ -104,6 +106,22 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
             ] ?? EMPTY_ROUTE_THREAD_IDS)
           : EMPTY_ROUTE_THREAD_IDS,
       [serverThread],
+    ),
+  );
+  const sameProjectReviewChildThreadIds = useStore(
+    useShallow(
+      useMemo(
+        () => (store: import("../store").AppState) => {
+          if (!serverThread) {
+            return EMPTY_ROUTE_THREAD_IDS;
+          }
+          const environmentState = store.environmentStateById[serverThread.environmentId];
+          return sameProjectThreadIds.filter(
+            (threadId) => environmentState?.threadShellById[threadId]?.purpose === "cad-review",
+          );
+        },
+        [sameProjectThreadIds, serverThread],
+      ),
     ),
   );
   const threadExists = useStore((store) => selectThreadExistsByRef(store, threadRef));
@@ -254,30 +272,33 @@ export function ChatRoutePanelsProvider({ children }: { readonly children: React
       return;
     }
     const activeEnvironmentId = threadRef.environmentId;
-    const activeThreadId = threadRef.threadId;
-    const handledThreadIds = new Set<ThreadId>([activeThreadId, ...sameProjectThreadIds]);
     const environmentApi = readEnvironmentApi(activeEnvironmentId);
     if (!environmentApi) {
       return;
     }
 
-    const openForThread = (requestThreadId: ThreadId) => {
-      if (!cadPanelOpenRef.current && handledThreadIds.has(requestThreadId)) {
-        openCadPanel();
-      }
-    };
-
-    const unsubscribers = [
-      environmentApi.onshape.onCadViewCommand((command) => openForThread(command.threadId)),
-      environmentApi.onshape.onCadHierarchyRequest((request) => openForThread(request.threadId)),
-      environmentApi.onshape.onCadScreenshotRequest((request) => openForThread(request.threadId)),
-    ];
-    return () => {
-      for (const unsubscribe of unsubscribers) {
-        unsubscribe();
-      }
-    };
-  }, [openCadPanel, renderCadPanel, sameProjectThreadIds, threadRef]);
+    return registerCadBrokerActivator(activeEnvironmentId, environmentApi, {
+      activatorId: `cad-route-panel:${activeEnvironmentId}:${threadRef.threadId}`,
+      routingThreadId: threadRef.threadId,
+      sameProjectThreadIds,
+      activeReviewThreadIds: visibleThreadHasRunningCadReview ? [threadRef.threadId] : [],
+      reviewChildThreadIds: sameProjectReviewChildThreadIds,
+      controlsReviewChildren: false,
+      allowProjectFallback: true,
+      activate: () => {
+        if (!cadPanelOpenRef.current) {
+          openCadPanel();
+        }
+      },
+    });
+  }, [
+    openCadPanel,
+    renderCadPanel,
+    sameProjectReviewChildThreadIds,
+    sameProjectThreadIds,
+    threadRef,
+    visibleThreadHasRunningCadReview,
+  ]);
 
   if (!rightPanelsEnabled) {
     return (

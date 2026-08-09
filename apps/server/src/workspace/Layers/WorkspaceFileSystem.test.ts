@@ -136,5 +136,33 @@ it.layer(TestLayer)("WorkspaceFileSystemLive", (it) => {
         expect(escapedStat).toBeNull();
       }),
     );
+
+    it.effect("rejects writes through symlinks that escape the workspace root", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        const outside = yield* makeTempDir;
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        if (process.platform === "win32") {
+          return;
+        }
+        yield* fileSystem.symlink(outside, path.join(cwd, "outside-link"));
+
+        const error = yield* workspaceFileSystem
+          .writeFile({
+            cwd,
+            relativePath: "outside-link/escape.md",
+            contents: "# nope\n",
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("WorkspacePathOutsideRootError");
+        const escapedStat = yield* fileSystem
+          .stat(path.join(outside, "escape.md"))
+          .pipe(Effect.catch(() => Effect.succeed(null)));
+        expect(escapedStat).toBeNull();
+      }),
+    );
   });
 });
