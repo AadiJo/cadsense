@@ -14,4 +14,8 @@ describe("cadModelHttpPath", () => {
   it("parses the extension-carrying leaf from the CAD route", () => {
     expect(parseCadModelLeafFromPathname("/api/onshape/cad-model/current.3mf")).toBe("current.3mf");
   });
+
+  it("rejects malformed percent encoding without throwing", () => {
+    expect(parseCadModelLeafFromPathname("/api/onshape/cad-model/%E0%A4%A")).toBeNull();
+  });
 });

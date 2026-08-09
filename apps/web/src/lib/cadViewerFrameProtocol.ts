@@ -42,6 +42,7 @@ export interface CadViewerFrameCameraSnapshot {
 export type CadViewerFrameLoadStage =
   | "request-received"
   | "direct-3mf-imports-loaded"
+  | "direct-3mf-file-fetched"
   | "direct-3mf-archive-expanded"
   | "direct-3mf-fast-parsed"
   | "direct-3mf-model-parsed"
@@ -167,11 +168,34 @@ export type CadViewerFrameResponseInput =
       readonly error: string;
     };
 
+export function isCadViewerFrameRequest(value: unknown): value is CadViewerFrameRequest {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "source" in value &&
+    (value as { source?: unknown }).source === CAD_VIEWER_FRAME_PARENT_SOURCE &&
+    "requestId" in value &&
+    typeof (value as { requestId?: unknown }).requestId === "string" &&
+    "type" in value &&
+    typeof (value as { type?: unknown }).type === "string"
+  );
+}
+
 export function isCadViewerFrameResponse(value: unknown): value is CadViewerFrameResponse {
   return (
     typeof value === "object" &&
     value !== null &&
     "source" in value &&
     (value as { source?: unknown }).source === CAD_VIEWER_FRAME_SOURCE
+  );
+}
+
+export function isTrustedCadViewerFrameMessage(
+  event: Pick<MessageEvent<unknown>, "origin" | "source">,
+  expectedSource: MessageEventSource | null,
+  expectedOrigin: string,
+): boolean {
+  return (
+    expectedSource !== null && event.source === expectedSource && event.origin === expectedOrigin
   );
 }
