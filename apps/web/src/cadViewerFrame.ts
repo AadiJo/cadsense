@@ -8,7 +8,10 @@ import {
   cadViewerViewCommandSettleMs,
 } from "./lib/cadViewerCameraTransition";
 import { cadEmbeddedViewerEdgeSettings } from "./lib/cadEmbeddedViewerTuning";
-import { buildThreeMfFastGroup, type CadThreeMfParsedModel } from "./lib/cadThreeMfFastParser";
+import {
+  buildThreeMfFastGroupResult,
+  type CadThreeMfParsedModel,
+} from "./lib/cadThreeMfFastParser";
 import ThreeMfFastParserWorker from "./lib/cadThreeMfFastParser.worker?worker";
 import {
   inspectThreeMfArchive,
@@ -1345,7 +1348,15 @@ function parseThreeMfFastWithWorker(input: {
         reject(new Error(event.data.error));
         return;
       }
-      resolve(buildThreeMfFastGroup({ three: input.three, model: event.data.model }));
+      const result = buildThreeMfFastGroupResult({
+        three: input.three,
+        model: event.data.model,
+      });
+      if (!result.ok) {
+        reject(result.error);
+        return;
+      }
+      resolve(result.group);
     }
 
     function handleError(event: ErrorEvent) {
