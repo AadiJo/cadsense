@@ -66,7 +66,7 @@ export const ExpandedImageDialog = memo(function ExpandedImageDialog({
               className="absolute inset-0 z-0 cursor-zoom-out"
               data-testid="expanded-image-backdrop-close"
               aria-hidden="true"
-              onPointerUp={onClose}
+              onClick={onClose}
             />
             {preview.images.length > 1 && (
               <Button

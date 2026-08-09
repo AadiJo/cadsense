@@ -83,6 +83,19 @@ test("restores focus after clicking the full-screen close target", async () => {
   await expect.element(opener).toHaveFocus();
 });
 
+test("dismisses the backdrop only on a primary click", async () => {
+  const screen = await render(<Harness />);
+  await screen.getByRole("button", { name: "Open preview" }).click();
+
+  const dialog = screen.getByRole("dialog", { name: "Expanded image preview" });
+  const backdropClose = screen.getByTestId("expanded-image-backdrop-close");
+  await backdropClose.click({ button: "right", position: { x: 5, y: 5 } });
+  await expect.element(dialog).toBeVisible();
+
+  await backdropClose.click({ position: { x: 5, y: 5 } });
+  await expect.element(dialog).not.toBeInTheDocument();
+});
+
 test("keeps the pointer-only close target out of the focus cycle", async () => {
   const screen = await render(<SingleImageHarness />);
   await screen.getByRole("button", { name: "Open single preview" }).click();
