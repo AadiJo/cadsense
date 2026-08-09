@@ -100,14 +100,13 @@ body:
       description: Paste the most relevant output only. Redact secrets.
       render: shell
 
-  - type: upload
+  - type: textarea
     id: attachments
     attributes:
       label: Screenshots, recordings, or supporting files
       description: Upload screenshots, short recordings, repro archives, or log files. Redact secrets before uploading.
     validations:
       required: false
-      accept: ".png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.mov,.webm,.log,.txt,.json,.zip"
 
   - type: textarea
     id: workaround
