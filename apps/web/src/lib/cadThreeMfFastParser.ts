@@ -62,19 +62,25 @@ interface ParsedBuildItem {
   readonly transform: readonly number[] | null;
 }
 
-const MODEL_ENTRY_PATTERN = /^3D\/[^/]*\.model$/u;
+const ROOT_RELATIONSHIPS_ENTRY = "_rels/.rels";
+const ROOT_MODEL_RELATIONSHIP_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel";
+const RELATIONSHIP_PATTERN = /<(?:[a-z_][\w.-]*:)?relationship\b([^>]*)\/?>/giu;
 const OBJECT_PATTERN = /<object\b([^>]*)>([\s\S]*?)<\/object>/giu;
 const COMPONENT_PATTERN = /<component\b([^>]*)\/?>/giu;
 const ITEM_PATTERN = /<item\b([^>]*)\/?>/giu;
-const COLOR_PATTERN = /<m:color\b[^>]*\bcolor="(#[0-9a-f]{6}(?:[0-9a-f]{2})?)"[^>]*\/?>/giu;
-const VERTEX_PATTERN =
-  /<vertex\b[^>]*\bx="([^"]+)"[^>]*\by="([^"]+)"[^>]*\bz="([^"]+)"[^>]*\/?>/giu;
-const TRIANGLE_PATTERN =
-  /<triangle\b[^>]*\bv1="(\d+)"[^>]*\bv2="(\d+)"[^>]*\bv3="(\d+)"[^>]*\/?>/giu;
+const COLOR_PATTERN = /<(?:[a-z_][\w.-]*:)?color\b([^>]*)\/?>/giu;
+const VERTEX_PATTERN = /<vertex\b([^>]*)\/?>/giu;
+const TRIANGLE_PATTERN = /<triangle\b([^>]*)\/?>/giu;
+const ATTRIBUTE_PATTERN_CACHE = new Map<string, RegExp>();
 
 function getAttribute(source: string, name: string): string | null {
-  const match = new RegExp(`\\b${name}="([^"]*)"`, "iu").exec(source);
-  return match?.[1] ?? null;
+  let pattern = ATTRIBUTE_PATTERN_CACHE.get(name);
+  if (!pattern) {
+    pattern = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "iu");
+    ATTRIBUTE_PATTERN_CACHE.set(name, pattern);
+  }
+  const match = pattern.exec(source);
+  return match?.[1] ?? match?.[2] ?? null;
 }
 
 function parseOptionalInteger(value: string | null): number | null {
@@ -134,11 +140,18 @@ function matrixFrom3mfTransform(
   return matrix;
 }
 
-function countMatches(pattern: RegExp, source: string): number {
+function countParsedTags<T>(
+  pattern: RegExp,
+  source: string,
+  parse: (attributes: string) => T | null,
+): number {
   pattern.lastIndex = 0;
   let count = 0;
-  while (pattern.exec(source) !== null) {
-    count += 1;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    if (parse(match[1]!) !== null) {
+      count += 1;
+    }
   }
   pattern.lastIndex = 0;
   return count;
@@ -149,7 +162,10 @@ function parseColors(modelXml: string): ParsedColor[] {
   COLOR_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = COLOR_PATTERN.exec(modelXml)) !== null) {
-    colors.push(parseColor(match[1]!));
+    const value = getAttribute(match[1]!, "color");
+    if (value && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(value)) {
+      colors.push(parseColor(value));
+    }
   }
   COLOR_PATTERN.lastIndex = 0;
   return colors;
@@ -224,8 +240,31 @@ function parseBuildItems(modelXml: string): ParsedBuildItem[] {
 }
 
 function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indices" | "positions"> {
-  const vertexCount = countMatches(VERTEX_PATTERN, meshBlock);
-  const triangleCount = countMatches(TRIANGLE_PATTERN, meshBlock);
+  const parseVertex = (attributes: string): readonly [number, number, number] | null => {
+    const parseCoordinate = (name: string): number => {
+      const value = getAttribute(attributes, name);
+      return value === null ? Number.NaN : Number(value);
+    };
+    const x = parseCoordinate("x");
+    const y = parseCoordinate("y");
+    const z = parseCoordinate("z");
+    return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? [x, y, z] : null;
+  };
+  const parseTriangle = (attributes: string): readonly [number, number, number] | null => {
+    const parseIndex = (name: string): number => {
+      const value = getAttribute(attributes, name);
+      return value !== null && /^\d+$/u.test(value) ? Number.parseInt(value, 10) : -1;
+    };
+    const v1 = parseIndex("v1");
+    const v2 = parseIndex("v2");
+    const v3 = parseIndex("v3");
+    return [v1, v2, v3].every((index) => Number.isSafeInteger(index) && index >= 0)
+      ? [v1, v2, v3]
+      : null;
+  };
+
+  const vertexCount = countParsedTags(VERTEX_PATTERN, meshBlock, parseVertex);
+  const triangleCount = countParsedTags(TRIANGLE_PATTERN, meshBlock, parseTriangle);
   const positions = new Float32Array(vertexCount * 3);
   const indices =
     vertexCount > 65_535 ? new Uint32Array(triangleCount * 3) : new Uint16Array(triangleCount * 3);
@@ -234,10 +273,14 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   let vertexIndex = 0;
   let vertexMatch: RegExpExecArray | null;
   while ((vertexMatch = VERTEX_PATTERN.exec(meshBlock)) !== null) {
+    const coordinates = parseVertex(vertexMatch[1]!);
+    if (!coordinates) {
+      continue;
+    }
     const base = vertexIndex * 3;
-    positions[base] = Number(vertexMatch[1]);
-    positions[base + 1] = Number(vertexMatch[2]);
-    positions[base + 2] = Number(vertexMatch[3]);
+    positions[base] = coordinates[0];
+    positions[base + 1] = coordinates[1];
+    positions[base + 2] = coordinates[2];
     vertexIndex += 1;
   }
   VERTEX_PATTERN.lastIndex = 0;
@@ -246,10 +289,14 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   let triangleIndex = 0;
   let triangleMatch: RegExpExecArray | null;
   while ((triangleMatch = TRIANGLE_PATTERN.exec(meshBlock)) !== null) {
+    const triangle = parseTriangle(triangleMatch[1]!);
+    if (!triangle) {
+      continue;
+    }
     const base = triangleIndex * 3;
-    indices[base] = Number.parseInt(triangleMatch[1]!, 10);
-    indices[base + 1] = Number.parseInt(triangleMatch[2]!, 10);
-    indices[base + 2] = Number.parseInt(triangleMatch[3]!, 10);
+    indices[base] = triangle[0];
+    indices[base + 1] = triangle[1];
+    indices[base + 2] = triangle[2];
     triangleIndex += 1;
   }
   TRIANGLE_PATTERN.lastIndex = 0;
@@ -286,11 +333,75 @@ function materialForParsedMesh(
   });
 }
 
+function normalizeRootPartTarget(target: string): string {
+  const withoutQueryOrFragment = target.split(/[?#]/u, 1)[0] ?? "";
+  let decodedTarget: string;
+  try {
+    decodedTarget = decodeURIComponent(withoutQueryOrFragment);
+  } catch {
+    throw new Error("3MF root model relationship contains invalid percent encoding.");
+  }
+  if (/^[a-z][a-z\d+.-]*:/iu.test(decodedTarget) || decodedTarget.startsWith("//")) {
+    throw new Error("3MF root model relationship must target a package part.");
+  }
+
+  const segments: string[] = [];
+  for (const segment of decodedTarget.replace(/^\/+/, "").split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      if (segments.length === 0) {
+        throw new Error("3MF root model relationship escapes the package root.");
+      }
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  if (segments.length === 0) {
+    throw new Error("3MF root model relationship did not name a model part.");
+  }
+  return segments.join("/");
+}
+
 function findRootModelXml(unzipped: Record<string, Uint8Array>): Uint8Array {
-  const entryName = Object.keys(unzipped).find((name) => MODEL_ENTRY_PATTERN.test(name));
+  const relationshipsEntryName = Object.keys(unzipped).find(
+    (name) => name.replace(/^\/+/, "").toLowerCase() === ROOT_RELATIONSHIPS_ENTRY,
+  );
+  const relationshipsBytes = relationshipsEntryName ? unzipped[relationshipsEntryName] : undefined;
+  if (!relationshipsBytes) {
+    throw new Error("3MF archive did not contain package root relationships.");
+  }
+
+  const relationshipsXml = new TextDecoder().decode(relationshipsBytes);
+  RELATIONSHIP_PATTERN.lastIndex = 0;
+  let relationshipMatch: RegExpExecArray | null;
+  let rootPartName: string | null = null;
+  while ((relationshipMatch = RELATIONSHIP_PATTERN.exec(relationshipsXml)) !== null) {
+    const attributes = relationshipMatch[1]!;
+    if (getAttribute(attributes, "Type") !== ROOT_MODEL_RELATIONSHIP_TYPE) {
+      continue;
+    }
+    if (getAttribute(attributes, "TargetMode")?.toLowerCase() === "external") {
+      throw new Error("3MF root model relationship cannot target an external resource.");
+    }
+    const target = getAttribute(attributes, "Target");
+    if (!target) {
+      throw new Error("3MF root model relationship did not include a target.");
+    }
+    rootPartName = normalizeRootPartTarget(target);
+    break;
+  }
+  RELATIONSHIP_PATTERN.lastIndex = 0;
+  if (!rootPartName) {
+    throw new Error("3MF archive did not declare a root 3D model relationship.");
+  }
+
+  const entryName = Object.keys(unzipped).find((name) => name.replace(/^\/+/, "") === rootPartName);
   const entry = entryName ? unzipped[entryName] : undefined;
   if (!entry) {
-    throw new Error("3MF archive did not contain a root 3D model part.");
+    throw new Error(`3MF archive did not contain declared root model part '${rootPartName}'.`);
   }
   return entry;
 }
