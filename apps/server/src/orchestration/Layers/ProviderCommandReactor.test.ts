@@ -317,6 +317,9 @@ describe.sequential("ProviderCommandReactor", () => {
       get streamEvents() {
         return Stream.fromPubSub(runtimeEventPubSub);
       },
+      get subscribeEvents() {
+        return PubSub.subscribe(runtimeEventPubSub);
+      },
     };
 
     const orchestrationLayer = OrchestrationEngineLive.pipe(
@@ -364,10 +367,6 @@ describe.sequential("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
-    scope = await Effect.runPromise(Scope.make("sequential"));
-    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
-    await Effect.runPromise(Effect.sleep("10 millis"));
-    const drain = () => Effect.runPromise(reactor.drain);
 
     await Effect.runPromise(
       engine.dispatch({
@@ -380,6 +379,7 @@ describe.sequential("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+
     await Effect.runPromise(
       engine.dispatch({
         type: "thread.create",
@@ -395,6 +395,10 @@ describe.sequential("ProviderCommandReactor", () => {
         createdAt: now,
       }),
     );
+
+    scope = await Effect.runPromise(Scope.make("sequential"));
+    await Effect.runPromise(reactor.start().pipe(Scope.provide(scope)));
+    const drain = () => Effect.runPromise(reactor.drain);
 
     return {
       engine,
@@ -415,7 +419,7 @@ describe.sequential("ProviderCommandReactor", () => {
     };
   }
 
-  it("reacts to thread.turn.start by ensuring session and sending provider turn", async () => {
+  it("reacts to a turn dispatched immediately after startup", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
