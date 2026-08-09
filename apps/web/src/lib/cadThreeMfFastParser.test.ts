@@ -278,4 +278,79 @@ describe("cadThreeMfFastParser", () => {
       /vertex with invalid coordinates/,
     );
   });
+
+  it("does not read fake attributes embedded in quoted extension values", () => {
+    const modelXml = `<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object note=' id="decoy"' id="1" name="quoted-attributes"><mesh note=">"><vertices><vertex note=' x="99" >' x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle note=' v1="2" >' v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+  <build><item note=' objectid="missing"' objectid="1"/></build>
+</model>`;
+    const unzipped = unzipSync(
+      zipSync({
+        "_rels/.rels": textEncoder.encode(
+          `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Note=' Target="/missing.model"' Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/3D/root.model"/></Relationships>`,
+        ),
+        "3D/root.model": textEncoder.encode(modelXml),
+      }),
+    );
+
+    const group = parseThreeMfFast({ three: THREE, unzipped });
+    const mesh = group.children[0] as THREE.Mesh<THREE.BufferGeometry>;
+    expect(mesh.name).toBe("quoted-attributes");
+    expect(mesh.geometry.getAttribute("position").array).toEqual(
+      new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    );
+    expect(mesh.geometry.getIndex()?.array).toEqual(new Uint16Array([0, 1, 2]));
+  });
+
+  it("removes comments and CDATA before rejecting real DTD declarations", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0"?>
+<!-- <!DOCTYPE model> --><![CDATA[<!DOCTYPE model>]]>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`);
+
+    expect(parseThreeMfFast({ three: THREE, unzipped }).children).toHaveLength(1);
+  });
+
+  it("rejects invalid XML character references", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" name="bad&#1;"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`);
+
+    expect(() => parseThreeMfFast({ three: THREE, unzipped })).toThrow(
+      /invalid character reference/,
+    );
+  });
+
+  it("rejects malformed transforms and degenerate triangles", () => {
+    const invalidTransform = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1" transform="1 0 0 0 1 0 0 0 1 0 0 nope"/></build></model>`);
+    expect(() => parseThreeMfFast({ three: THREE, unzipped: invalidTransform })).toThrow(
+      /invalid transform/,
+    );
+
+    const degenerateTriangle = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="0" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`);
+    expect(() => parseThreeMfFast({ three: THREE, unzipped: degenerateTriangle })).toThrow(
+      /triangle that references an invalid vertex/,
+    );
+  });
+
+  it("rejects cyclic and exponentially expanding component graphs", () => {
+    const cyclic = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><components><component objectid="2"/></components></object><object id="2"><components><component objectid="1"/></components></object></resources><build><item objectid="1"/></build></model>`);
+    expect(() => parseThreeMfFast({ three: THREE, unzipped: cyclic })).toThrow(/contains a cycle/);
+
+    const objects = [
+      `<object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>`,
+    ];
+    for (let id = 2; id <= 18; id += 1) {
+      objects.push(
+        `<object id="${id}"><components><component objectid="${id - 1}"/><component objectid="${id - 1}"/></components></object>`,
+      );
+    }
+    const expanding = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>${objects.join("")}</resources><build><item objectid="18"/></build></model>`);
+    expect(() => parseThreeMfFast({ three: THREE, unzipped: expanding })).toThrow(
+      /too many scene nodes/,
+    );
+  });
 });

@@ -66,23 +66,39 @@ const ROOT_RELATIONSHIPS_ENTRY = "_rels/.rels";
 const ROOT_MODEL_RELATIONSHIP_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel";
 const PACKAGE_RELATIONSHIPS_NAMESPACE =
   "http://schemas.openxmlformats.org/package/2006/relationships";
-const RELATIONSHIP_PATTERN = /<(?:([a-z_][\w.-]*):)?relationship\b([^>]*)\/?>/giu;
-const OBJECT_PATTERN = /<object\b([^>]*)>([\s\S]*?)<\/object>/giu;
-const COMPONENT_PATTERN = /<component\b([^>]*)\/?>/giu;
-const ITEM_PATTERN = /<item\b([^>]*)\/?>/giu;
-const COLOR_PATTERN = /<(?:[a-z_][\w.-]*:)?color\b([^>]*)\/?>/giu;
-const VERTEX_PATTERN = /<vertex\b([^>]*)\/?>/giu;
-const TRIANGLE_PATTERN = /<triangle\b([^>]*)\/?>/giu;
-const ATTRIBUTE_PATTERN_CACHE = new Map<string, RegExp>();
+const XML_ATTRIBUTE_TEXT = String.raw`(?:"[^"]*"|'[^']*'|[^'">])*`;
+const RELATIONSHIP_PATTERN = new RegExp(
+  `<(?:([a-z_][\\w.-]*):)?relationship\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`,
+  "giu",
+);
+const OBJECT_PATTERN = new RegExp(
+  `<object\\b(${XML_ATTRIBUTE_TEXT})>([\\s\\S]*?)<\\/object>`,
+  "giu",
+);
+const COMPONENT_PATTERN = new RegExp(`<component\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
+const ITEM_PATTERN = new RegExp(`<item\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
+const COLOR_PATTERN = new RegExp(
+  `<(?:[a-z_][\\w.-]*:)?color\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`,
+  "giu",
+);
+const VERTEX_PATTERN = new RegExp(`<vertex\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
+const TRIANGLE_PATTERN = new RegExp(`<triangle\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
+const MAX_COMPONENT_NESTING_DEPTH = 512;
+const MAX_EXPANDED_NODE_COUNT = 100_000;
 
 function structuralXml(source: string): string {
-  if (/<!DOCTYPE\b/iu.test(source)) {
-    throw new Error("3MF XML document type declarations are not supported.");
-  }
-  const withoutComments = source.replace(/<!--[\s\S]*?-->/gu, "");
+  const withoutComments = source.replace(/<!--([\s\S]*?)-->/gu, (_comment, body: string) => {
+    if (body.includes("--") || body.endsWith("-")) {
+      throw new Error("3MF XML contains a malformed comment.");
+    }
+    return "";
+  });
   const withoutCdata = withoutComments.replace(/<!\[CDATA\[[\s\S]*?\]\]>/gu, "");
   if (/<!--|-->|<!\[CDATA\[|\]\]>/u.test(withoutCdata)) {
     throw new Error("3MF XML contains an unterminated comment or CDATA section.");
+  }
+  if (/<!DOCTYPE\b/iu.test(withoutCdata)) {
+    throw new Error("3MF XML document type declarations are not supported.");
   }
   return withoutCdata;
 }
@@ -98,9 +114,11 @@ function decodeXmlAttributeValue(value: string): string {
         const codePoint = Number.parseInt(decimal ?? hexadecimal!, decimal === undefined ? 16 : 10);
         if (
           !Number.isSafeInteger(codePoint) ||
-          codePoint <= 0 ||
+          (codePoint !== 0x9 && codePoint !== 0xa && codePoint !== 0xd && codePoint < 0x20) ||
           codePoint > 0x10ffff ||
-          (codePoint >= 0xd800 && codePoint <= 0xdfff)
+          (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
+          codePoint === 0xfffe ||
+          codePoint === 0xffff
         ) {
           throw new Error("3MF XML attribute contains an invalid character reference.");
         }
@@ -125,15 +143,38 @@ function decodeXmlAttributeValue(value: string): string {
 }
 
 function getAttribute(source: string, name: string): string | null {
-  let pattern = ATTRIBUTE_PATTERN_CACHE.get(name);
-  if (!pattern) {
-    const escapedName = name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-    pattern = new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`, "iu");
-    ATTRIBUTE_PATTERN_CACHE.set(name, pattern);
+  const expectedName = name.toLowerCase();
+  let cursor = 0;
+  while (cursor < source.length) {
+    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    if (cursor >= source.length || source[cursor] === "/") break;
+
+    const nameStart = cursor;
+    while (cursor < source.length && !/[\s=]/u.test(source[cursor]!)) cursor += 1;
+    const attributeName = source.slice(nameStart, cursor);
+    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    if (source[cursor] !== "=") {
+      while (cursor < source.length && !/\s/u.test(source[cursor]!)) cursor += 1;
+      continue;
+    }
+    cursor += 1;
+    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    const quote = source[cursor];
+    if (quote !== '"' && quote !== "'") {
+      throw new Error("3MF XML contains an unquoted attribute value.");
+    }
+    cursor += 1;
+    const valueStart = cursor;
+    const valueEnd = source.indexOf(quote, valueStart);
+    if (valueEnd < 0) {
+      throw new Error("3MF XML contains an unterminated attribute value.");
+    }
+    cursor = valueEnd + 1;
+    if (attributeName.toLowerCase() === expectedName) {
+      return decodeXmlAttributeValue(source.slice(valueStart, valueEnd));
+    }
   }
-  const match = pattern.exec(source);
-  const value = match?.[1] ?? match?.[2];
-  return value === undefined ? null : decodeXmlAttributeValue(value);
+  return null;
 }
 
 function parseOptionalInteger(value: string | null): number | null {
@@ -154,14 +195,16 @@ function parseColor(value: string): ParsedColor {
 }
 
 function parseTransform(value: string | null): readonly number[] | null {
-  if (!value) {
+  if (value === null) {
     return null;
   }
-  const numbers = value
-    .trim()
-    .split(/\s+/u)
-    .map((part) => Number(part));
-  return numbers.length >= 12 && numbers.every(Number.isFinite) ? numbers.slice(0, 12) : null;
+  const parts = value.trim().split(/\s+/u);
+  const decimalPattern = /^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)$/iu;
+  const numbers = parts.map((part) => (decimalPattern.test(part) ? Math.fround(Number(part)) : NaN));
+  if (numbers.length !== 12 || !numbers.every(Number.isFinite)) {
+    throw new Error("3MF component or build item contains an invalid transform.");
+  }
+  return numbers;
 }
 
 function matrixFrom3mfTransform(
@@ -264,7 +307,10 @@ function parseObjects(modelXml: string): Map<string, ParsedObject> {
     if (!id) {
       continue;
     }
-    const meshMatch = /<mesh\b[^>]*>([\s\S]*?)<\/mesh>/iu.exec(body);
+    const meshMatch = new RegExp(
+      `<mesh\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/mesh>`,
+      "iu",
+    ).exec(body);
     objects.set(id, {
       id,
       name: getAttribute(attributes, "name"),
@@ -278,7 +324,10 @@ function parseObjects(modelXml: string): Map<string, ParsedObject> {
 }
 
 function parseBuildItems(modelXml: string): ParsedBuildItem[] {
-  const buildMatch = /<build\b[^>]*>([\s\S]*?)<\/build>/iu.exec(modelXml);
+  const buildMatch = new RegExp(
+    `<build\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/build>`,
+    "iu",
+  ).exec(modelXml);
   if (!buildMatch) {
     return [];
   }
@@ -337,11 +386,16 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   }
   const parseBoundedTriangle = (attributes: string): readonly [number, number, number] | null => {
     const triangle = parseTriangle(attributes);
-    return triangle?.every((index) => index < vertexCount) ? triangle : null;
+    return triangle?.every((index) => index < vertexCount) && new Set(triangle).size === 3
+      ? triangle
+      : null;
   };
   const triangleCount = countParsedTags(TRIANGLE_PATTERN, meshBlock, parseBoundedTriangle);
   if (triangleCount !== countTags(TRIANGLE_PATTERN, meshBlock)) {
     throw new Error("3MF mesh contains a triangle that references an invalid vertex.");
+  }
+  if (vertexCount === 0 || triangleCount === 0) {
+    throw new Error("3MF mesh did not contain renderable triangle geometry.");
   }
   const positions = new Float32Array(vertexCount * 3);
   const indices =
@@ -383,7 +437,10 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
 }
 
 function rootNamespaceDeclarations(xml: string, localName: string): Map<string, string> {
-  const rootPattern = new RegExp(`<(?:[a-z_][\\w.-]*:)?${localName}\\b([^>]*)>`, "iu");
+  const rootPattern = new RegExp(
+    `<(?:[a-z_][\\w.-]*:)?${localName}\\b(${XML_ATTRIBUTE_TEXT})>`,
+    "iu",
+  );
   const rootAttributes = rootPattern.exec(xml)?.[1] ?? "";
   const declarations = new Map<string, string>();
   const declarationPattern = /(?:^|\s)xmlns(?::([a-z_][\w.-]*))?\s*=\s*(?:"([^"]*)"|'([^']*)')/giu;
@@ -446,6 +503,9 @@ function normalizeRootPartTarget(target: string): string {
   }
   if (/^[a-z][a-z\d+.-]*:/iu.test(decodedTarget) || decodedTarget.startsWith("//")) {
     throw new Error("3MF root model relationship must target a package part.");
+  }
+  if (/[\\\u0000-\u001f\u007f]/u.test(decodedTarget)) {
+    throw new Error("3MF root model relationship contains invalid package path characters.");
   }
 
   const segments: string[] = [];
@@ -530,6 +590,7 @@ export function parseThreeMfFastModel(input: {
   const objects = parseObjects(modelXml);
   const buildItems = parseBuildItems(modelXml);
   const parsedMeshes = new Map<string, CadThreeMfParsedMesh>();
+  let expandedNodeCount = 0;
 
   const getParsedMesh = (object: ParsedObject): CadThreeMfParsedMesh | null => {
     if (!object.meshBlock) {
@@ -556,11 +617,18 @@ export function parseThreeMfFastModel(input: {
     stack: Set<string>,
   ): CadThreeMfParsedNode | null => {
     if (stack.has(objectId)) {
-      return null;
+      throw new Error("3MF component graph contains a cycle.");
     }
     const object = objects.get(objectId);
     if (!object) {
       return null;
+    }
+    if (stack.size >= MAX_COMPONENT_NESTING_DEPTH) {
+      throw new Error("3MF component graph exceeds the supported nesting depth.");
+    }
+    expandedNodeCount += 1;
+    if (expandedNodeCount > MAX_EXPANDED_NODE_COUNT) {
+      throw new Error("3MF component graph expands to too many scene nodes.");
     }
 
     const mesh = getParsedMesh(object);
