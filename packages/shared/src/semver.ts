@@ -17,12 +17,9 @@ export function normalizeSemverVersion(version: string): string {
   const prereleaseIndex = withoutBuild.indexOf("-");
   const prerelease = prereleaseIndex >= 0 ? withoutBuild.slice(prereleaseIndex) : "";
   const main = prereleaseIndex >= 0 ? withoutBuild.slice(0, prereleaseIndex) : withoutBuild;
-  const segments = (main ?? "")
-    .split(".")
-    .map((segment) => segment.trim())
-    .filter((segment) => segment.length > 0);
+  const segments = (main ?? "").split(".");
 
-  if (segments.length === 2) {
+  if (segments.length === 2 && segments.every((segment) => segment.length > 0)) {
     segments.push("0");
   }
 
@@ -85,8 +82,14 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
 export function compareSemverVersions(left: string, right: string): number {
   const parsedLeft = parseSemver(left);
   const parsedRight = parseSemver(right);
-  if (!parsedLeft || !parsedRight) {
-    return left.localeCompare(right);
+  if (!parsedLeft && !parsedRight) {
+    return left < right ? -1 : left > right ? 1 : 0;
+  }
+  if (!parsedLeft) {
+    return -1;
+  }
+  if (!parsedRight) {
+    return 1;
   }
 
   for (const segment of ["major", "minor", "patch"] as const) {

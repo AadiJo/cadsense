@@ -42,6 +42,9 @@ describe("semver helpers", () => {
 
   it("rejects malformed core and prerelease identifiers", () => {
     expect(parseSemver("01.2.3")).toBeNull();
+    expect(parseSemver("1..2.3")).toBeNull();
+    expect(parseSemver(".1.2.3")).toBeNull();
+    expect(parseSemver("1.2.3.")).toBeNull();
     expect(parseSemver("1.2.3-alpha..1")).toBeNull();
     expect(parseSemver("1.2.3-alpha.01")).toBeNull();
     expect(parseSemver("1.2.3-alpha_1")).toBeNull();
@@ -58,8 +61,24 @@ describe("semver helpers", () => {
     ).toBeLessThan(0);
   });
 
-  it("falls back to lexical comparison for malformed numeric segments", () => {
-    expect(compareSemverVersions("1.2.3abc", "1.2.10")).toBeGreaterThan(0);
+  it("sorts malformed versions below valid versions and lexically among themselves", () => {
+    expect(compareSemverVersions("1.2.3abc", "1.2.10")).toBeLessThan(0);
+    expect(compareSemverVersions("also-invalid", "not-a-version")).toBeLessThan(0);
+  });
+
+  it("maintains a transitive ordering across valid and malformed versions", () => {
+    const ordered = ["15.invalid", "2.0.0", "10.0.0", "10.0.0-alpha", "10.0.0"];
+    ordered.sort(compareSemverVersions);
+
+    for (let left = 0; left < ordered.length; left += 1) {
+      for (let middle = left; middle < ordered.length; middle += 1) {
+        for (let right = middle; right < ordered.length; right += 1) {
+          expect(compareSemverVersions(ordered[left]!, ordered[middle]!)).toBeLessThanOrEqual(0);
+          expect(compareSemverVersions(ordered[middle]!, ordered[right]!)).toBeLessThanOrEqual(0);
+          expect(compareSemverVersions(ordered[left]!, ordered[right]!)).toBeLessThanOrEqual(0);
+        }
+      }
+    }
   });
 
   it("supports comparison comparators", () => {
