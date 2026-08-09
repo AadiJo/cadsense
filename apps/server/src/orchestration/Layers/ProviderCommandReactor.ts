@@ -34,6 +34,7 @@ import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import {
   registerCadProviderThreadAlias,
   unregisterCadProviderThreadAliases,
+  unregisterCadThreadReferences,
 } from "../../cad/CadThreadAliases.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -430,6 +431,54 @@ const make = Effect.gen(function* () {
     });
     const cadViewThreadId = readCadReviewParentThreadId(thread);
 
+    const cadAliasThreadsAreActive = Effect.gen(function* () {
+      if (!(yield* resolveThread(threadId))) return false;
+      return cadViewThreadId === undefined || (yield* resolveThread(cadViewThreadId)) !== undefined;
+    }).pipe(Effect.catch(() => Effect.succeed(false)));
+
+    const registerActiveCadProviderThreadAlias = (resumeCursor: unknown) => {
+      const cadThreadId = cadViewThreadId ?? threadId;
+      return Effect.gen(function* () {
+        registerCadProviderThreadAlias({
+          cadThreadId,
+          ownerThreadId: threadId,
+          resumeCursor,
+        });
+        if (!(yield* cadAliasThreadsAreActive)) {
+          unregisterCadProviderThreadAliases(threadId);
+          if (cadThreadId !== threadId) {
+            unregisterCadThreadReferences(cadThreadId);
+          }
+          return false;
+        }
+        return true;
+      });
+    };
+
+    const failInactiveSession = (session: ProviderSession) =>
+      providerService.stopSession({ threadId: session.threadId }).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) return Effect.failCause(cause);
+          return Effect.logWarning(
+            "failed to stop provider session after its CAD thread was deleted",
+            {
+              threadId,
+              providerSessionThreadId: session.threadId,
+              cause: Cause.pretty(cause),
+            },
+          );
+        }),
+        Effect.andThen(
+          Effect.fail(
+            new ProviderAdapterRequestError({
+              provider: providerErrorLabel(session.provider),
+              method: "thread.turn.start",
+              detail: `Thread '${threadId}' was deleted while its provider session was starting.`,
+            }),
+          ),
+        ),
+      );
+
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
       readonly provider?: ProviderDriverKind;
@@ -455,7 +504,10 @@ const make = Effect.gen(function* () {
             detail: `Provider session '${session.threadId}' started without a provider instance id.`,
           });
         }
-        yield* Effect.uninterruptible(
+        if (!(yield* cadAliasThreadsAreActive)) {
+          return yield* failInactiveSession(session);
+        }
+        const aliasRegistered = yield* Effect.uninterruptible(
           setThreadSession({
             threadId,
             session: {
@@ -471,23 +523,18 @@ const make = Effect.gen(function* () {
             },
             createdAt,
           }).pipe(
-            Effect.tap(() =>
-              Effect.sync(() =>
-                registerCadProviderThreadAlias({
-                  cadThreadId: cadViewThreadId ?? threadId,
-                  ownerThreadId: threadId,
-                  resumeCursor: session.resumeCursor,
-                }),
-              ),
-            ),
+            Effect.andThen(registerActiveCadProviderThreadAlias(session.resumeCursor)),
             Effect.onError(() => Effect.sync(() => unregisterCadProviderThreadAliases(threadId))),
           ),
         );
+        if (!aliasRegistered) {
+          return yield* failInactiveSession(session);
+        }
       });
 
     const existingSessionThreadId =
       thread.session && thread.session.status !== "stopped" && activeSession ? thread.id : null;
-    if (existingSessionThreadId) {
+    if (existingSessionThreadId && activeSession) {
       const runtimeModeChanged = thread.runtimeMode !== thread.session?.runtimeMode;
       const cwdChanged = effectiveCwd !== activeSession?.cwd;
       const sessionModelSwitch = (yield* providerService.getCapabilities(desiredInstanceId))
@@ -512,11 +559,9 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
-        registerCadProviderThreadAlias({
-          cadThreadId: cadViewThreadId ?? threadId,
-          ownerThreadId: threadId,
-          resumeCursor: activeSession?.resumeCursor,
-        });
+        if (!(yield* registerActiveCadProviderThreadAlias(activeSession?.resumeCursor))) {
+          return yield* failInactiveSession(activeSession);
+        }
         return existingSessionThreadId;
       }
 

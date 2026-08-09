@@ -1844,6 +1844,69 @@ describe.sequential("ProviderCommandReactor", () => {
     expect(resolveCadRequestThreadId(ThreadId.make("restored-provider-thread"))).toBe("thread-1");
   });
 
+  it("does not restore an alias when its thread is deleted during session startup", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    let releaseSession!: (session: ProviderSession) => void;
+    const pendingSession = new Promise<ProviderSession>((resolve) => {
+      releaseSession = resolve;
+    });
+    const session: ProviderSession = {
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      resumeCursor: { threadId: "late-provider-thread" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    harness.startSession.mockImplementationOnce(() =>
+      Effect.promise(() => pendingSession).pipe(
+        Effect.tap((startedSession) =>
+          Effect.sync(() => {
+            harness.runtimeSessions.push(startedSession);
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-delete"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-delete"),
+          role: "user",
+          text: "start a slow session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-delete-during-session-start"),
+        threadId: ThreadId.make("thread-1"),
+      }),
+    );
+    releaseSession(session);
+    await harness.drain();
+
+    expect(harness.stopSession).toHaveBeenCalledTimes(1);
+    expect(harness.runtimeSessions).toEqual([]);
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(resolveCadRequestThreadId(ThreadId.make("late-provider-thread"))).toBe(
+      "late-provider-thread",
+    );
+  });
+
   it("reacts to thread.approval.respond by forwarding provider approval response", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
