@@ -111,3 +111,24 @@ export async function readResponseArrayBufferWithinLimit(
   }
   return output.buffer;
 }
+
+export async function loadCadModelResourcesWithinLimit<
+  Item,
+  Result extends { readonly buffer: ArrayBuffer },
+>(input: {
+  readonly items: ReadonlyArray<Item>;
+  readonly maximumBytes: number;
+  readonly load: (item: Item, remainingBytes: number) => Promise<Result>;
+}): Promise<Result[]> {
+  const results: Result[] = [];
+  let remainingBytes = input.maximumBytes;
+  for (const item of input.items) {
+    const result = await input.load(item, remainingBytes);
+    if (result.buffer.byteLength > remainingBytes) {
+      throw formatLimitError("CAD model download", input.maximumBytes);
+    }
+    results.push(result);
+    remainingBytes -= result.buffer.byteLength;
+  }
+  return results;
+}

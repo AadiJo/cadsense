@@ -3,6 +3,7 @@ import { zipSync } from "three/examples/jsm/libs/fflate.module.js";
 
 import {
   inspectThreeMfArchive,
+  loadCadModelResourcesWithinLimit,
   MAX_3MF_ARCHIVE_ENTRIES,
   MAX_3MF_EXPANDED_ENTRY_BYTES,
   readResponseArrayBufferWithinLimit,
@@ -98,5 +99,31 @@ describe("3MF resource limits", () => {
     await expect(readResponseArrayBufferWithinLimit(response, 5)).resolves.toEqual(
       Uint8Array.from([1, 2, 3, 4, 5]).buffer,
     );
+  });
+
+  it("can enforce one shared byte budget across multiple response streams", async () => {
+    const first = new Response(Uint8Array.from([1, 2, 3, 4, 5, 6]));
+    let secondCancelled = false;
+    const second = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(Uint8Array.from([7, 8, 9, 10, 11]));
+        },
+        cancel() {
+          secondCancelled = true;
+        },
+      }),
+    );
+
+    await expect(
+      loadCadModelResourcesWithinLimit({
+        items: [first, second],
+        maximumBytes: 10,
+        load: async (response, remainingBytes) => ({
+          buffer: await readResponseArrayBufferWithinLimit(response, remainingBytes),
+        }),
+      }),
+    ).rejects.toThrow(/download.*safety limit/);
+    expect(secondCancelled).toBe(true);
   });
 });

@@ -15,6 +15,7 @@ import {
 import ThreeMfFastParserWorker from "./lib/cadThreeMfFastParser.worker?worker";
 import {
   inspectThreeMfArchive,
+  loadCadModelResourcesWithinLimit,
   MAX_CAD_MODEL_DOWNLOAD_BYTES,
   readResponseArrayBufferWithinLimit,
 } from "./lib/cadThreeMfResourceLimits";
@@ -596,8 +597,9 @@ function parseContentLength(headers: Headers): number | null {
 
 async function fetchDescriptorAsFilePayload(
   descriptor: CadViewerFrameFileDescriptor,
+  maximumBytes = MAX_CAD_MODEL_DOWNLOAD_BYTES,
 ): Promise<CadViewerFrameFilePayload> {
-  if (descriptor.sizeBytes !== undefined && descriptor.sizeBytes > MAX_CAD_MODEL_DOWNLOAD_BYTES) {
+  if (descriptor.sizeBytes !== undefined && descriptor.sizeBytes > maximumBytes) {
     throw new Error(
       `CAD model download exceeds the ${MAX_CAD_MODEL_DOWNLOAD_BYTES / (1024 * 1024)} MiB safety limit.`,
     );
@@ -609,7 +611,7 @@ async function fetchDescriptorAsFilePayload(
     );
   }
   const contentLength = parseContentLength(response.headers);
-  const buffer = await readResponseArrayBufferWithinLimit(response, MAX_CAD_MODEL_DOWNLOAD_BYTES);
+  const buffer = await readResponseArrayBufferWithinLimit(response, maximumBytes);
   const type =
     descriptor.type ??
     response.headers.get("content-type") ??
@@ -1551,7 +1553,11 @@ async function loadFileDescriptors(
   }
 
   const fetchStartedAt = performance.now();
-  const payloadFiles = await Promise.all(files.map(fetchDescriptorAsFilePayload));
+  const payloadFiles = await loadCadModelResourcesWithinLimit({
+    items: files,
+    maximumBytes: MAX_CAD_MODEL_DOWNLOAD_BYTES,
+    load: fetchDescriptorAsFilePayload,
+  });
   const fetchMs = performance.now() - fetchStartedAt;
   onStage?.("fallback-files-fetched");
   if (
