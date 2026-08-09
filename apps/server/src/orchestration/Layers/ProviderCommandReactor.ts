@@ -509,6 +509,11 @@ const make = Effect.gen(function* () {
         !shouldRestartForModelChange &&
         !shouldRestartForModelSelectionChange
       ) {
+        registerCadProviderThreadAlias({
+          cadThreadId: cadViewThreadId ?? threadId,
+          ownerThreadId: threadId,
+          resumeCursor: activeSession?.resumeCursor,
+        });
         return existingSessionThreadId;
       }
 

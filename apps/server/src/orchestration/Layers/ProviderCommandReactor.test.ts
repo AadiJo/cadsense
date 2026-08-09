@@ -1777,6 +1777,73 @@ describe.sequential("ProviderCommandReactor", () => {
     );
   });
 
+  it("restores an active session alias after process-local state is lost", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const session: ProviderSession = {
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "ready" as const,
+      runtimeMode: "approval-required" as const,
+      threadId: ThreadId.make("thread-1"),
+      cwd: "/tmp/provider-project",
+      model: "gpt-5-codex",
+      resumeCursor: { threadId: "restored-provider-thread" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    harness.startSession.mockImplementationOnce(() =>
+      Effect.sync(() => {
+        harness.runtimeSessions.push(session);
+        return session;
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-alias-before-restart"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-alias-before-restart"),
+          role: "user",
+          text: "start session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    clearCadProviderThreadAliasesForTests();
+    expect(resolveCadRequestThreadId(ThreadId.make("restored-provider-thread"))).toBe(
+      "restored-provider-thread",
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-alias-after-restart"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-alias-after-restart"),
+          role: "user",
+          text: "reuse session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(resolveCadRequestThreadId(ThreadId.make("restored-provider-thread"))).toBe("thread-1");
+  });
+
   it("reacts to thread.approval.respond by forwarding provider approval response", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
