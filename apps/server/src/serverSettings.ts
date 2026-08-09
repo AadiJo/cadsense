@@ -500,13 +500,14 @@ const makeServerSettings = Effect.gen(function* () {
     | { readonly exists: false }
     | { readonly exists: true; readonly contents: string };
 
-  const snapshotSettingsFile: Effect.Effect<SettingsFileSnapshot, ServerSettingsError> =
-    Effect.gen(function* () {
+  const snapshotSettingsFile: Effect.Effect<SettingsFileSnapshot, ServerSettingsError> = Effect.gen(
+    function* () {
       if (!(yield* readConfigExists)) {
         return { exists: false } as const;
       }
       return { exists: true, contents: yield* readRawConfig } as const;
-    });
+    },
+  );
 
   const restoreSettingsFile = (snapshot: SettingsFileSnapshot) =>
     (snapshot.exists
