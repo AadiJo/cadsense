@@ -213,6 +213,36 @@ describe("cadThreeMfFastParser", () => {
     expect(parseThreeMfFast({ three: THREE, unzipped }).children[0]?.name).toBe("root");
   });
 
+  it("ignores relationship and geometry decoys inside comments and CDATA", () => {
+    const modelXml = `<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <!-- <object id="decoy"><mesh><vertices><vertex x="invalid" y="0" z="0"/></vertices></mesh></object> -->
+  <![CDATA[<triangle v1="999" v2="999" v3="999"/>]]>
+  <resources><object id="1" name="root"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>`;
+    const unzipped = unzipSync(
+      zipSync({
+        "_rels/.rels": textEncoder.encode(
+          `<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><!-- <Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/missing.model"/> --><Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/3D/root.model"/></Relationships>`,
+        ),
+        "3D/root.model": textEncoder.encode(modelXml),
+      }),
+    );
+
+    expect(parseThreeMfFast({ three: THREE, unzipped }).children[0]?.name).toBe("root");
+  });
+
+  it("rejects DTD declarations rather than interpreting custom entity markup", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0"?>
+<!DOCTYPE model [<!ENTITY decoy "<vertex x='0' y='0' z='0'/>">]>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources/></model>`);
+
+    expect(() => parseThreeMfFast({ three: THREE, unzipped })).toThrow(
+      /document type declarations are not supported/,
+    );
+  });
+
   it("rejects triangle indices outside the vertex buffer instead of narrowing them", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
 <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
@@ -222,6 +252,30 @@ describe("cadThreeMfFastParser", () => {
 
     expect(() => parseThreeMfFast({ three: THREE, unzipped })).toThrow(
       /triangle that references an invalid vertex/,
+    );
+  });
+
+  it("rejects coordinates that overflow the float32 geometry buffer", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1"><mesh><vertices><vertex x="3.5e38" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>`);
+
+    expect(() => parseThreeMfFast({ three: THREE, unzipped })).toThrow(
+      /vertex with invalid coordinates/,
+    );
+  });
+
+  it("rejects empty coordinates instead of coercing them to zero", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1"><mesh><vertices><vertex x="" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>`);
+
+    expect(() => parseThreeMfFast({ three: THREE, unzipped })).toThrow(
+      /vertex with invalid coordinates/,
     );
   });
 });

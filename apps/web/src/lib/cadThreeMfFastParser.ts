@@ -75,6 +75,18 @@ const VERTEX_PATTERN = /<vertex\b([^>]*)\/?>/giu;
 const TRIANGLE_PATTERN = /<triangle\b([^>]*)\/?>/giu;
 const ATTRIBUTE_PATTERN_CACHE = new Map<string, RegExp>();
 
+function structuralXml(source: string): string {
+  if (/<!DOCTYPE\b/iu.test(source)) {
+    throw new Error("3MF XML document type declarations are not supported.");
+  }
+  const withoutComments = source.replace(/<!--[\s\S]*?-->/gu, "");
+  const withoutCdata = withoutComments.replace(/<!\[CDATA\[[\s\S]*?\]\]>/gu, "");
+  if (/<!--|-->|<!\[CDATA\[|\]\]>/u.test(withoutCdata)) {
+    throw new Error("3MF XML contains an unterminated comment or CDATA section.");
+  }
+  return withoutCdata;
+}
+
 function decodeXmlAttributeValue(value: string): string {
   if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\dA-Fa-f]+);)/u.test(value)) {
     throw new Error("3MF XML attribute contains an invalid character reference.");
@@ -294,7 +306,12 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   const parseVertex = (attributes: string): readonly [number, number, number] | null => {
     const parseCoordinate = (name: string): number => {
       const value = getAttribute(attributes, name);
-      return value === null ? Number.NaN : Number(value);
+      if (value === null || value.trim().length === 0) {
+        return Number.NaN;
+      }
+      const parsed = Number(value);
+      const stored = Math.fround(parsed);
+      return Number.isFinite(stored) ? stored : Number.NaN;
     };
     const x = parseCoordinate("x");
     const y = parseCoordinate("y");
@@ -460,7 +477,7 @@ function findRootModelXml(unzipped: Record<string, Uint8Array>): Uint8Array {
     throw new Error("3MF archive did not contain package root relationships.");
   }
 
-  const relationshipsXml = new TextDecoder().decode(relationshipsBytes);
+  const relationshipsXml = structuralXml(new TextDecoder().decode(relationshipsBytes));
   const relationshipNamespaces = rootNamespaceDeclarations(relationshipsXml, "relationships");
   RELATIONSHIP_PATTERN.lastIndex = 0;
   let relationshipMatch: RegExpExecArray | null;
@@ -508,7 +525,7 @@ export function parseThreeMfFastModel(input: {
   readonly unzipped: Record<string, Uint8Array>;
 }): CadThreeMfParsedModel {
   const modelBytes = findRootModelXml(input.unzipped);
-  const modelXml = new TextDecoder().decode(modelBytes);
+  const modelXml = structuralXml(new TextDecoder().decode(modelBytes));
   const colors = parseColors(modelXml);
   const objects = parseObjects(modelXml);
   const buildItems = parseBuildItems(modelXml);
