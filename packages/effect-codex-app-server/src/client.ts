@@ -307,7 +307,10 @@ export const layerCommand = (
         ...(options.cwd ? { cwd: options.cwd } : {}),
         ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
         forceKillAfter: DEFAULT_APP_SERVER_FORCE_KILL_AFTER,
-        shell: process.platform === "win32",
+        // Keep command arguments out of a command shell. In particular, provider
+        // settings can contain user-controlled paths and arguments that must be
+        // passed verbatim rather than interpreted as cmd.exe syntax on Windows.
+        shell: false,
       });
       return yield* spawner.spawn(command).pipe(
         Effect.mapError(
