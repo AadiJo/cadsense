@@ -77,16 +77,19 @@ describe("DesktopSavedEnvironments", () => {
         const corruptDocument = "{ this is not valid json }\n";
 
         yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
-        yield* fileSystem.writeFileString(environment.savedEnvironmentRegistryPath, corruptDocument);
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          corruptDocument,
+        );
 
         const readError = yield* Effect.flip(savedEnvironments.getRegistry);
         expect(readError._tag).toBe("DesktopSavedEnvironmentsReadError");
 
         const writeError = yield* Effect.flip(savedEnvironments.setRegistry([]));
         expect(writeError._tag).toBe("DesktopSavedEnvironmentsWriteError");
-        expect(
-          yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath),
-        ).toBe(corruptDocument);
+        expect(yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath)).toBe(
+          corruptDocument,
+        );
       }),
     ),
   );
