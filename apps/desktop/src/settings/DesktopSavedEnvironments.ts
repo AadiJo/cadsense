@@ -66,6 +66,16 @@ export class DesktopSavedEnvironmentsWriteError extends Data.TaggedError(
   }
 }
 
+export class DesktopSavedEnvironmentsReadError extends Data.TaggedError(
+  "DesktopSavedEnvironmentsReadError",
+)<{
+  readonly cause: PlatformError.PlatformError | Schema.SchemaError;
+}> {
+  override get message() {
+    return `Failed to read desktop saved environments: ${this.cause.message}`;
+  }
+}
+
 export class DesktopSavedEnvironmentSecretDecodeError extends Data.TaggedError(
   "DesktopSavedEnvironmentSecretDecodeError",
 )<{
@@ -77,6 +87,7 @@ export class DesktopSavedEnvironmentSecretDecodeError extends Data.TaggedError(
 }
 
 export type DesktopSavedEnvironmentsGetSecretError =
+  | DesktopSavedEnvironmentsReadError
   | DesktopSavedEnvironmentSecretDecodeError
   | ElectronSafeStorage.ElectronSafeStorageAvailabilityError
   | ElectronSafeStorage.ElectronSafeStorageDecryptError;
@@ -87,7 +98,10 @@ export type DesktopSavedEnvironmentsSetSecretError =
   | ElectronSafeStorage.ElectronSafeStorageEncryptError;
 
 export interface DesktopSavedEnvironmentsShape {
-  readonly getRegistry: Effect.Effect<readonly PersistedSavedEnvironmentRecord[]>;
+  readonly getRegistry: Effect.Effect<
+    readonly PersistedSavedEnvironmentRecord[],
+    DesktopSavedEnvironmentsReadError
+  >;
   readonly setRegistry: (
     records: readonly PersistedSavedEnvironmentRecord[],
   ) => Effect.Effect<void, DesktopSavedEnvironmentsWriteError>;
@@ -152,18 +166,22 @@ function normalizeSavedEnvironmentRegistryDocument(
 function readRegistryDocument(
   fileSystem: FileSystem.FileSystem,
   registryPath: string,
-): Effect.Effect<SavedEnvironmentRegistryDocument> {
+): Effect.Effect<
+  SavedEnvironmentRegistryDocument,
+  PlatformError.PlatformError | Schema.SchemaError
+> {
   return fileSystem.readFileString(registryPath).pipe(
-    Effect.option,
-    Effect.flatMap(
-      Option.match({
-        onNone: () => Effect.succeed({ version: 1, records: [] }),
-        onSome: (raw) =>
-          decodeSavedEnvironmentRegistryDocumentJson(raw).pipe(
+    Effect.catch((cause) =>
+      cause.reason instanceof PlatformError.SystemError && cause.reason._tag === "NotFound"
+        ? Effect.succeed<string | null>(null)
+        : Effect.fail(cause),
+    ),
+    Effect.flatMap((raw) =>
+      raw === null
+        ? Effect.succeed({ version: 1, records: [] })
+        : decodeSavedEnvironmentRegistryDocumentJson(raw).pipe(
             Effect.map(normalizeSavedEnvironmentRegistryDocument),
-            Effect.catch(() => Effect.succeed({ version: 1, records: [] })),
           ),
-      }),
     ),
   );
 }
@@ -236,6 +254,7 @@ export const layer = Layer.effect(
         Effect.map((document) =>
           document.records.map((record) => toPersistedSavedEnvironmentRecord(record)),
         ),
+        Effect.mapError((cause) => new DesktopSavedEnvironmentsReadError({ cause })),
         Effect.withSpan("desktop.savedEnvironments.getRegistry"),
       ),
       setRegistry: Effect.fn("desktop.savedEnvironments.setRegistry")(function* (records) {
@@ -244,7 +263,7 @@ export const layer = Layer.effect(
             const currentDocument = yield* readRegistryDocument(
               fileSystem,
               environment.savedEnvironmentRegistryPath,
-            );
+            ).pipe(Effect.mapError((cause) => new DesktopSavedEnvironmentsWriteError({ cause })));
             yield* writeDocument(preserveExistingSecrets(currentDocument, records));
           }),
         );
@@ -254,7 +273,7 @@ export const layer = Layer.effect(
         const document = yield* readRegistryDocument(
           fileSystem,
           environment.savedEnvironmentRegistryPath,
-        );
+        ).pipe(Effect.mapError((cause) => new DesktopSavedEnvironmentsReadError({ cause })));
         const encoded = Option.fromNullishOr(
           document.records.find((record) => record.environmentId === environmentId)
             ?.encryptedBearerToken,
@@ -274,7 +293,7 @@ export const layer = Layer.effect(
             const document = yield* readRegistryDocument(
               fileSystem,
               environment.savedEnvironmentRegistryPath,
-            );
+            ).pipe(Effect.mapError((cause) => new DesktopSavedEnvironmentsWriteError({ cause })));
 
             if (!(yield* safeStorage.isEncryptionAvailable)) {
               return false;
@@ -310,7 +329,7 @@ export const layer = Layer.effect(
             const document = yield* readRegistryDocument(
               fileSystem,
               environment.savedEnvironmentRegistryPath,
-            );
+            ).pipe(Effect.mapError((cause) => new DesktopSavedEnvironmentsWriteError({ cause })));
             if (
               !document.records.some(
                 (record) =>

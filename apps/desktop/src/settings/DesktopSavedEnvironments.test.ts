@@ -49,6 +49,21 @@ function makeLayer(baseDir: string) {
   );
 }
 
+const withSavedEnvironments = <A, E, R>(
+  effect: Effect.Effect<
+    A,
+    E,
+    R | DesktopSavedEnvironments.DesktopSavedEnvironments | DesktopEnvironment.DesktopEnvironment
+  >,
+) =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "cadsense-desktop-saved-environments-test-",
+    });
+    return yield* effect.pipe(Effect.provide(makeLayer(baseDir)));
+  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
+
 const makeRecord = (id: string): PersistedSavedEnvironmentRecord => ({
   environmentId: EnvironmentId.make(id),
   label: id,
@@ -59,14 +74,56 @@ const makeRecord = (id: string): PersistedSavedEnvironmentRecord => ({
 });
 
 describe("DesktopSavedEnvironments", () => {
-  it.effect("serializes concurrent secret updates", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "cadsense-desktop-saved-environments-test-",
-      });
+  it.effect("uses an empty registry only when the file does not exist", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        expect(yield* savedEnvironments.getRegistry).toEqual([]);
+      }),
+    ),
+  );
 
-      yield* Effect.gen(function* () {
+  it.effect("does not overwrite a registry that cannot be decoded", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
+        const environment = yield* DesktopEnvironment.DesktopEnvironment;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
+        const corruptDocument = "{ this is not valid json }\n";
+
+        yield* fileSystem.makeDirectory(environment.stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(
+          environment.savedEnvironmentRegistryPath,
+          corruptDocument,
+        );
+
+        const readError = yield* Effect.flip(savedEnvironments.getRegistry);
+        expect(readError._tag).toBe("DesktopSavedEnvironmentsReadError");
+
+        const writeError = yield* Effect.flip(savedEnvironments.setRegistry([]));
+        expect(writeError._tag).toBe("DesktopSavedEnvironmentsWriteError");
+
+        const secretWriteError = yield* Effect.flip(
+          savedEnvironments.setSecret({ environmentId: "alpha", secret: "replacement" }),
+        );
+        expect(secretWriteError._tag).toBe("DesktopSavedEnvironmentsWriteError");
+
+        const secretRemovalError = yield* Effect.flip(savedEnvironments.removeSecret("alpha"));
+        expect(secretRemovalError._tag).toBe("DesktopSavedEnvironmentsWriteError");
+        expect(yield* fileSystem.readFileString(environment.savedEnvironmentRegistryPath)).toBe(
+          corruptDocument,
+        );
+
+        yield* fileSystem.remove(environment.savedEnvironmentRegistryPath);
+        yield* savedEnvironments.setRegistry([makeRecord("recovered")]);
+        expect(yield* savedEnvironments.getRegistry).toEqual([makeRecord("recovered")]);
+      }),
+    ),
+  );
+
+  it.effect("serializes concurrent secret updates", () =>
+    withSavedEnvironments(
+      Effect.gen(function* () {
         const savedEnvironments = yield* DesktopSavedEnvironments.DesktopSavedEnvironments;
         yield* savedEnvironments.setRegistry([makeRecord("alpha"), makeRecord("beta")]);
 
@@ -80,7 +137,7 @@ describe("DesktopSavedEnvironments", () => {
 
         expect(Option.getOrNull(yield* savedEnvironments.getSecret("alpha"))).toBe("secret-alpha");
         expect(Option.getOrNull(yield* savedEnvironments.getSecret("beta"))).toBe("secret-beta");
-      }).pipe(Effect.provide(makeLayer(baseDir)));
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      }),
+    ),
   );
 });
