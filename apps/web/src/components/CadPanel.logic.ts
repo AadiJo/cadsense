@@ -51,6 +51,10 @@ export function cadViewerFrameUrl(location: Location = window.location): string 
   return new URL("/cad-viewer-frame", location.href).toString();
 }
 
+export function cadViewerFrameOrigin(location: Location = window.location): string {
+  return new URL(cadViewerFrameUrl(location)).origin;
+}
+
 export function cadViewerFileName(relativePath: string): string {
   const normalized = relativePath.replaceAll("\\", "/");
   const slashIndex = normalized.lastIndexOf("/");

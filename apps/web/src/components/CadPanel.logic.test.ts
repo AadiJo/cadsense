@@ -6,6 +6,7 @@ import {
   cadComponentVisibilityCommandsForScopeChange,
   cadOnshapeModelQueryIdentity,
   cadViewerFileName,
+  cadViewerFrameOrigin,
   formatCadModelBytes,
   getCadModelViewerBlocker,
   shouldHandleCadAgentRequestForPanel,
@@ -47,6 +48,12 @@ describe("CadPanel logic", () => {
   it("preserves the CAD file extension for the frame file payload", () => {
     expect(cadViewerFileName("onshape-sync/current.3mf")).toBe("current.3mf");
     expect(cadViewerFileName("onshape-sync\\bundle\\assembly.obj")).toBe("assembly.obj");
+  });
+
+  it("derives the trusted frame origin from the application URL", () => {
+    const location = { href: "https://app.example.test/settings?tab=cad" } as Location;
+
+    expect(cadViewerFrameOrigin(location)).toBe("https://app.example.test");
   });
 
   it("keys synced CAD queries by Onshape document identity", () => {

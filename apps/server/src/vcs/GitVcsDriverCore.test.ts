@@ -107,6 +107,22 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("preserves spaces and destination paths in status entries", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        yield* writeTextFile(cwd, "untracked file.ts", "export const value = 1;\n");
+        yield* git(cwd, ["mv", "README.md", "renamed README.md"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+        const paths = status.workingTree.files.map((file) => file.path);
+
+        assert.include(paths, "untracked file.ts");
+        assert.include(paths, "renamed README.md");
+        assert.notInclude(paths, "README.md");
+      }),
+    );
+
     it.effect("reports default-branch delta separately from upstream delta", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

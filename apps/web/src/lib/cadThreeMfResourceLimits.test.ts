@@ -47,21 +47,33 @@ describe("3MF resource limits", () => {
     expect(() => inspectThreeMfArchive(bytes)).toThrow(/entry.*safety limit/);
   });
 
-  it("rejects a declared response length before reading the body", async () => {
-    const response = new Response("small", { headers: { "content-length": "11" } });
+  it("rejects a declared response length and cancels the body before reading it", async () => {
+    let cancelled = false;
+    const response = new Response(
+      new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { headers: { "content-length": "11" } },
+    );
 
     await expect(readResponseArrayBufferWithinLimit(response, 10)).rejects.toThrow(
       /download.*safety limit/,
     );
+    expect(cancelled).toBe(true);
   });
 
   it("stops streaming a response once the byte limit is crossed", async () => {
+    let cancelled = false;
     const response = new Response(
       new ReadableStream<Uint8Array>({
         start(controller) {
           controller.enqueue(new Uint8Array(6));
           controller.enqueue(new Uint8Array(5));
-          controller.close();
+        },
+        cancel() {
+          cancelled = true;
         },
       }),
     );
@@ -69,5 +81,6 @@ describe("3MF resource limits", () => {
     await expect(readResponseArrayBufferWithinLimit(response, 10)).rejects.toThrow(
       /download.*safety limit/,
     );
+    expect(cancelled).toBe(true);
   });
 });

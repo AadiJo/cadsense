@@ -76,6 +76,7 @@ export async function readResponseArrayBufferWithinLimit(
 ): Promise<ArrayBuffer> {
   const contentLength = responseContentLength(response);
   if (contentLength !== null && contentLength > maximumBytes) {
+    await response.body?.cancel().catch(() => undefined);
     throw formatLimitError("CAD model download", maximumBytes);
   }
   if (!response.body) {

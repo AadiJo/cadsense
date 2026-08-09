@@ -960,6 +960,31 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("rejects static files that resolve outside the configured directory", () =>
+    Effect.gen(function* () {
+      if (process.platform === "win32") return;
+
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cadsense-router-static-",
+      });
+      const outsideDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cadsense-router-static-outside-",
+      });
+      const secretPath = path.join(outsideDir, "secret.txt");
+      yield* fileSystem.writeFileString(path.join(staticDir, "index.html"), "<html>ok</html>");
+      yield* fileSystem.writeFileString(secretPath, "outside-static-root");
+      yield* fileSystem.symlink(secretPath, path.join(staticDir, "leak.txt"));
+
+      yield* buildAppUnderTest({ config: { staticDir } });
+
+      const response = yield* HttpClient.get("/leak.txt");
+      assert.equal(response.status, 400);
+      assert.notInclude(yield* response.text, "outside-static-root");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("redirects to dev URL when configured", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest({
