@@ -80,6 +80,7 @@ async function flushBroker() {
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   __resetCadRequestBrokersForTests();
 });
 
@@ -155,6 +156,30 @@ describe("CAD request broker", () => {
     expect(visibleScreenshot).not.toHaveBeenCalled();
   });
 
+  it("installs the responder before a subscription synchronously replays pending work", async () => {
+    const { api } = makeApi();
+    const screenshot = vi.fn();
+    api.onshape.onCadScreenshotRequest = vi.fn((listener) => {
+      listener({
+        requestId: "synchronous-reconnect-replay",
+        threadId: ThreadId.make("visible"),
+        createdAt: new Date().toISOString(),
+        fit: true,
+      });
+      return () => undefined;
+    });
+
+    registerCadBrokerResponder(
+      environmentId,
+      api,
+      responder({ responderId: "reconnected-owner", onScreenshotRequest: screenshot }),
+    );
+    await flushBroker();
+
+    expect(api.onshape.claimCadScreenshotRequest).toHaveBeenCalledOnce();
+    expect(screenshot).toHaveBeenCalledOnce();
+  });
+
   it("retries an expired competing claim once without holding the dispatch queue", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
@@ -228,6 +253,48 @@ describe("CAD request broker", () => {
     expect(claim).toHaveBeenCalledTimes(3);
     expect(screenshot).toHaveBeenCalledOnce();
   });
+
+  it.each(["hierarchy", "screenshot"] as const)(
+    "retries a rejected %s handler after releasing its lease",
+    async (kind) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const { api, listeners } = makeApi();
+      const hierarchy = vi.fn().mockRejectedValueOnce(new Error("transient hierarchy upload"));
+      const screenshot = vi.fn().mockRejectedValueOnce(new Error("transient screenshot upload"));
+      registerCadBrokerResponder(
+        environmentId,
+        api,
+        responder({
+          responderId: `failing-${kind}-owner`,
+          onHierarchyRequest: hierarchy,
+          onScreenshotRequest: screenshot,
+        }),
+      );
+      const request = {
+        requestId: `failed-${kind}-request`,
+        threadId: ThreadId.make("visible"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        ...(kind === "screenshot" ? { fit: true } : {}),
+      } as never;
+
+      listeners[kind][0]!(request);
+      await flushBroker();
+      const claim =
+        kind === "hierarchy"
+          ? api.onshape.claimCadHierarchyRequest
+          : api.onshape.claimCadScreenshotRequest;
+      const handler = kind === "hierarchy" ? hierarchy : screenshot;
+      expect(claim).toHaveBeenCalledOnce();
+      expect(handler).toHaveBeenCalledOnce();
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await flushBroker();
+      expect(claim).toHaveBeenCalledTimes(2);
+      expect(handler).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("deduplicates replayed requests while the selected handler is in flight", async () => {
     const { api, listeners } = makeApi();

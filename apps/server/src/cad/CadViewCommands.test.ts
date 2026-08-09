@@ -99,6 +99,49 @@ describe("CadViewCommands", () => {
     );
   });
 
+  it("replays claimed hierarchy work to a reconnecting subscriber", async () => {
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const threadId = ThreadId.make("thread-claimed-cad-hierarchy-reconnect");
+          const requestFiber = yield* requestCadHierarchy(threadId).pipe(Effect.forkScoped);
+          yield* Effect.sleep("10 millis");
+
+          const initialEvents = yield* cadHierarchyRequestStream.pipe(
+            Stream.filter((request) => request.threadId === threadId),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout("1 second"),
+          );
+          const request = Array.from(initialEvents)[0]!;
+          const claim = claimCadHierarchyRequest({
+            requestId: request.requestId,
+            responderId: "viewer-before-reconnect",
+          });
+          expect(claim.status).toBe("claimed");
+          if (claim.status !== "claimed") return;
+
+          const replayedEvents = yield* cadHierarchyRequestStream.pipe(
+            Stream.filter((event) => event.requestId === request.requestId),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.timeout("1 second"),
+          );
+          expect(Array.from(replayedEvents)).toEqual([request]);
+
+          expect(
+            completeCadHierarchyRequest(
+              request.requestId,
+              { responderId: "viewer-before-reconnect", leaseId: claim.leaseId },
+              { components: [] },
+            ),
+          ).toBe(true);
+          yield* Fiber.join(requestFiber);
+        }),
+      ),
+    );
+  });
+
   it("rejects competing and stale hierarchy responders after lease reclaim", async () => {
     await Effect.runPromise(
       Effect.scoped(

@@ -19,7 +19,6 @@ import * as Stream from "effect/Stream";
 
 import {
   claimCadRequestLease,
-  isCadRequestAvailable,
   ownsCadRequestLease,
   type CadRequestLease,
 } from "./CadRequestLease.ts";
@@ -50,10 +49,10 @@ const pendingByRequestId = new Map<string, CadScreenshotPending>();
 export const cadScreenshotRequestStream = Stream.unwrap(
   Effect.gen(function* () {
     const subscription = yield* PubSub.subscribe(cadScreenshotRequestPubSub);
-    const nowMs = yield* Clock.currentTimeMillis;
-    const pendingRequests = [...pendingByRequestId.values()]
-      .filter((entry) => isCadRequestAvailable(entry, nowMs))
-      .map((entry) => entry.browserRequest);
+    // Replaying claimed work lets a reconnecting broker observe the current retryAt and
+    // contend again when that lease expires. Omitting it here can strand a request when the
+    // original responder crashes and the replacement connects before the lease deadline.
+    const pendingRequests = [...pendingByRequestId.values()].map((entry) => entry.browserRequest);
     return Stream.concat(
       Stream.fromIterable(pendingRequests),
       Stream.fromSubscription(subscription),

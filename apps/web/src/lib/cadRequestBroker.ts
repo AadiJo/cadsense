@@ -411,17 +411,20 @@ async function dispatchToResponder(
     claimKind,
     inFlight,
   );
+  let handlerFailed = false;
   let handled: Promise<void>;
   if (kind === "hierarchy") {
     handled = Promise.resolve()
       .then(() => responder.onHierarchyRequest(request as CadHierarchyBrowserRequest, claim))
       .catch((error) => {
+        handlerFailed = true;
         console.error("CAD hierarchy request handler failed", error);
       });
   } else {
     handled = Promise.resolve()
       .then(() => responder.onScreenshotRequest(request as CadScreenshotBrowserRequest, claim))
       .catch((error) => {
+        handlerFailed = true;
         console.error("CAD screenshot request handler failed", error);
       });
   }
@@ -429,6 +432,12 @@ async function dispatchToResponder(
     inFlight.stopHeartbeat();
     if (broker.inFlightRequests.get(requestKey) === inFlight) {
       broker.inFlightRequests.delete(requestKey);
+      if (handlerFailed) {
+        // The server still owns this request until the current lease expires. Stop renewing it
+        // and retry at that boundary; repeated unavailable responses keep following retryAt up
+        // to the request deadline.
+        scheduleRequestRetry(broker, requestWithId, claimKind, inFlight.leaseExpiresAt);
+      }
     }
   });
   if (awaitHandler) {
@@ -504,7 +513,6 @@ function ensureBroker(environmentId: EnvironmentId, api: EnvironmentApi): Enviro
   } else {
     broker.api = api;
   }
-  ensureSubscriptions(broker);
   return broker;
 }
 
@@ -540,6 +548,9 @@ export function registerCadBrokerResponder(
     responder,
   });
   notifyBrokerChanged(broker);
+  // Register the route before subscribing because a transport may synchronously replay pending
+  // requests while the subscription is being established.
+  ensureSubscriptions(broker);
   return () => {
     if (broker.responders.get(responder.responderId)?.responder !== responder) {
       return;
@@ -566,6 +577,7 @@ export function registerCadBrokerActivator(
     activator,
   });
   notifyBrokerChanged(broker);
+  ensureSubscriptions(broker);
   return () => {
     if (broker.activators.get(activator.activatorId)?.activator !== activator) {
       return;

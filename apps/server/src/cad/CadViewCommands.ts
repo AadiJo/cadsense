@@ -19,7 +19,6 @@ import * as Stream from "effect/Stream";
 
 import {
   claimCadRequestLease,
-  isCadRequestAvailable,
   ownsCadRequestLease,
   type CadRequestLease,
 } from "./CadRequestLease.ts";
@@ -79,10 +78,11 @@ export const cadViewCommandStream = Stream.unwrap(
 export const cadHierarchyRequestStream = Stream.unwrap(
   Effect.gen(function* () {
     const subscription = yield* PubSub.subscribe(cadHierarchyRequestPubSub);
-    const nowMs = yield* Clock.currentTimeMillis;
-    const pendingRequests = [...pendingHierarchyByRequestId.values()]
-      .filter((entry) => isCadRequestAvailable(entry, nowMs))
-      .map((entry) => entry.browserRequest);
+    // Claimed requests are replayed as well so a reconnecting broker can schedule a retry for
+    // the active lease deadline instead of waiting for the overall hierarchy timeout.
+    const pendingRequests = [...pendingHierarchyByRequestId.values()].map(
+      (entry) => entry.browserRequest,
+    );
     return Stream.concat(
       Stream.fromIterable(pendingRequests),
       Stream.fromSubscription(subscription),

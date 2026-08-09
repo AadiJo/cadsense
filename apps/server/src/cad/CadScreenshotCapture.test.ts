@@ -52,7 +52,7 @@ describe("CadScreenshotCapture", () => {
     }
   });
 
-  it("replays only unclaimed work to late subscribers", async () => {
+  it("replays claimed work so reconnecting subscribers can retry after lease expiry", async () => {
     const claimedCapture = await Effect.runPromise(
       startCadScreenshotCaptureEffect({
         threadId: ThreadId.make("thread-claimed-cad-screenshot"),
@@ -85,14 +85,16 @@ describe("CadScreenshotCapture", () => {
               request.requestId === claimedCapture.requestId ||
               request.requestId === availableCapture.requestId,
           ),
-          Stream.take(1),
+          Stream.take(2),
           Stream.runCollect,
           Effect.timeout("1 second"),
         ),
       );
-      expect(Array.from(events).map((request) => request.requestId)).toEqual([
-        availableCapture.requestId,
-      ]);
+      expect(
+        Array.from(events)
+          .map((request) => request.requestId)
+          .toSorted(),
+      ).toEqual([claimedCapture.requestId, availableCapture.requestId].toSorted());
     } finally {
       rejectCadScreenshotPending(claimedCapture.requestId, "test cleanup");
       rejectCadScreenshotPending(availableCapture.requestId, "test cleanup");

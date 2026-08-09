@@ -1522,7 +1522,7 @@ export default function CadPanel({
             components: [],
             status: "error",
             message,
-          }).catch(() => undefined);
+          });
         }
       })();
     },
@@ -1557,7 +1557,7 @@ export default function CadPanel({
           ...claim,
           status,
           message,
-        }).catch(() => undefined);
+        });
       const capture = async () => {
         try {
           const viewerReadyDeadline = Date.now() + CAD_AGENT_SCREENSHOT_VIEWER_READY_TIMEOUT_MS;

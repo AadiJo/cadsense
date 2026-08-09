@@ -92,10 +92,3 @@ export function ownsCadRequestLease(
     lease.leaseId === claim.leaseId
   );
 }
-
-export function isCadRequestAvailable(
-  state: CadRequestLeaseState,
-  nowMs = currentTimeMillis(),
-): boolean {
-  return !isCadRequestLeaseActive(state.lease, nowMs);
-}
