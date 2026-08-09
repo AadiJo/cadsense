@@ -444,33 +444,42 @@ const make = Effect.gen(function* () {
 
     const bindSessionToThread = (session: ProviderSession) =>
       Effect.gen(function* () {
-        registerCadProviderThreadAlias({
-          cadThreadId: cadViewThreadId ?? threadId,
-          ownerThreadId: threadId,
-          resumeCursor: session.resumeCursor,
-        });
         if (session.providerInstanceId === undefined) {
+          unregisterCadProviderThreadAliases(threadId);
           return yield* new ProviderAdapterRequestError({
             provider: providerErrorLabel(session.provider),
             method: "thread.turn.start",
             detail: `Provider session '${session.threadId}' started without a provider instance id.`,
           });
         }
-        yield* setThreadSession({
-          threadId,
-          session: {
+        yield* Effect.uninterruptible(
+          setThreadSession({
             threadId,
-            status: mapProviderSessionStatusToOrchestrationStatus(session.status),
-            providerName: session.provider,
-            providerInstanceId: session.providerInstanceId,
-            runtimeMode: desiredRuntimeMode,
-            // Provider turn ids are not orchestration turn ids.
-            activeTurnId: null,
-            lastError: session.lastError ?? null,
-            updatedAt: session.updatedAt,
-          },
-          createdAt,
-        });
+            session: {
+              threadId,
+              status: mapProviderSessionStatusToOrchestrationStatus(session.status),
+              providerName: session.provider,
+              providerInstanceId: session.providerInstanceId,
+              runtimeMode: desiredRuntimeMode,
+              // Provider turn ids are not orchestration turn ids.
+              activeTurnId: null,
+              lastError: session.lastError ?? null,
+              updatedAt: session.updatedAt,
+            },
+            createdAt,
+          }).pipe(
+            Effect.tap(() =>
+              Effect.sync(() =>
+                registerCadProviderThreadAlias({
+                  cadThreadId: cadViewThreadId ?? threadId,
+                  ownerThreadId: threadId,
+                  resumeCursor: session.resumeCursor,
+                }),
+              ),
+            ),
+            Effect.onError(() => Effect.sync(() => unregisterCadProviderThreadAliases(threadId))),
+          ),
+        );
       });
 
     const existingSessionThreadId =
@@ -856,6 +865,7 @@ const make = Effect.gen(function* () {
   ) {
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
+      unregisterCadProviderThreadAliases(event.payload.threadId);
       return;
     }
     const hasSession = thread.session && thread.session.status !== "stopped";
@@ -967,6 +977,7 @@ const make = Effect.gen(function* () {
   ) {
     const thread = yield* resolveThread(event.payload.threadId);
     if (!thread) {
+      unregisterCadProviderThreadAliases(event.payload.threadId);
       return;
     }
 
@@ -975,23 +986,28 @@ const make = Effect.gen(function* () {
       yield* providerService.stopSession({ threadId: thread.id });
     }
 
-    yield* setThreadSession({
-      threadId: thread.id,
-      session: {
-        threadId: thread.id,
-        status: "stopped",
-        providerName: thread.session?.providerName ?? null,
-        ...(thread.session?.providerInstanceId !== undefined
-          ? { providerInstanceId: thread.session.providerInstanceId }
-          : {}),
-        runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
-        activeTurnId: null,
-        lastError: thread.session?.lastError ?? null,
-        updatedAt: now,
-      },
-      createdAt: now,
-    });
-    unregisterCadProviderThreadAliases(thread.id);
+    yield* Effect.uninterruptible(
+      Effect.sync(() => unregisterCadProviderThreadAliases(thread.id)).pipe(
+        Effect.andThen(
+          setThreadSession({
+            threadId: thread.id,
+            session: {
+              threadId: thread.id,
+              status: "stopped",
+              providerName: thread.session?.providerName ?? null,
+              ...(thread.session?.providerInstanceId !== undefined
+                ? { providerInstanceId: thread.session.providerInstanceId }
+                : {}),
+              runtimeMode: thread.session?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
+              activeTurnId: null,
+              lastError: thread.session?.lastError ?? null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          }),
+        ),
+      ),
+    );
   });
 
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (

@@ -8,6 +8,17 @@ interface CadThreadAlias {
 const aliasByProviderThreadId = new Map<string, CadThreadAlias>();
 const providerThreadIdsByOwnerThreadId = new Map<ThreadId, Set<string>>();
 
+function deleteAlias(providerThreadId: string): void {
+  const alias = aliasByProviderThreadId.get(providerThreadId);
+  if (!alias) return;
+  aliasByProviderThreadId.delete(providerThreadId);
+  const ownerIds = providerThreadIdsByOwnerThreadId.get(alias.ownerThreadId);
+  ownerIds?.delete(providerThreadId);
+  if (ownerIds?.size === 0) {
+    providerThreadIdsByOwnerThreadId.delete(alias.ownerThreadId);
+  }
+}
+
 export function readProviderResumeThreadId(resumeCursor: unknown): string | undefined {
   if (!resumeCursor || typeof resumeCursor !== "object" || Array.isArray(resumeCursor)) {
     return undefined;
@@ -28,11 +39,7 @@ export function registerCadProviderThreadAlias(input: {
   }
   const previous = aliasByProviderThreadId.get(providerThreadId);
   if (previous) {
-    const previousOwnerIds = providerThreadIdsByOwnerThreadId.get(previous.ownerThreadId);
-    previousOwnerIds?.delete(providerThreadId);
-    if (previousOwnerIds?.size === 0) {
-      providerThreadIdsByOwnerThreadId.delete(previous.ownerThreadId);
-    }
+    deleteAlias(providerThreadId);
   }
   aliasByProviderThreadId.set(providerThreadId, {
     cadThreadId: input.cadThreadId,
@@ -45,9 +52,17 @@ export function unregisterCadProviderThreadAliases(ownerThreadId: ThreadId): voi
   const providerThreadIds = providerThreadIdsByOwnerThreadId.get(ownerThreadId);
   if (!providerThreadIds) return;
   for (const providerThreadId of providerThreadIds) {
-    aliasByProviderThreadId.delete(providerThreadId);
+    deleteAlias(providerThreadId);
   }
-  providerThreadIdsByOwnerThreadId.delete(ownerThreadId);
+}
+
+export function unregisterCadThreadReferences(threadId: ThreadId): void {
+  unregisterCadProviderThreadAliases(threadId);
+  for (const [providerThreadId, alias] of aliasByProviderThreadId) {
+    if (alias.cadThreadId === threadId) {
+      deleteAlias(providerThreadId);
+    }
+  }
 }
 
 export function resolveCadRequestThreadId(requestThreadId: ThreadId): ThreadId {

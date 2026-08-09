@@ -58,6 +58,10 @@ import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService, type GitWorkflowServiceShape } from "../../git/GitWorkflowService.ts";
+import {
+  clearCadProviderThreadAliasesForTests,
+  resolveCadRequestThreadId,
+} from "../../cad/CadThreadAliases.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -96,6 +100,7 @@ describe.sequential("ProviderCommandReactor", () => {
   const createdBaseDirs = new Set<string>();
 
   afterEach(async () => {
+    clearCadProviderThreadAliasesForTests();
     if (scope) {
       await Effect.runPromise(Scope.close(scope, Exit.void));
     }
@@ -1724,6 +1729,52 @@ describe.sequential("ProviderCommandReactor", () => {
         detail: expect.stringContaining("without a provider instance id"),
       },
     });
+  });
+
+  it("does not register an alias when a newly started session cannot be bound", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.startSession.mockImplementationOnce(() =>
+      Effect.succeed({
+        provider: ProviderDriverKind.make("codex"),
+        status: "ready" as const,
+        runtimeMode: "approval-required" as const,
+        threadId: ThreadId.make("thread-1"),
+        resumeCursor: { threadId: "unbound-provider-thread" },
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-unbound-alias"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-unbound-alias"),
+          role: "user",
+          text: "start invalid session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+        false
+      );
+    });
+
+    expect(resolveCadRequestThreadId(ThreadId.make("unbound-provider-thread"))).toBe(
+      "unbound-provider-thread",
+    );
   });
 
   it("reacts to thread.approval.respond by forwarding provider approval response", async () => {

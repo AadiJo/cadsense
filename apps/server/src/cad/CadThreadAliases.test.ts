@@ -7,6 +7,7 @@ import {
   readProviderResumeThreadId,
   resolveCadRequestThreadId,
   unregisterCadProviderThreadAliases,
+  unregisterCadThreadReferences,
 } from "./CadThreadAliases.ts";
 
 describe("CadThreadAliases", () => {
@@ -92,5 +93,18 @@ describe("CadThreadAliases", () => {
     expect(resolveCadRequestThreadId(ThreadId.make("stale-provider-thread"))).toBe(
       "stale-provider-thread",
     );
+  });
+
+  it("removes cross-owner aliases that target a deleted CAD thread", () => {
+    const parentThreadId = ThreadId.make("parent-thread");
+    registerCadProviderThreadAlias({
+      cadThreadId: parentThreadId,
+      ownerThreadId: ThreadId.make("review-child-thread"),
+      resumeCursor: { threadId: "provider-thread" },
+    });
+
+    unregisterCadThreadReferences(parentThreadId);
+
+    expect(resolveCadRequestThreadId(ThreadId.make("provider-thread"))).toBe("provider-thread");
   });
 });

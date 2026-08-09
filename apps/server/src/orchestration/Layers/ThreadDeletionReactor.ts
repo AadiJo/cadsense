@@ -5,7 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
-import { unregisterCadProviderThreadAliases } from "../../cad/CadThreadAliases.ts";
+import { unregisterCadThreadReferences } from "../../cad/CadThreadAliases.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -47,7 +47,7 @@ export const cleanupDeletedThread = <R, E>({
     effect: stopProviderSession,
     message: "thread deletion cleanup skipped provider session stop",
     threadId,
-  }).pipe(Effect.ensuring(Effect.sync(() => unregisterCadProviderThreadAliases(threadId))));
+  }).pipe(Effect.ensuring(Effect.sync(() => unregisterCadThreadReferences(threadId))));
 
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
