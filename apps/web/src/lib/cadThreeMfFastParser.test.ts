@@ -353,4 +353,24 @@ describe("cadThreeMfFastParser", () => {
       /too many scene nodes/,
     );
   });
+
+  it("rejects duplicate attributes, object ids, and missing component references", () => {
+    const duplicateAttribute = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" x="1" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`);
+    expect(() => parseThreeMfFast({ three: THREE, unzipped: duplicateAttribute })).toThrow(
+      /duplicate 'x' attribute/,
+    );
+
+    const duplicateObject = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"></object><object id="1"></object></resources></model>`);
+    expect(() => parseThreeMfFast({ three: THREE, unzipped: duplicateObject })).toThrow(
+      /duplicate object id/,
+    );
+
+    const missingReference = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><components><component objectid="missing"/></components></object></resources><build><item objectid="1"/></build></model>`);
+    expect(() => parseThreeMfFast({ three: THREE, unzipped: missingReference })).toThrow(
+      /references missing object/,
+    );
+  });
 });

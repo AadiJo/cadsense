@@ -100,6 +100,9 @@ function structuralXml(source: string): string {
   if (/<!DOCTYPE\b/iu.test(withoutCdata)) {
     throw new Error("3MF XML document type declarations are not supported.");
   }
+  if (/<!/u.test(withoutCdata)) {
+    throw new Error("3MF XML contains an unsupported markup declaration.");
+  }
   return withoutCdata;
 }
 
@@ -144,6 +147,7 @@ function decodeXmlAttributeValue(value: string): string {
 
 function getAttribute(source: string, name: string): string | null {
   const expectedName = name.toLowerCase();
+  let matchedValue: string | undefined;
   let cursor = 0;
   while (cursor < source.length) {
     while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
@@ -171,10 +175,13 @@ function getAttribute(source: string, name: string): string | null {
     }
     cursor = valueEnd + 1;
     if (attributeName.toLowerCase() === expectedName) {
-      return decodeXmlAttributeValue(source.slice(valueStart, valueEnd));
+      if (matchedValue !== undefined) {
+        throw new Error(`3MF XML contains a duplicate '${name}' attribute.`);
+      }
+      matchedValue = decodeXmlAttributeValue(source.slice(valueStart, valueEnd));
     }
   }
-  return null;
+  return matchedValue ?? null;
 }
 
 function parseOptionalInteger(value: string | null): number | null {
@@ -306,6 +313,9 @@ function parseObjects(modelXml: string): Map<string, ParsedObject> {
     const id = getAttribute(attributes, "id");
     if (!id) {
       continue;
+    }
+    if (objects.has(id)) {
+      throw new Error(`3MF resources contain duplicate object id '${id}'.`);
     }
     const meshMatch = new RegExp(
       `<mesh\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/mesh>`,
@@ -621,7 +631,7 @@ export function parseThreeMfFastModel(input: {
     }
     const object = objects.get(objectId);
     if (!object) {
-      return null;
+      throw new Error(`3MF component or build item references missing object '${objectId}'.`);
     }
     if (stack.size >= MAX_COMPONENT_NESTING_DEPTH) {
       throw new Error("3MF component graph exceeds the supported nesting depth.");
