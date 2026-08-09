@@ -206,7 +206,6 @@ export function createSourceControlDiscoveryManager(config: SourceControlDiscove
     for (const key of knownSourceControlDiscoveryKeys) {
       setState(key, INITIAL_SOURCE_CONTROL_DISCOVERY_STATE);
     }
-    knownSourceControlDiscoveryKeys.clear();
   }
 
   return {

@@ -145,4 +145,11 @@ it("ignores completions from refreshes invalidated by reset", async () => {
   resolveCurrent(currentResult);
   await currentRefresh;
   assert.strictEqual(manager.getSnapshot({ key: "primary" }).data, currentResult);
+
+  manager.reset();
+  assert.deepStrictEqual(manager.getSnapshot({ key: "primary" }), {
+    data: null,
+    error: null,
+    isPending: true,
+  });
 });
