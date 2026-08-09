@@ -30,6 +30,11 @@ const clientSettingsHydrationListeners = new Set<() => void>();
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let persistedClientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
 let clientSettingsPersistenceTail = Promise.resolve();
+let nextClientSettingsWriteId = 0;
+let pendingClientSettingsWrites: Array<{
+  id: number;
+  patch: ClientSettingsPatch;
+}> = [];
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 
@@ -52,6 +57,14 @@ function getClientSettingsSnapshot(): ClientSettings {
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
   emitClientSettingsChange();
+}
+
+function refreshOptimisticClientSettingsSnapshot(): void {
+  let settings = persistedClientSettingsSnapshot;
+  for (const pendingWrite of pendingClientSettingsWrites) {
+    settings = { ...settings, ...pendingWrite.patch };
+  }
+  replaceClientSettingsSnapshot(settings);
 }
 
 function setClientSettingsHydrated(nextHydrated: boolean): void {
@@ -96,7 +109,7 @@ async function hydrateClientSettings(): Promise<void> {
       if (persistedSettings) {
         const hydratedSettings = { ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings };
         persistedClientSettingsSnapshot = hydratedSettings;
-        replaceClientSettingsSnapshot(hydratedSettings);
+        refreshOptimisticClientSettingsSnapshot();
       }
     } catch (error) {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);
@@ -115,20 +128,28 @@ async function hydrateClientSettings(): Promise<void> {
   return clientSettingsHydrationPromise;
 }
 
-async function persistClientSettings(settings: ClientSettings): Promise<void> {
-  replaceClientSettingsSnapshot(settings);
+async function persistClientSettings(patch: ClientSettingsPatch): Promise<void> {
+  const pendingWrite = {
+    id: nextClientSettingsWriteId++,
+    patch,
+  };
+  pendingClientSettingsWrites.push(pendingWrite);
+  refreshOptimisticClientSettingsSnapshot();
+
   const write = clientSettingsPersistenceTail.then(async () => {
+    await hydrateClientSettings();
+    const settings = { ...persistedClientSettingsSnapshot, ...patch };
     await ensureLocalApi().persistence.setClientSettings(settings);
     persistedClientSettingsSnapshot = settings;
   });
   clientSettingsPersistenceTail = write.catch(() => undefined);
   try {
     await write;
-  } catch (error) {
-    if (getClientSettingsSnapshot() === settings) {
-      replaceClientSettingsSnapshot(persistedClientSettingsSnapshot);
-    }
-    throw error;
+  } finally {
+    pendingClientSettingsWrites = pendingClientSettingsWrites.filter(
+      (candidate) => candidate.id !== pendingWrite.id,
+    );
+    refreshOptimisticClientSettingsSnapshot();
   }
 }
 
@@ -224,12 +245,7 @@ export async function updateSettingsAndWait(patch: Partial<UnifiedSettings>): Pr
   }
 
   if (Object.keys(clientPatch).length > 0) {
-    writes.push(
-      persistClientSettings({
-        ...getClientSettingsSnapshot(),
-        ...clientPatch,
-      }),
-    );
+    writes.push(persistClientSettings(clientPatch));
   }
 
   await Promise.all(writes);
@@ -263,6 +279,8 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   persistedClientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
   clientSettingsPersistenceTail = Promise.resolve();
+  nextClientSettingsWriteId = 0;
+  pendingClientSettingsWrites = [];
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
   clientSettingsListeners.clear();

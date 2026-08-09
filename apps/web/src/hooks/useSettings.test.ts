@@ -1,8 +1,9 @@
-import { DEFAULT_SERVER_SETTINGS } from "@cadsense/contracts";
+import { DEFAULT_CLIENT_SETTINGS, DEFAULT_SERVER_SETTINGS } from "@cadsense/contracts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   applySettingsUpdated: vi.fn(),
+  getClientSettings: vi.fn(),
   getServerConfig: vi.fn(),
   setClientSettings: vi.fn(),
   updateServerSettings: vi.fn(),
@@ -11,7 +12,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("~/localApi", () => ({
   ensureLocalApi: () => ({
     persistence: {
-      getClientSettings: vi.fn(async () => null),
+      getClientSettings: mocks.getClientSettings,
       setClientSettings: mocks.setClientSettings,
     },
     server: {
@@ -35,6 +36,7 @@ import {
 afterEach(() => {
   __resetClientSettingsPersistenceForTests();
   vi.clearAllMocks();
+  mocks.getClientSettings.mockResolvedValue(null);
   mocks.getServerConfig.mockReturnValue(null);
   mocks.setClientSettings.mockResolvedValue(undefined);
   mocks.updateServerSettings.mockResolvedValue(DEFAULT_SERVER_SETTINGS);
@@ -88,13 +90,11 @@ describe("updateSettingsAndWait", () => {
 
     const first = updateSettingsAndWait({ timestampFormat: "12-hour" });
     const second = updateSettingsAndWait({ timestampFormat: "24-hour" });
-    await Promise.resolve();
-    expect(mocks.setClientSettings).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(mocks.setClientSettings).toHaveBeenCalledTimes(1));
 
     finishes[0]?.();
     await first;
-    await Promise.resolve();
-    expect(mocks.setClientSettings).toHaveBeenCalledTimes(2);
+    await vi.waitFor(() => expect(mocks.setClientSettings).toHaveBeenCalledTimes(2));
     finishes[1]?.();
     await second;
 
@@ -114,5 +114,54 @@ describe("updateSettingsAndWait", () => {
 
     expect(results.map((result) => result.status)).toEqual(["rejected", "rejected"]);
     expect(getClientSettings()).toBe(previousSettings);
+  });
+
+  it("does not carry a failed patch into a later successful write", async () => {
+    mocks.setClientSettings
+      .mockRejectedValueOnce(new Error("storage unavailable"))
+      .mockResolvedValueOnce(undefined);
+
+    const failedWrite = updateSettingsAndWait({ timestampFormat: "12-hour" });
+    const successfulWrite = updateSettingsAndWait({ confirmThreadDelete: false });
+
+    await expect(failedWrite).rejects.toThrow("storage unavailable");
+    await successfulWrite;
+
+    expect(mocks.setClientSettings).toHaveBeenCalledTimes(2);
+    expect(mocks.setClientSettings.mock.calls[1]?.[0]).toMatchObject({
+      timestampFormat: DEFAULT_CLIENT_SETTINGS.timestampFormat,
+      confirmThreadDelete: false,
+    });
+    expect(getClientSettings()).toMatchObject({
+      timestampFormat: DEFAULT_CLIENT_SETTINGS.timestampFormat,
+      confirmThreadDelete: false,
+    });
+  });
+
+  it("rebases a write on settings that finish hydrating first", async () => {
+    let finishHydration: ((settings: { timestampFormat: "12-hour" }) => void) | undefined;
+    mocks.getClientSettings.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishHydration = resolve;
+      }),
+    );
+
+    const write = updateSettingsAndWait({ confirmThreadDelete: false });
+    await vi.waitFor(() => expect(mocks.getClientSettings).toHaveBeenCalledTimes(1));
+    expect(mocks.setClientSettings).not.toHaveBeenCalled();
+
+    finishHydration?.({ timestampFormat: "12-hour" });
+    await write;
+
+    expect(mocks.setClientSettings).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timestampFormat: "12-hour",
+        confirmThreadDelete: false,
+      }),
+    );
+    expect(getClientSettings()).toMatchObject({
+      timestampFormat: "12-hour",
+      confirmThreadDelete: false,
+    });
   });
 });
