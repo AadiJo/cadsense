@@ -349,7 +349,7 @@ const makeServerSettings = Effect.gen(function* () {
         if (!instance.environment) continue;
         const environment: ProviderInstanceEnvironmentVariable[] = [];
         for (const variable of instance.environment) {
-          if (!variable.sensitive || !variable.valueRedacted) {
+          if (!variable.sensitive || !variable.valueRedacted || variable.value.length > 0) {
             environment.push(variable);
             continue;
           }
@@ -638,14 +638,14 @@ const makeServerSettings = Effect.gen(function* () {
           );
           const next = yield* normalizeServerSettings(prepared.settings);
           const previousSecrets = yield* snapshotProviderEnvironmentSecrets(prepared.mutations);
-          yield* commitSettingsUpdateUninterruptibly(
+          const committed = yield* commitSettingsUpdateUninterruptibly(
             Effect.gen(function* () {
               yield* writeSettingsAtomically(next);
 
-              const secretMutationExit = yield* applyProviderEnvironmentSecretMutations(
+              const commitExit = yield* applyProviderEnvironmentSecretMutations(
                 prepared.mutations,
-              ).pipe(Effect.exit);
-              if (secretMutationExit._tag === "Failure") {
+              ).pipe(Effect.andThen(materializeProviderEnvironmentSecrets(next)), Effect.exit);
+              if (commitExit._tag === "Failure") {
                 yield* runBestEffortRollbackSteps(
                   [
                     ...restoreProviderEnvironmentSecrets(previousSecrets),
@@ -659,36 +659,40 @@ const makeServerSettings = Effect.gen(function* () {
                       },
                     ),
                 );
-                return yield* Effect.failCause(secretMutationExit.cause);
+                return yield* Effect.failCause(commitExit.cause);
               }
-              return next;
+              return {
+                persisted: next,
+                materialized: commitExit.value,
+              };
             }),
             (committed) =>
-              Cache.set(settingsCache, cacheKey, committed).pipe(
-                Effect.andThen(emitChange(committed)),
+              Cache.set(settingsCache, cacheKey, committed.persisted).pipe(
+                Effect.andThen(emitChange(committed.materialized)),
               ),
           );
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
+          return resolveTextGenerationProvider(committed.materialized);
         }),
       ),
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub).pipe(
         Stream.mapEffect((settings) =>
           materializeProviderEnvironmentSecrets(settings).pipe(
+            Effect.map((materialized): ServerSettings | null => materialized),
             Effect.catch((error: ServerSettingsError) =>
               Effect.logWarning("failed to materialize provider environment secrets", {
                 detail: error.detail,
-              }).pipe(Effect.as(settings)),
+              }).pipe(Effect.as<ServerSettings | null>(null)),
             ),
           ),
         ),
+        Stream.filter((settings): settings is ServerSettings => settings !== null),
         Stream.map(resolveTextGenerationProvider),
       );
     },
   } satisfies ServerSettingsShape;
 });
 
-export const ServerSettingsLive = Layer.effect(ServerSettingsService, makeServerSettings).pipe(
-  Layer.provide(ServerSecretStoreLive),
-);
+export const ServerSettingsBase = Layer.effect(ServerSettingsService, makeServerSettings);
+
+export const ServerSettingsLive = ServerSettingsBase.pipe(Layer.provide(ServerSecretStoreLive));

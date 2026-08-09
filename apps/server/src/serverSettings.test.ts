@@ -16,10 +16,16 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import {
+  SecretStoreError,
+  ServerSecretStore,
+  type ServerSecretStoreShape,
+} from "./auth/Services/ServerSecretStore.ts";
 import { ServerConfig } from "./config.ts";
 import {
   commitSettingsUpdateUninterruptibly,
   runBestEffortRollbackSteps,
+  ServerSettingsBase,
   ServerSettingsLive,
   ServerSettingsService,
 } from "./serverSettings.ts";
@@ -30,6 +36,18 @@ const makeServerSettingsLayer = () =>
       Layer.fresh(
         ServerConfig.layerTest(process.cwd(), {
           prefix: "cadsense-server-settings-test-",
+        }),
+      ),
+    ),
+  );
+
+const makeServerSettingsLayerWithSecretStore = (secretStore: ServerSecretStoreShape) =>
+  ServerSettingsBase.pipe(
+    Layer.provide(Layer.succeed(ServerSecretStore, secretStore)),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "cadsense-server-settings-fault-test-",
         }),
       ),
     ),
@@ -615,4 +633,54 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("rolls back a committed update when secret materialization fails", () => {
+    const values = new Map<string, Uint8Array>();
+    let getCount = 0;
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) =>
+        Effect.suspend(() => {
+          getCount += 1;
+          return getCount === 2
+            ? Effect.fail(new SecretStoreError({ message: "decrypt failed" }))
+            : Effect.succeed(values.get(name) ?? null);
+        }),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, Uint8Array.from(value));
+        }),
+      remove: (name) =>
+        Effect.sync(() => {
+          values.delete(name);
+        }),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+
+      const result = yield* serverSettings
+        .updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [
+                { name: "OPENROUTER_API_KEY", value: "sk-new-secret", sensitive: true },
+              ],
+              config: {},
+            },
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.isTrue(result._tag === "Failure");
+      assert.equal(values.size, 0);
+      assert.isUndefined((yield* serverSettings.getSettings).providerInstances[instanceId]);
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), instanceId);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
 });
