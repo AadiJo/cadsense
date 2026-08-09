@@ -93,6 +93,15 @@ function redactProviderEnvironmentVariable(
   };
 }
 
+export function runBestEffortRollbackSteps<E, R>(
+  steps: ReadonlyArray<Effect.Effect<void, E, R>>,
+  onFailure: (error: E) => Effect.Effect<void>,
+): Effect.Effect<void, never, R> {
+  return Effect.forEach(steps, (step) => step.pipe(Effect.catch(onFailure)), {
+    discard: true,
+  });
+}
+
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
@@ -526,18 +535,15 @@ const makeServerSettings = Effect.gen(function* () {
       readonly value: Uint8Array | null;
     }>,
   ) =>
-    Effect.forEach(
-      snapshots,
-      (snapshot) =>
-        (snapshot.value === null
-          ? secretStore.remove(snapshot.name)
-          : secretStore.set(snapshot.name, snapshot.value)
-        ).pipe(
-          Effect.mapError((cause) =>
-            toSettingsError(`failed to restore environment secret ${snapshot.variableName}`, cause),
-          ),
+    snapshots.map((snapshot) =>
+      (snapshot.value === null
+        ? secretStore.remove(snapshot.name)
+        : secretStore.set(snapshot.name, snapshot.value)
+      ).pipe(
+        Effect.mapError((cause) =>
+          toSettingsError(`failed to restore environment secret ${snapshot.variableName}`, cause),
         ),
-      { discard: true },
+      ),
     );
 
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
@@ -625,22 +631,31 @@ const makeServerSettings = Effect.gen(function* () {
           );
           const next = yield* normalizeServerSettings(prepared.settings);
           const previousSecrets = yield* snapshotProviderEnvironmentSecrets(prepared.mutations);
-          yield* writeSettingsAtomically(next);
+          yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              yield* writeSettingsAtomically(next);
 
-          const secretMutationExit = yield* applyProviderEnvironmentSecretMutations(
-            prepared.mutations,
-          ).pipe(Effect.exit);
-          if (secretMutationExit._tag === "Failure") {
-            yield* restoreProviderEnvironmentSecrets(previousSecrets).pipe(
-              Effect.andThen(writeSettingsAtomically(current)),
-              Effect.catch((rollbackError) =>
-                Effect.logError("failed to roll back settings after secret persistence failure", {
-                  detail: rollbackError.detail,
-                }),
-              ),
-            );
-            return yield* Effect.failCause(secretMutationExit.cause);
-          }
+              const secretMutationExit = yield* applyProviderEnvironmentSecretMutations(
+                prepared.mutations,
+              ).pipe(Effect.exit);
+              if (secretMutationExit._tag === "Failure") {
+                yield* runBestEffortRollbackSteps(
+                  [
+                    ...restoreProviderEnvironmentSecrets(previousSecrets),
+                    writeSettingsAtomically(current),
+                  ],
+                  (rollbackError) =>
+                    Effect.logError(
+                      "failed to roll back settings after secret persistence failure",
+                      {
+                        detail: rollbackError.detail,
+                      },
+                    ),
+                );
+                return yield* Effect.failCause(secretMutationExit.cause);
+              }
+            }),
+          );
 
           yield* Cache.set(settingsCache, cacheKey, next);
           yield* emitChange(next);

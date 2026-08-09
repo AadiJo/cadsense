@@ -12,9 +12,14 @@ import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ServerConfig } from "./config.ts";
-import { ServerSettingsLive, ServerSettingsService } from "./serverSettings.ts";
+import {
+  runBestEffortRollbackSteps,
+  ServerSettingsLive,
+  ServerSettingsService,
+} from "./serverSettings.ts";
 
 const makeServerSettingsLayer = () =>
   ServerSettingsLive.pipe(
@@ -28,6 +33,25 @@ const makeServerSettingsLayer = () =>
   );
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("attempts every rollback step after an earlier restoration fails", () =>
+    Effect.gen(function* () {
+      const attempted = yield* Ref.make<string[]>([]);
+      const failures = yield* Ref.make<string[]>([]);
+      const step = (name: string, shouldFail = false) =>
+        Ref.update(attempted, (current) => [...current, name]).pipe(
+          Effect.andThen(shouldFail ? Effect.fail(name) : Effect.void),
+        );
+
+      yield* runBestEffortRollbackSteps(
+        [step("first-secret", true), step("second-secret"), step("settings")],
+        (error) => Ref.update(failures, (current) => [...current, error]),
+      );
+
+      assert.deepEqual(yield* Ref.get(attempted), ["first-secret", "second-secret", "settings"]);
+      assert.deepEqual(yield* Ref.get(failures), ["first-secret"]);
+    }),
+  );
+
   it.effect("decodes nested settings patches", () =>
     Effect.sync(() => {
       const decodePatch = Schema.decodeUnknownSync(ServerSettingsPatch);
