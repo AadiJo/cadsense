@@ -79,6 +79,7 @@ import {
   applyCadComponentVisibility,
   cadComponentVisibilityCommandsForScopeChange,
   cadOnshapeModelQueryIdentity,
+  cadProjectScopeKey,
   cadViewerFileName,
   cadViewerFrameOrigin,
   cadViewerFrameUrl,
@@ -768,9 +769,10 @@ export default function CadPanel({
         : [],
     [activeEnvironmentState, activeThread],
   );
-  const projectCadScopeKey = activeProject
-    ? `${activeProject.environmentId}:${activeProject.id}`
-    : (activeThread?.projectId ?? draftSession?.projectId ?? null);
+  const projectCadScopeKey = cadProjectScopeKey(
+    activeProject?.environmentId ?? environmentId,
+    activeProject?.id ?? activeThread?.projectId ?? draftSession?.projectId,
+  );
   const localCadFiles = useUiStateStore((store) =>
     projectCadScopeKey
       ? (store.localCadFilesByScopeKey[projectCadScopeKey] ?? EMPTY_LOCAL_CAD_FILES)
