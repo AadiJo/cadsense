@@ -6,10 +6,17 @@ interface ParsedSemver {
 }
 
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
+const SEMVER_PATTERN =
+  /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/;
 
 export function normalizeSemverVersion(version: string): string {
-  const [main, ...prereleaseSegments] = version.trim().split("-");
-  const prerelease = prereleaseSegments.join("-");
+  const trimmed = version.trim();
+  const buildIndex = trimmed.indexOf("+");
+  const build = buildIndex >= 0 ? trimmed.slice(buildIndex) : "";
+  const withoutBuild = buildIndex >= 0 ? trimmed.slice(0, buildIndex) : trimmed;
+  const prereleaseIndex = withoutBuild.indexOf("-");
+  const prerelease = prereleaseIndex >= 0 ? withoutBuild.slice(prereleaseIndex) : "";
+  const main = prereleaseIndex >= 0 ? withoutBuild.slice(0, prereleaseIndex) : withoutBuild;
   const segments = (main ?? "")
     .split(".")
     .map((segment) => segment.trim())
@@ -19,26 +26,24 @@ export function normalizeSemverVersion(version: string): string {
     segments.push("0");
   }
 
-  return prerelease ? `${segments.join(".")}-${prerelease}` : segments.join(".");
+  return `${segments.join(".")}${prerelease}${build}`;
 }
 
 export function parseSemver(value: string): ParsedSemver | null {
-  const normalized = normalizeSemverVersion(value).replace(/^v/, "");
-  const [main = "", ...prereleaseSegments] = normalized.split("-");
-  const prerelease = prereleaseSegments.join("-");
-  const segments = main.split(".");
-  if (segments.length !== 3) {
-    return null;
-  }
-
-  const [majorSegment, minorSegment, patchSegment] = segments;
+  const match = normalizeSemverVersion(value).match(SEMVER_PATTERN);
+  if (!match) return null;
+  const [, majorSegment, minorSegment, patchSegment, prerelease = ""] = match;
   if (majorSegment === undefined || minorSegment === undefined || patchSegment === undefined) {
     return null;
   }
+  const prereleaseIdentifiers = prerelease === "" ? [] : prerelease.split(".");
   if (
-    !SEMVER_NUMBER_SEGMENT.test(majorSegment) ||
-    !SEMVER_NUMBER_SEGMENT.test(minorSegment) ||
-    !SEMVER_NUMBER_SEGMENT.test(patchSegment)
+    prereleaseIdentifiers.some(
+      (identifier) =>
+        SEMVER_NUMBER_SEGMENT.test(identifier) &&
+        identifier.length > 1 &&
+        identifier.startsWith("0"),
+    )
   ) {
     return null;
   }
@@ -54,11 +59,7 @@ export function parseSemver(value: string): ParsedSemver | null {
     major,
     minor,
     patch,
-    prerelease:
-      prerelease
-        ?.split(".")
-        .map((segment) => segment.trim())
-        .filter((segment) => segment.length > 0) ?? [],
+    prerelease: prereleaseIdentifiers,
   };
 }
 
@@ -75,7 +76,7 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   if (rightNumeric) {
     return 1;
   }
-  return left.localeCompare(right);
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function compareSemverVersions(left: string, right: string): number {

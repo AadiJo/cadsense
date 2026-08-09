@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { compareSemverVersions, normalizeSemverVersion, satisfiesSemverRange } from "./semver.ts";
+import {
+  compareSemverVersions,
+  normalizeSemverVersion,
+  parseSemver,
+  satisfiesSemverRange,
+} from "./semver.ts";
 
 describe("semver helpers", () => {
   it("matches supported range groups", () => {
@@ -25,6 +30,21 @@ describe("semver helpers", () => {
   it("preserves hyphens inside prerelease identifiers", () => {
     expect(normalizeSemverVersion("2.1-beta-feature.1")).toBe("2.1.0-beta-feature.1");
     expect(compareSemverVersions("2.1.0-beta-feature.1", "2.1.0-beta-feature.2")).toBeLessThan(0);
+  });
+
+  it("preserves and ignores build metadata when comparing versions", () => {
+    expect(normalizeSemverVersion("2.1-beta-feature+build-7")).toBe("2.1.0-beta-feature+build-7");
+    expect(compareSemverVersions("2.1.0-beta-feature+build-7", "2.1.0-beta-feature+build-8")).toBe(
+      0,
+    );
+    expect(compareSemverVersions("2.1.0+build-7", "2.1.0")).toBe(0);
+  });
+
+  it("rejects malformed core and prerelease identifiers", () => {
+    expect(parseSemver("01.2.3")).toBeNull();
+    expect(parseSemver("1.2.3-alpha..1")).toBeNull();
+    expect(parseSemver("1.2.3-alpha.01")).toBeNull();
+    expect(parseSemver("1.2.3-alpha_1")).toBeNull();
   });
 
   it("falls back to lexical comparison for malformed numeric segments", () => {
