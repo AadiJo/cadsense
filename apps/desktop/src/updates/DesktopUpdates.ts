@@ -60,6 +60,24 @@ const decodeDownloadProgressInfo = Schema.decodeUnknownEffect(DownloadProgressIn
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
+type DesktopUpdateAction = "check" | "download" | "install";
+
+export const tryAcquireUpdateAction = (
+  actionRef: Ref.Ref<Option.Option<DesktopUpdateAction>>,
+  action: DesktopUpdateAction,
+): Effect.Effect<boolean> =>
+  Ref.modify(actionRef, (current) =>
+    Option.isSome(current) ? [false, current] : [true, Option.some(action)],
+  );
+
+const releaseUpdateAction = (
+  actionRef: Ref.Ref<Option.Option<DesktopUpdateAction>>,
+  action: DesktopUpdateAction,
+): Effect.Effect<void> =>
+  Ref.update(actionRef, (current) =>
+    Option.isSome(current) && current.value === action ? Option.none() : current,
+  );
+
 export class DesktopUpdateActionInProgressError extends Data.TaggedError(
   "DesktopUpdateActionInProgressError",
 )<{
@@ -196,9 +214,9 @@ const make = Effect.gen(function* () {
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
 
   const appUpdateYmlConfigRef = yield* Ref.make<Option.Option<AppUpdateYmlConfig>>(Option.none());
-  const updateCheckInFlightRef = yield* Ref.make(false);
-  const updateDownloadInFlightRef = yield* Ref.make(false);
-  const updateInstallInFlightRef = yield* Ref.make(false);
+  const updateActionInFlightRef = yield* Ref.make<Option.Option<DesktopUpdateAction>>(
+    Option.none(),
+  );
   const updaterConfiguredRef = yield* Ref.make(false);
   const lastLoggedDownloadMilestoneRef = yield* Ref.make(-1);
   const updateStateRef = yield* Ref.make<DesktopUpdateState>(
@@ -255,18 +273,12 @@ const make = Effect.gen(function* () {
   });
 
   const resolveUpdaterErrorContext = Effect.gen(function* () {
-    if (yield* Ref.get(updateInstallInFlightRef)) return "install" as const;
-    if (yield* Ref.get(updateDownloadInFlightRef)) return "download" as const;
-    if (yield* Ref.get(updateCheckInFlightRef)) return "check" as const;
+    const activeAction = yield* Ref.get(updateActionInFlightRef);
+    if (Option.isSome(activeAction)) return activeAction.value;
     return (yield* Ref.get(updateStateRef)).errorContext;
   });
 
-  const activeUpdateAction = Effect.gen(function* () {
-    if (yield* Ref.get(updateInstallInFlightRef)) return Option.some("install" as const);
-    if (yield* Ref.get(updateDownloadInFlightRef)) return Option.some("download" as const);
-    if (yield* Ref.get(updateCheckInFlightRef)) return Option.some("check" as const);
-    return Option.none<"check" | "download" | "install">();
-  });
+  const activeUpdateAction = Ref.get(updateActionInFlightRef);
 
   const applyAutoUpdaterChannel = Effect.fn("desktop.updates.applyAutoUpdaterChannel")(function* (
     channel: DesktopUpdateChannel,
@@ -289,7 +301,6 @@ const make = Effect.gen(function* () {
     yield* Effect.annotateCurrentSpan({ reason });
     if (yield* Ref.get(desktopState.quitting)) return false;
     if (!(yield* Ref.get(updaterConfiguredRef))) return false;
-    if (yield* Ref.get(updateCheckInFlightRef)) return false;
 
     const state = yield* Ref.get(updateStateRef);
     if (state.status === "downloading" || state.status === "downloaded") {
@@ -300,7 +311,7 @@ const make = Effect.gen(function* () {
       return false;
     }
 
-    yield* Ref.set(updateCheckInFlightRef, true);
+    if (!(yield* tryAcquireUpdateAction(updateActionInFlightRef, "check"))) return false;
     const checkedAt = yield* currentIsoTimestamp;
     yield* setState(reduceDesktopUpdateStateOnCheckStart(state, checkedAt));
     yield* logUpdaterInfo("checking for updates", { reason });
@@ -317,21 +328,19 @@ const make = Effect.gen(function* () {
           return true;
         }),
       ),
-      Effect.ensuring(Ref.set(updateCheckInFlightRef, false)),
+      Effect.ensuring(releaseUpdateAction(updateActionInFlightRef, "check")),
     );
   });
 
   const downloadAvailableUpdate = Effect.gen(function* () {
     const state = yield* Ref.get(updateStateRef);
-    if (
-      !(yield* Ref.get(updaterConfiguredRef)) ||
-      (yield* Ref.get(updateDownloadInFlightRef)) ||
-      state.status !== "available"
-    ) {
+    if (!(yield* Ref.get(updaterConfiguredRef)) || state.status !== "available") {
       return { accepted: false, completed: false };
     }
 
-    yield* Ref.set(updateDownloadInFlightRef, true);
+    if (!(yield* tryAcquireUpdateAction(updateActionInFlightRef, "download"))) {
+      return { accepted: false, completed: false };
+    }
     return yield* Effect.gen(function* () {
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
       yield* electronUpdater.setDisableDifferentialDownload(
@@ -350,7 +359,7 @@ const make = Effect.gen(function* () {
           return { accepted: true, completed: false };
         }),
       ),
-      Effect.ensuring(Ref.set(updateDownloadInFlightRef, false)),
+      Effect.ensuring(releaseUpdateAction(updateActionInFlightRef, "download")),
     );
   }).pipe(Effect.withSpan("desktop.updates.downloadAvailableUpdate"));
 
@@ -364,8 +373,16 @@ const make = Effect.gen(function* () {
       return { accepted: false, completed: false };
     }
 
-    yield* Ref.set(desktopState.quitting, true);
-    yield* Ref.set(updateInstallInFlightRef, true);
+    if (!(yield* tryAcquireUpdateAction(updateActionInFlightRef, "install"))) {
+      return { accepted: false, completed: false };
+    }
+    const acquiredQuitting = yield* Ref.modify(desktopState.quitting, (quitting) =>
+      quitting ? [false, true] : [true, true],
+    );
+    if (!acquiredQuitting) {
+      yield* releaseUpdateAction(updateActionInFlightRef, "install");
+      return { accepted: false, completed: false };
+    }
 
     return yield* Effect.gen(function* () {
       yield* backendManager.stop({ timeout: Duration.seconds(5) });
@@ -378,7 +395,7 @@ const make = Effect.gen(function* () {
     }).pipe(
       Effect.catch(
         Effect.fn("desktop.updates.handleInstallFailure")(function* (error) {
-          yield* Ref.set(updateInstallInFlightRef, false);
+          yield* releaseUpdateAction(updateActionInFlightRef, "install");
           yield* updateState((current) =>
             reduceDesktopUpdateStateOnInstallFailure(current, error.message),
           );
@@ -454,15 +471,16 @@ const make = Effect.gen(function* () {
     error: unknown,
   ) {
     const message = error instanceof Error ? error.message : String(error);
-    if (yield* Ref.get(updateInstallInFlightRef)) {
-      yield* Ref.set(updateInstallInFlightRef, false);
+    const activeAction = yield* Ref.get(updateActionInFlightRef);
+    if (Option.isSome(activeAction) && activeAction.value === "install") {
+      yield* releaseUpdateAction(updateActionInFlightRef, "install");
       yield* Ref.set(desktopState.quitting, false);
       yield* updateState((current) => reduceDesktopUpdateStateOnInstallFailure(current, message));
       yield* logUpdaterError("updater error", { message });
       return;
     }
 
-    if (!(yield* Ref.get(updateCheckInFlightRef)) && !(yield* Ref.get(updateDownloadInFlightRef))) {
+    if (Option.isNone(activeAction)) {
       const errorContext = yield* resolveUpdaterErrorContext;
       const checkedAt = yield* currentIsoTimestamp;
       yield* updateState((current) => ({
