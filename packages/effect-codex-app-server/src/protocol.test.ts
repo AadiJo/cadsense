@@ -94,10 +94,7 @@ it.layer(NodeServices.layer)("effect-codex-app-server protocol", (it) => {
 
       yield* Deferred.await(secondNotificationHandled);
       yield* Deferred.await(secondRequestHandled);
-      assert.deepEqual(yield* Ref.get(notifications), [
-        "notification/one",
-        "notification/two",
-      ]);
+      assert.deepEqual(yield* Ref.get(notifications), ["notification/one", "notification/two"]);
       assert.deepEqual(yield* Ref.get(requests), [1, 2]);
     }),
   );

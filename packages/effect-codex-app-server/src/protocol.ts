@@ -152,14 +152,13 @@ export const makeCodexAppServerPatchedProtocol = Effect.fn("makeCodexAppServerPa
     const outgoing = yield* Queue.bounded<string, Cause.Done<void>>(
       options.outgoingQueueCapacity ?? DEFAULT_OUTGOING_QUEUE_CAPACITY,
     );
-    const incomingQueueCapacity =
-      options.incomingQueueCapacity ?? DEFAULT_INCOMING_QUEUE_CAPACITY;
-    const incomingNotifications = yield* (options.onNotification
+    const incomingQueueCapacity = options.incomingQueueCapacity ?? DEFAULT_INCOMING_QUEUE_CAPACITY;
+    const incomingNotifications = yield* options.onNotification
       ? Queue.dropping<CodexAppServerIncomingNotification>(incomingQueueCapacity)
-      : Queue.bounded<CodexAppServerIncomingNotification>(incomingQueueCapacity));
-    const incomingRequests = yield* (options.onRequest
+      : Queue.bounded<CodexAppServerIncomingNotification>(incomingQueueCapacity);
+    const incomingRequests = yield* options.onRequest
       ? Queue.dropping<CodexAppServerIncomingRequest>(incomingQueueCapacity)
-      : Queue.bounded<CodexAppServerIncomingRequest>(incomingQueueCapacity));
+      : Queue.bounded<CodexAppServerIncomingRequest>(incomingQueueCapacity);
     const pending = yield* Ref.make(
       new Map<string, Deferred.Deferred<unknown, CodexError.CodexAppServerError>>(),
     );
