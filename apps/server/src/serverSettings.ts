@@ -102,6 +102,13 @@ export function runBestEffortRollbackSteps<E, R>(
   });
 }
 
+export function commitSettingsUpdateUninterruptibly<A, E, R>(
+  persist: Effect.Effect<A, E, R>,
+  synchronize: (value: A) => Effect.Effect<void, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.uninterruptible(persist.pipe(Effect.tap((value) => synchronize(value))));
+}
+
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
   const providerInstances = Object.fromEntries(
     Object.entries(settings.providerInstances).map(([instanceId, instance]) => [
@@ -631,7 +638,7 @@ const makeServerSettings = Effect.gen(function* () {
           );
           const next = yield* normalizeServerSettings(prepared.settings);
           const previousSecrets = yield* snapshotProviderEnvironmentSecrets(prepared.mutations);
-          yield* Effect.uninterruptible(
+          yield* commitSettingsUpdateUninterruptibly(
             Effect.gen(function* () {
               yield* writeSettingsAtomically(next);
 
@@ -654,11 +661,13 @@ const makeServerSettings = Effect.gen(function* () {
                 );
                 return yield* Effect.failCause(secretMutationExit.cause);
               }
+              return next;
             }),
+            (committed) =>
+              Cache.set(settingsCache, cacheKey, committed).pipe(
+                Effect.andThen(emitChange(committed)),
+              ),
           );
-
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
           const materialized = yield* materializeProviderEnvironmentSecrets(next);
           return resolveTextGenerationProvider(materialized);
         }),

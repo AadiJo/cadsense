@@ -10,12 +10,15 @@ import { createModelSelection } from "@cadsense/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { ServerConfig } from "./config.ts";
 import {
+  commitSettingsUpdateUninterruptibly,
   runBestEffortRollbackSteps,
   ServerSettingsLive,
   ServerSettingsService,
@@ -33,6 +36,28 @@ const makeServerSettingsLayer = () =>
   );
 
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("synchronizes committed settings before honoring interruption", () =>
+    Effect.gen(function* () {
+      const persisted = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const synchronized = yield* Ref.make(false);
+      const fiber = yield* commitSettingsUpdateUninterruptibly(
+        Deferred.succeed(persisted, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as("committed"),
+        ),
+        () => Ref.set(synchronized, true),
+      ).pipe(Effect.forkChild);
+
+      yield* Deferred.await(persisted);
+      yield* Fiber.interrupt(fiber).pipe(Effect.forkDetach);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.await(fiber);
+
+      assert.isTrue(yield* Ref.get(synchronized));
+    }),
+  );
+
   it.effect("attempts every rollback step after an earlier restoration fails", () =>
     Effect.gen(function* () {
       const attempted = yield* Ref.make<string[]>([]);
