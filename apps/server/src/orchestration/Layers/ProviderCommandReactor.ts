@@ -181,8 +181,11 @@ function buildGeneratedWorktreeBranchName(raw: string): string {
 }
 
 function readCadReviewParentThreadId(
-  thread: Pick<OrchestrationThread, "activities">,
+  thread: Pick<OrchestrationThread, "activities" | "purpose" | "parentThreadId">,
 ): ThreadId | undefined {
+  if (thread.purpose === "cad-review" && thread.parentThreadId) {
+    return thread.parentThreadId;
+  }
   for (let index = thread.activities.length - 1; index >= 0; index -= 1) {
     const activity = thread.activities[index];
     if (activity?.kind !== CAD_REVIEW_CHILD_LINK_KIND) {

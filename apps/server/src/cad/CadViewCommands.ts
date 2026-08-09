@@ -1,5 +1,8 @@
 import {
   CadViewCommand,
+  type CadRequestClaim,
+  type CadRequestClaimInput,
+  type CadRequestClaimResult,
   type CadControlInput,
   type CadHierarchyBrowserRequest,
   type CadHierarchyResult,
@@ -13,6 +16,13 @@ import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Random from "effect/Random";
 import * as Stream from "effect/Stream";
+
+import {
+  claimCadRequestLease,
+  isCadRequestAvailable,
+  ownsCadRequestLease,
+  type CadRequestLease,
+} from "./CadRequestLease.ts";
 
 const CAD_BROWSER_PUBSUB_CAPACITY = 256;
 const RECENT_CAD_VIEW_COMMAND_LIMIT = 128;
@@ -28,6 +38,7 @@ const cadHierarchyRequestPubSub = Effect.runSync(
 interface PendingCadHierarchyRequest {
   readonly deferred: Deferred.Deferred<CadHierarchyResult, Error>;
   readonly browserRequest: CadHierarchyBrowserRequest;
+  lease: CadRequestLease | undefined;
 }
 
 const pendingHierarchyByRequestId = new Map<string, PendingCadHierarchyRequest>();
@@ -68,9 +79,10 @@ export const cadViewCommandStream = Stream.unwrap(
 export const cadHierarchyRequestStream = Stream.unwrap(
   Effect.gen(function* () {
     const subscription = yield* PubSub.subscribe(cadHierarchyRequestPubSub);
-    const pendingRequests = [...pendingHierarchyByRequestId.values()].map(
-      (entry) => entry.browserRequest,
-    );
+    const nowMs = yield* Clock.currentTimeMillis;
+    const pendingRequests = [...pendingHierarchyByRequestId.values()]
+      .filter((entry) => isCadRequestAvailable(entry, nowMs))
+      .map((entry) => entry.browserRequest);
     return Stream.concat(
       Stream.fromIterable(pendingRequests),
       Stream.fromSubscription(subscription),
@@ -121,8 +133,12 @@ export const requestCadHierarchy = (
   Effect.gen(function* () {
     const requestId = yield* Random.nextUUIDv4;
     const deferred = yield* Deferred.make<CadHierarchyResult, Error>();
-    const browserRequest: CadHierarchyBrowserRequest = { requestId, threadId };
-    pendingHierarchyByRequestId.set(requestId, { deferred, browserRequest });
+    const browserRequest: CadHierarchyBrowserRequest = {
+      requestId,
+      threadId,
+      createdAt: DateTime.formatIso(yield* DateTime.now),
+    };
+    pendingHierarchyByRequestId.set(requestId, { deferred, browserRequest, lease: undefined });
     yield* PubSub.publish(cadHierarchyRequestPubSub, browserRequest);
     return yield* Deferred.await(deferred).pipe(
       Effect.ensuring(Effect.sync(() => pendingHierarchyByRequestId.delete(requestId))),
@@ -131,13 +147,26 @@ export const requestCadHierarchy = (
 
 export function completeCadHierarchyRequest(
   requestId: string,
+  claim: CadRequestClaim,
   result: CadHierarchyResult,
+  nowMs = Effect.runSync(Clock.currentTimeMillis),
 ): boolean {
   const entry = pendingHierarchyByRequestId.get(requestId);
-  if (!entry) {
+  if (!entry || !ownsCadRequestLease(entry, claim, nowMs)) {
     return false;
   }
   pendingHierarchyByRequestId.delete(requestId);
   Effect.runFork(Deferred.succeed(entry.deferred, result));
   return true;
+}
+
+export function claimCadHierarchyRequest(
+  input: CadRequestClaimInput,
+  nowMs = Effect.runSync(Clock.currentTimeMillis),
+): CadRequestClaimResult {
+  const entry = pendingHierarchyByRequestId.get(input.requestId);
+  if (!entry) {
+    return { status: "unavailable", reason: "unknown-or-finalized" };
+  }
+  return claimCadRequestLease(entry, input.responderId, nowMs);
 }

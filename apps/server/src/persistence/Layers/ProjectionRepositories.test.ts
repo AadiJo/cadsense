@@ -82,6 +82,9 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       yield* threads.upsert({
         threadId: ThreadId.make("thread-null-options"),
         projectId: ProjectId.make("project-null-options"),
+        purpose: "general",
+        parentThreadId: null,
+        reviewRunId: null,
         title: "Null options thread",
         externalContext: null,
         modelSelection: {

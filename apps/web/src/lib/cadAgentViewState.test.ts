@@ -12,6 +12,7 @@ import type { EnvironmentState } from "../store";
 import type { Thread, ThreadShell } from "../types";
 import {
   cadReviewChildThreadIdsForActiveReviews,
+  cadReviewChildThreadIdsForActiveReviewsInEnvironment,
   deriveCadReviewChildActivitySummaries,
   deriveCadAgentViewStateForThread,
   isCadRelatedToolActivity,
@@ -381,6 +382,22 @@ describe("cadAgentViewState", () => {
         ],
       }),
     ).toEqual([]);
+  });
+
+  it("discovers review children from explicit relationships without creation activities", () => {
+    const parent = { ...makeParentThread(), activities: [] };
+    const environmentState = makeEnvironmentState([]);
+    environmentState.threadShellById[childThreadId] = {
+      ...environmentState.threadShellById[childThreadId]!,
+      purpose: "cad-review",
+      parentThreadId,
+      reviewRunId,
+    };
+
+    expect(cadReviewChildThreadIdsForActiveReviews(parent)).toEqual([]);
+    expect(cadReviewChildThreadIdsForActiveReviewsInEnvironment(environmentState, parent)).toEqual([
+      childThreadId,
+    ]);
   });
 
   it("prefers usage output tokens over assistant text estimates", () => {

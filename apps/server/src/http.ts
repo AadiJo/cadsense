@@ -581,11 +581,20 @@ export const cadHierarchyUploadRouteLayer = HttpRouter.add(
     const input = yield* decodeCadHierarchyUploadInput(body).pipe(
       Effect.mapError(() => "invalid" as const),
     );
-    completeCadHierarchyRequest(input.requestId, {
-      components: input.components,
-      ...(input.status ? { status: input.status } : {}),
-      ...(input.message ? { message: input.message } : {}),
-    });
+    const completed = completeCadHierarchyRequest(
+      input.requestId,
+      { responderId: input.responderId, leaseId: input.leaseId },
+      {
+        components: input.components,
+        ...(input.status ? { status: input.status } : {}),
+        ...(input.message ? { message: input.message } : {}),
+      },
+    );
+    if (!completed) {
+      return HttpServerResponse.text("Unknown, expired, or unclaimed CAD hierarchy request", {
+        status: 409,
+      });
+    }
     return HttpServerResponse.jsonUnsafe({ ok: true }, { status: 200 });
   }).pipe(
     Effect.catchTag("AuthError", respondToAuthError),
