@@ -1,7 +1,7 @@
 interface ParsedSemver {
-  readonly major: number;
-  readonly minor: number;
-  readonly patch: number;
+  readonly major: string;
+  readonly minor: string;
+  readonly patch: string;
   readonly prerelease: ReadonlyArray<string>;
 }
 
@@ -30,6 +30,9 @@ export function normalizeSemverVersion(version: string): string {
 }
 
 export function parseSemver(value: string): ParsedSemver | null {
+  if (/\s/.test(value.trim())) {
+    return null;
+  }
   const match = normalizeSemverVersion(value).match(SEMVER_PATTERN);
   if (!match) return null;
   const [, majorSegment, minorSegment, patchSegment, prerelease = ""] = match;
@@ -48,19 +51,19 @@ export function parseSemver(value: string): ParsedSemver | null {
     return null;
   }
 
-  const major = Number.parseInt(majorSegment, 10);
-  const minor = Number.parseInt(minorSegment, 10);
-  const patch = Number.parseInt(patchSegment, 10);
-  if (![major, minor, patch].every(Number.isInteger)) {
-    return null;
-  }
-
   return {
-    major,
-    minor,
-    patch,
+    major: majorSegment,
+    minor: minorSegment,
+    patch: patchSegment,
     prerelease: prereleaseIdentifiers,
   };
+}
+
+function compareNumericIdentifier(left: string, right: string): number {
+  if (left.length !== right.length) {
+    return left.length < right.length ? -1 : 1;
+  }
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function comparePrereleaseIdentifier(left: string, right: string): number {
@@ -68,7 +71,7 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   const rightNumeric = SEMVER_NUMBER_SEGMENT.test(right);
 
   if (leftNumeric && rightNumeric) {
-    return Number.parseInt(left, 10) - Number.parseInt(right, 10);
+    return compareNumericIdentifier(left, right);
   }
   if (leftNumeric) {
     return -1;
@@ -86,14 +89,11 @@ export function compareSemverVersions(left: string, right: string): number {
     return left.localeCompare(right);
   }
 
-  if (parsedLeft.major !== parsedRight.major) {
-    return parsedLeft.major - parsedRight.major;
-  }
-  if (parsedLeft.minor !== parsedRight.minor) {
-    return parsedLeft.minor - parsedRight.minor;
-  }
-  if (parsedLeft.patch !== parsedRight.patch) {
-    return parsedLeft.patch - parsedRight.patch;
+  for (const segment of ["major", "minor", "patch"] as const) {
+    const comparison = compareNumericIdentifier(parsedLeft[segment], parsedRight[segment]);
+    if (comparison !== 0) {
+      return comparison;
+    }
   }
 
   if (parsedLeft.prerelease.length === 0 && parsedRight.prerelease.length === 0) {

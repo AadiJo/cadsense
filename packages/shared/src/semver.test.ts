@@ -45,6 +45,17 @@ describe("semver helpers", () => {
     expect(parseSemver("1.2.3-alpha..1")).toBeNull();
     expect(parseSemver("1.2.3-alpha.01")).toBeNull();
     expect(parseSemver("1.2.3-alpha_1")).toBeNull();
+    expect(parseSemver("1 .2.3")).toBeNull();
+  });
+
+  it("compares arbitrarily large numeric identifiers without losing precision", () => {
+    expect(compareSemverVersions("9007199254740992.0.0", "9007199254740993.0.0")).toBeLessThan(0);
+    expect(compareSemverVersions("1.0.0-9007199254740992", "1.0.0-9007199254740993")).toBeLessThan(
+      0,
+    );
+    expect(
+      compareSemverVersions("99999999999999999999.0.0", "100000000000000000000.0.0"),
+    ).toBeLessThan(0);
   });
 
   it("falls back to lexical comparison for malformed numeric segments", () => {
