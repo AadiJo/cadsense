@@ -791,17 +791,20 @@ function scheduleUnownedLocalCadFileUrlRevocations(
   localCadFileUrlRevocationScheduled = true;
   queueMicrotask(() => {
     localCadFileUrlRevocationScheduled = false;
-    const retainedUrls = new Set(
-      Object.values(readFilesByScopeKey()).flatMap((retainedFiles) =>
-        retainedFiles.map((file) => file.url),
-      ),
-    );
-    for (const url of pendingLocalCadFileUrlRevocations) {
-      if (!retainedUrls.has(url)) {
-        URL.revokeObjectURL(url);
+    const candidates = [...pendingLocalCadFileUrlRevocations];
+    pendingLocalCadFileUrlRevocations.clear();
+    for (const url of candidates) {
+      const retained = Object.values(readFilesByScopeKey()).some((files) =>
+        files.some((file) => file.url === url),
+      );
+      if (!retained) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.warn("Failed to revoke stale CAD object URL.", { url, error });
+        }
       }
     }
-    pendingLocalCadFileUrlRevocations.clear();
   });
 }
 

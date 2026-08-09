@@ -698,6 +698,58 @@ describe("local CAD object URL ownership", () => {
     expect(useUiStateStore.getState().localCadFilesByScopeKey.destination).toEqual([sharedFile]);
     expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
+
+  it("rechecks ownership after a revocation callback mutates the store", async () => {
+    const firstFile = { relativePath: "first.3mf", url: "blob:first", isPreferred: true };
+    const transferredFile = {
+      relativePath: "transferred.3mf",
+      url: "blob:transferred",
+      isPreferred: true,
+    };
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => {
+      if (url === firstFile.url) {
+        useUiStateStore.getState().setLocalCadFiles("destination", [transferredFile]);
+      }
+    });
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: { source: [firstFile, transferredFile] },
+    });
+
+    useUiStateStore.getState().clearLocalCadFiles("source");
+    await Promise.resolve();
+
+    expect(revokeObjectUrl).toHaveBeenCalledWith(firstFile.url);
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith(transferredFile.url);
+    expect(useUiStateStore.getState().localCadFilesByScopeKey.destination).toEqual([
+      transferredFile,
+    ]);
+  });
+
+  it("continues revoking candidates when one revocation throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => {
+      if (url === "blob:first") {
+        throw new Error("revocation failed");
+      }
+    });
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        source: [
+          { relativePath: "first.3mf", url: "blob:first", isPreferred: true },
+          { relativePath: "second.3mf", url: "blob:second", isPreferred: false },
+        ],
+      },
+    });
+
+    useUiStateStore.getState().clearLocalCadFiles("source");
+    await Promise.resolve();
+
+    expect(revokeObjectUrl.mock.calls).toEqual([["blob:first"], ["blob:second"]]);
+    expect(warn).toHaveBeenCalledWith(
+      "Failed to revoke stale CAD object URL.",
+      expect.objectContaining({ url: "blob:first", error: expect.any(Error) }),
+    );
+  });
 });
 
 function createLocalStorageStub(): Storage {
