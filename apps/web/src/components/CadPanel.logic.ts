@@ -97,36 +97,6 @@ export function cadOnshapeModelQueryIdentity(
   ];
 }
 
-export function shouldHandleCadAgentRequestForPanel(input: {
-  readonly requestThreadId: string;
-  readonly cadRoutingThreadId: string | undefined;
-  readonly sameProjectThreadIds: ReadonlyArray<string>;
-  readonly activeCadReviewThreadIds: ReadonlyArray<string>;
-  readonly activeCadReviewChildThreadIds?: ReadonlyArray<string>;
-  readonly agentControlHost: boolean;
-  readonly cadReviewInProgress: boolean;
-}): boolean {
-  if (!input.cadRoutingThreadId) {
-    return false;
-  }
-  if (input.requestThreadId === input.cadRoutingThreadId) {
-    return true;
-  }
-  if (
-    input.cadReviewInProgress &&
-    input.activeCadReviewChildThreadIds?.includes(input.requestThreadId)
-  ) {
-    return true;
-  }
-  if (input.agentControlHost || input.cadReviewInProgress) {
-    return false;
-  }
-  if (input.activeCadReviewThreadIds.includes(input.requestThreadId)) {
-    return false;
-  }
-  return input.sameProjectThreadIds.includes(input.requestThreadId);
-}
-
 export function applyCadComponentVisibility(
   components: ReadonlyArray<CadViewerFrameComponentNode>,
   visibilityByComponentId: Readonly<Record<string, boolean>>,

@@ -47,6 +47,7 @@ import Migration0031 from "./Migrations/031_OnshapeWorkspaceIndex.ts";
 import Migration0032 from "./Migrations/032_EnsureExternalContextJsonColumns.ts";
 import Migration0033 from "./Migrations/033_ProjectionThreadReviews.ts";
 import Migration0034 from "./Migrations/034_CadReviewRunClaims.ts";
+import Migration0035 from "./Migrations/035_ProjectionThreadRelationships.ts";
 
 /**
  * Migration loader with all migrations defined inline.
@@ -93,6 +94,7 @@ export const migrationEntries = [
   [32, "EnsureExternalContextJsonColumns", Migration0032],
   [33, "ProjectionThreadReviews", Migration0033],
   [34, "CadReviewRunClaims", Migration0034],
+  [35, "ProjectionThreadRelationships", Migration0035],
 ] as const;
 
 export const makeMigrationLoader = (throughId?: number) =>

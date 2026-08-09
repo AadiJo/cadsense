@@ -42,6 +42,7 @@ export interface CadViewerFrameCameraSnapshot {
 export type CadViewerFrameLoadStage =
   | "request-received"
   | "direct-3mf-imports-loaded"
+  | "direct-3mf-file-fetched"
   | "direct-3mf-archive-expanded"
   | "direct-3mf-fast-parsed"
   | "direct-3mf-model-parsed"

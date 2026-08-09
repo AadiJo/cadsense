@@ -60,6 +60,8 @@ import { EditorId } from "./editor.ts";
 import type { ClientSettings, ServerSettings, ServerSettingsPatch } from "./settings.ts";
 import type {
   CadHierarchyBrowserRequest,
+  CadRequestClaimInput,
+  CadRequestClaimResult,
   CadHierarchyResult,
   CadHierarchyUploadInput,
   CadScreenshotBrowserRequest,
@@ -422,10 +424,12 @@ export interface EnvironmentApi {
     ) => Promise<OnshapeListSyncedCadFilesResult>;
     onCadViewCommand: (callback: (command: CadViewCommand) => void) => () => void;
     onCadHierarchyRequest: (callback: (request: CadHierarchyBrowserRequest) => void) => () => void;
+    claimCadHierarchyRequest: (input: CadRequestClaimInput) => Promise<CadRequestClaimResult>;
     uploadCadHierarchy: (input: CadHierarchyUploadInput) => Promise<CadHierarchyResult>;
     onCadScreenshotRequest: (
       callback: (request: CadScreenshotBrowserRequest) => void,
     ) => () => void;
+    claimCadScreenshotRequest: (input: CadRequestClaimInput) => Promise<CadRequestClaimResult>;
     uploadCadScreenshot: (input: CadScreenshotUploadInput) => Promise<CadScreenshotUploadResult>;
   };
   mechbase: {

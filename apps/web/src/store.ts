@@ -39,7 +39,7 @@ import {
 import { resolveEnvironmentHttpUrl } from "./environments/runtime";
 import { sanitizeThreadErrorMessage } from "./rpc/transportError";
 import { getThreadFromEnvironmentState } from "./threadDerivation";
-import { isCadReviewChildThreadId } from "./cadReviewThreadVisibility";
+import { isCadReviewChildThread } from "./cadReviewThreadVisibility";
 import { hasRunningCadReview, shouldKeepExistingCadReviewOnUpsert } from "./lib/cadReviewStatus";
 const isProviderDriverKindValue = Schema.is(ProviderDriverKind);
 
@@ -249,6 +249,9 @@ function mapThread(thread: OrchestrationThread, environmentId: EnvironmentId): T
     environmentId,
     codexThreadId: null,
     projectId: thread.projectId,
+    purpose: thread.purpose ?? "general",
+    parentThreadId: thread.parentThreadId ?? null,
+    reviewRunId: thread.reviewRunId ?? null,
     title: thread.title,
     externalContext: thread.externalContext ?? null,
     modelSelection: normalizeModelSelection(thread.modelSelection),
@@ -286,6 +289,9 @@ function mapThreadShell(
     environmentId,
     codexThreadId: null,
     projectId: thread.projectId,
+    purpose: thread.purpose ?? "general",
+    parentThreadId: thread.parentThreadId ?? null,
+    reviewRunId: thread.reviewRunId ?? null,
     title: thread.title,
     externalContext: thread.externalContext ?? null,
     modelSelection: normalizeModelSelection(thread.modelSelection),
@@ -308,6 +314,9 @@ function mapThreadShell(
     id: thread.id,
     environmentId,
     projectId: thread.projectId,
+    purpose: thread.purpose ?? "general",
+    parentThreadId: thread.parentThreadId ?? null,
+    reviewRunId: thread.reviewRunId ?? null,
     title: thread.title,
     externalContext: thread.externalContext ?? null,
     interactionMode: thread.interactionMode,
@@ -339,6 +348,9 @@ function toThreadShell(thread: Thread): ThreadShell {
     environmentId: thread.environmentId,
     codexThreadId: thread.codexThreadId,
     projectId: thread.projectId,
+    purpose: thread.purpose ?? "general",
+    parentThreadId: thread.parentThreadId ?? null,
+    reviewRunId: thread.reviewRunId ?? null,
     title: thread.title,
     externalContext: thread.externalContext ?? null,
     modelSelection: thread.modelSelection,
@@ -414,6 +426,9 @@ function sidebarThreadSummariesEqual(
     left !== undefined &&
     left.id === right.id &&
     left.projectId === right.projectId &&
+    left.purpose === right.purpose &&
+    left.parentThreadId === right.parentThreadId &&
+    left.reviewRunId === right.reviewRunId &&
     left.title === right.title &&
     left.interactionMode === right.interactionMode &&
     threadSessionsEqual(left.session, right.session) &&
@@ -439,6 +454,9 @@ function threadShellsEqual(left: ThreadShell | undefined, right: ThreadShell): b
     left.environmentId === right.environmentId &&
     left.codexThreadId === right.codexThreadId &&
     left.projectId === right.projectId &&
+    left.purpose === right.purpose &&
+    left.parentThreadId === right.parentThreadId &&
+    left.reviewRunId === right.reviewRunId &&
     left.title === right.title &&
     left.modelSelection === right.modelSelection &&
     left.runtimeMode === right.runtimeMode &&
@@ -2020,11 +2038,8 @@ export function selectThreadsAcrossEnvironments(state: AppState): Thread[] {
 export function selectThreadShellsAcrossEnvironments(state: AppState): ThreadShell[] {
   return getEnvironmentEntries(state).flatMap(([, environmentState]) =>
     environmentState.threadIds.flatMap((threadId) => {
-      if (isCadReviewChildThreadId(threadId)) {
-        return [];
-      }
       const shell = environmentState.threadShellById[threadId];
-      return shell ? [shell] : [];
+      return shell && !isCadReviewChildThread(shell) ? [shell] : [];
     }),
   );
 }
@@ -2032,11 +2047,10 @@ export function selectThreadShellsAcrossEnvironments(state: AppState): ThreadShe
 export function selectSidebarThreadsAcrossEnvironments(state: AppState): SidebarThreadSummary[] {
   return getEnvironmentEntries(state).flatMap(([environmentId, environmentState]) =>
     environmentState.threadIds.flatMap((threadId) => {
-      if (isCadReviewChildThreadId(threadId)) {
-        return [];
-      }
       const thread = environmentState.sidebarThreadSummaryById[threadId];
-      return thread && thread.environmentId === environmentId ? [thread] : [];
+      return thread && thread.environmentId === environmentId && !isCadReviewChildThread(thread)
+        ? [thread]
+        : [];
     }),
   );
 }
@@ -2052,11 +2066,8 @@ export function selectSidebarThreadsForProjectRef(
   const environmentState = selectEnvironmentState(state, ref.environmentId);
   const threadIds = environmentState.threadIdsByProjectId[ref.projectId] ?? EMPTY_THREAD_IDS;
   return threadIds.flatMap((threadId) => {
-    if (isCadReviewChildThreadId(threadId)) {
-      return [];
-    }
     const thread = environmentState.sidebarThreadSummaryById[threadId];
-    return thread ? [thread] : [];
+    return thread && !isCadReviewChildThread(thread) ? [thread] : [];
   });
 }
 

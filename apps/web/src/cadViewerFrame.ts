@@ -1393,6 +1393,7 @@ async function loadFilesDirect3mfUrl(
       throw new Error(`Failed to fetch CAD model asset '${file.name}': HTTP ${response.status}`);
     }
     const buffer = await response.arrayBuffer();
+    onStage?.("direct-3mf-file-fetched");
     let group: ThreeGroup | null = null;
     if (buffer.byteLength >= FAST_3MF_WORKER_ARCHIVE_THRESHOLD_BYTES) {
       try {

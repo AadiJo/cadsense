@@ -1,7 +1,9 @@
 import { scopedThreadKey, scopeThreadRef } from "@cadsense/client-runtime";
 import {
   ThreadId,
+  type CadHierarchyBrowserRequest,
   type CadHierarchyUploadInput,
+  type CadScreenshotBrowserRequest,
   type CadView,
   type CadViewCommand,
   type OnshapeSyncedCadFile,
@@ -34,10 +36,24 @@ import { useQuery } from "@tanstack/react-query";
 import { useComposerDraftStore, DraftId } from "../composerDraftStore";
 import { readEnvironmentApi } from "../environmentApi";
 import { buildCadWebGlFailureUserMessage } from "../lib/cadViewerWebGl";
+import {
+  registerCadBrokerResponder,
+  uploadCadHierarchyCompletion,
+  uploadCadScreenshotCompletion,
+  type CadBrokerClaim,
+} from "../lib/cadRequestBroker";
+import {
+  advanceCadViewerLifecycle,
+  cadViewerLegacyLoadState,
+  failCadViewerLifecycle,
+  idleCadViewerLifecycle,
+  initialCadViewerLifecycle,
+  startCadViewerLifecycle,
+} from "../lib/cadViewerLifecycle";
 import { isRunningCadReviewStatus } from "../lib/cadReviewStatus";
 import { cadViewLabel } from "../lib/cadView";
 import {
-  cadReviewChildThreadIdsForActiveReviews,
+  cadReviewChildThreadIdsForActiveReviewsInEnvironment,
   deriveCadAgentViewStateForThread,
   isCadRelatedToolActivity,
   latestCadAgentViewState,
@@ -67,7 +83,6 @@ import {
   cadViewerFrameOrigin,
   cadViewerFrameUrl,
   getCadModelViewerBlocker,
-  shouldHandleCadAgentRequestForPanel,
 } from "./CadPanel.logic";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
@@ -190,6 +205,7 @@ const CAD_AGENT_CONTROL_EXIT_MS = 420;
 const CAD_FRAME_PROTOCOL_TIMEOUT_RECOVERY_THRESHOLD = 2;
 const CAD_FRAME_READY_RECOVERY_TIMEOUT_MS = 10_000;
 const CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS = 90_000;
+const CAD_AGENT_SCREENSHOT_VIEWER_READY_TIMEOUT_MS = 25_000;
 const EMPTY_LOCAL_CAD_FILES: readonly LocalCadFile[] = [];
 const CAD_TOOLBAR_VIEWS: readonly CadView[] = [
   "isometric",
@@ -275,6 +291,8 @@ interface PendingFrameRequest {
   readonly resolve: (payload: CadViewerFrameResponsePayload | undefined) => void;
   readonly reject: (error: Error) => void;
   readonly timeoutId: ReturnType<typeof setTimeout>;
+  readonly requestType: CadViewerFrameRequestInput["type"];
+  readonly generation: number;
 }
 
 function CadComponentTree(props: {
@@ -649,8 +667,9 @@ export default function CadPanel({
   const activeFrameLoadIdRef = useRef(0);
   const frameLoadStartedAtRef = useRef(0);
   const loadedFrameRequestKeyRef = useRef<string | null>(null);
-  const [loadState, setLoadState] = useState<"idle" | "loading" | "loaded" | "error">("idle");
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [viewerLifecycle, setViewerLifecycle] = useState(initialCadViewerLifecycle);
+  const loadState = cadViewerLegacyLoadState(viewerLifecycle);
+  const loadError = viewerLifecycle.status === "failed" ? viewerLifecycle.message : null;
   const [frameActive, setFrameActive] = useState(false);
   const [frameKey, setFrameKey] = useState(0);
   const [frameReadySequence, setFrameReadySequence] = useState(0);
@@ -673,12 +692,17 @@ export default function CadPanel({
   const fullscreenCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fullscreenEnterTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const screenshotCaptureQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const screenshotCaptureGenerationRef = useRef(0);
   const appliedCadComponentVisibilityRef = useRef<Record<string, boolean>>({});
   const loadStateRef = useRef(loadState);
   loadStateRef.current = loadState;
   const loadErrorRef = useRef(loadError);
   loadErrorRef.current = loadError;
+  const cadRoutingThreadIdRef = useRef(cadRoutingThreadId);
+  cadRoutingThreadIdRef.current = cadRoutingThreadId;
+  const cadUiStateKeyRef = useRef(cadUiStateKey);
+  cadUiStateKeyRef.current = cadUiStateKey;
+  const responderIdRef = useRef<string | null>(null);
+  responderIdRef.current ??= `cad-viewer-${globalThis.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2)}`;
 
   const onshapeContext =
     activeProject?.externalContext?.provider === "onshape"
@@ -738,31 +762,12 @@ export default function CadPanel({
     return activeThreadIds.length > 0 ? activeThreadIds : EMPTY_CAD_REQUEST_THREAD_IDS;
   }, [sameProjectReviewByThreadId, sameProjectReviewIdsByThreadId, sameProjectThreadIds]);
   const activeCadReviewChildThreadIds = useMemo(
-    () => (activeThread ? cadReviewChildThreadIdsForActiveReviews(activeThread) : []),
-    [activeThread],
+    () =>
+      activeThread && activeEnvironmentState
+        ? cadReviewChildThreadIdsForActiveReviewsInEnvironment(activeEnvironmentState, activeThread)
+        : [],
+    [activeEnvironmentState, activeThread],
   );
-  const shouldHandleCadAgentRequest = useCallback(
-    (requestThreadId: string) =>
-      shouldHandleCadAgentRequestForPanel({
-        requestThreadId,
-        cadRoutingThreadId,
-        sameProjectThreadIds,
-        activeCadReviewThreadIds: sameProjectActiveCadReviewThreadIds,
-        activeCadReviewChildThreadIds,
-        agentControlHost,
-        cadReviewInProgress,
-      }),
-    [
-      activeCadReviewChildThreadIds,
-      agentControlHost,
-      cadReviewInProgress,
-      cadRoutingThreadId,
-      sameProjectActiveCadReviewThreadIds,
-      sameProjectThreadIds,
-    ],
-  );
-  const shouldHandleCadAgentRequestRef = useRef(shouldHandleCadAgentRequest);
-  shouldHandleCadAgentRequestRef.current = shouldHandleCadAgentRequest;
   const projectCadScopeKey = activeProject
     ? `${activeProject.environmentId}:${activeProject.id}`
     : (activeThread?.projectId ?? draftSession?.projectId ?? null);
@@ -969,14 +974,19 @@ export default function CadPanel({
     }
 
     activeFrameLoadIdRef.current += 1;
+    const frameLoadId = activeFrameLoadIdRef.current;
     loadedFrameRequestKeyRef.current = null;
     frameLoadStartedAtRef.current = performance.now();
-    setLoadState("loading");
-    setLoadError(null);
+    setViewerLifecycle((current) => {
+      const restarted = startCadViewerLifecycle(current, modelFileIdentityKey);
+      return restarted.generation === frameLoadId
+        ? restarted
+        : { ...restarted, generation: frameLoadId };
+    });
     setFrameReadySequence(0);
     setFrameActive(true);
     setFrameKey((key) => key + 1);
-  }, []);
+  }, [modelFileIdentityKey]);
 
   const postFrameRequest = useCallback(
     (
@@ -1012,7 +1022,13 @@ export default function CadPanel({
             ),
           );
         }, timeoutMs);
-        pendingFrameRequestsRef.current.set(requestId, { resolve, reject, timeoutId });
+        pendingFrameRequestsRef.current.set(requestId, {
+          resolve,
+          reject,
+          timeoutId,
+          requestType: request.type,
+          generation: activeFrameLoadIdRef.current,
+        });
         targetWindow.postMessage(
           {
             source: CAD_VIEWER_FRAME_PARENT_SOURCE,
@@ -1276,16 +1292,32 @@ export default function CadPanel({
           stage: event.data.stage,
           elapsedMs: event.data.elapsedMs,
         });
+        const pending = pendingFrameRequestsRef.current.get(event.data.requestId);
+        if (pending?.requestType === "load-file-urls") {
+          const phase =
+            event.data.stage === "request-received" ||
+            event.data.stage === "direct-3mf-imports-loaded"
+              ? "fetching-assets"
+              : "importing-model";
+          setViewerLifecycle((current) =>
+            advanceCadViewerLifecycle(current, pending.generation, {
+              status: "loading",
+              phase,
+            }),
+          );
+        }
         return;
       }
       if (event.data.type === "camera-change") {
-        if (cadUiStateKey && cadRoutingThreadId) {
+        const currentCadUiStateKey = cadUiStateKeyRef.current;
+        const currentCadRoutingThreadId = cadRoutingThreadIdRef.current;
+        if (currentCadUiStateKey && currentCadRoutingThreadId) {
           const command = makeManualCadCameraCommand({
-            threadId: cadRoutingThreadId,
+            threadId: currentCadRoutingThreadId,
             camera: event.data.camera,
           });
           skipLocalManualCameraReplayCommandIdsRef.current.add(command.commandId);
-          recordCadAgentViewCommand(cadUiStateKey, command);
+          recordCadAgentViewCommand(currentCadUiStateKey, command);
         }
         return;
       }
@@ -1310,7 +1342,7 @@ export default function CadPanel({
       window.removeEventListener("message", onMessage);
       rejectAllPendingFrameRequests("CAD viewer panel was closed.");
     };
-  }, [cadRoutingThreadId, cadUiStateKey, recordCadAgentViewCommand, rejectAllPendingFrameRequests]);
+  }, [recordCadAgentViewCommand, rejectAllPendingFrameRequests]);
 
   useEffect(() => {
     if (loadState !== "loading") {
@@ -1414,16 +1446,9 @@ export default function CadPanel({
     setCadExploded(cadUiStateKey, agentExploded);
   }, [agentExploded, cadUiStateKey, modelFileIdentityKey, setCadExploded]);
 
-  useEffect(() => {
-    if (!environmentId || !cadRoutingThreadId) {
-      return;
-    }
-    const api = readEnvironmentApi(environmentId);
-    if (!api) {
-      return;
-    }
-    return api.onshape.onCadViewCommand((command) => {
-      if (!shouldHandleCadAgentRequest(command.threadId)) {
+  const handleCadViewCommand = useCallback(
+    (command: CadViewCommand) => {
+      if (!environmentId) {
         return;
       }
       if (handledCadAgentCommandIdsRef.current.has(command.commandId)) {
@@ -1444,16 +1469,9 @@ export default function CadPanel({
         recordCadAgentViewCommand(commandUiStateKey, command);
       }
       applyCadViewCommand(command, { persistKey: commandUiStateKey });
-    });
-  }, [
-    activateRegularCadAgentControl,
-    cadRoutingThreadId,
-    agentControlHost,
-    applyCadViewCommand,
-    environmentId,
-    recordCadAgentViewCommand,
-    shouldHandleCadAgentRequest,
-  ]);
+    },
+    [activateRegularCadAgentControl, applyCadViewCommand, environmentId, recordCadAgentViewCommand],
+  );
 
   useEffect(() => {
     if (loadState !== "loaded" || !agentViewCommand) {
@@ -1472,28 +1490,22 @@ export default function CadPanel({
     setFixedView("isometric", true, { persist: false });
   }, [agentViewCommand, cadRoutingThreadId, loadState, modelFileIdentityKey, setFixedView]);
 
-  useEffect(() => {
-    if (!cadAgentRequestResponderEnabled || !environmentId || !cadRoutingThreadId) {
-      return;
-    }
-    const api = readEnvironmentApi(environmentId);
-    if (!api) {
-      return;
-    }
-    return api.onshape.onCadHierarchyRequest((req) => {
-      if (!shouldHandleCadAgentRequest(req.threadId)) {
+  const handleCadHierarchyRequest = useCallback(
+    (req: CadHierarchyBrowserRequest, claim: CadBrokerClaim) => {
+      if (!environmentApi) {
         return;
       }
       activateRegularCadAgentControl(`cad-hierarchy:${req.requestId}`);
-      void (async () => {
+      return (async () => {
         try {
           if (loadStateRef.current !== "loaded") {
             const unavailable = cadHierarchyViewerUnavailableMessage(
               loadStateRef.current,
               loadErrorRef.current,
             );
-            await api.onshape.uploadCadHierarchy({
+            await uploadCadHierarchyCompletion(environmentApi, {
               requestId: req.requestId,
+              ...claim,
               components: [],
               status: unavailable.status,
               message: unavailable.message,
@@ -1501,8 +1513,9 @@ export default function CadPanel({
             return;
           }
           const result = await postFrameRequest({ type: "get-components" }, 3_000);
-          await api.onshape.uploadCadHierarchy({
+          await uploadCadHierarchyCompletion(environmentApi, {
             requestId: req.requestId,
+            ...claim,
             components: result?.components ?? [],
             status: "loaded",
           });
@@ -1511,25 +1524,18 @@ export default function CadPanel({
             error instanceof Error
               ? `CAD hierarchy request failed while reading the loaded viewer: ${error.message}`
               : "CAD hierarchy request failed while reading the loaded viewer.";
-          await api.onshape
-            .uploadCadHierarchy({
-              requestId: req.requestId,
-              components: [],
-              status: "error",
-              message,
-            })
-            .catch(() => undefined);
+          await uploadCadHierarchyCompletion(environmentApi, {
+            requestId: req.requestId,
+            ...claim,
+            components: [],
+            status: "error",
+            message,
+          });
         }
       })();
-    });
-  }, [
-    activateRegularCadAgentControl,
-    cadRoutingThreadId,
-    cadAgentRequestResponderEnabled,
-    environmentId,
-    postFrameRequest,
-    shouldHandleCadAgentRequest,
-  ]);
+    },
+    [activateRegularCadAgentControl, environmentApi, postFrameRequest],
+  );
 
   useEffect(() => {
     if (loadState !== "loaded") {
@@ -1547,55 +1553,36 @@ export default function CadPanel({
     void postFrameRequest({ type: "zoom-to-fit" }, 3_000).catch(() => undefined);
   }, [cadZoomToFitRequest, loadState, postFrameRequest]);
 
-  useEffect(() => {
-    if (!cadAgentRequestResponderEnabled || !environmentId || !cadRoutingThreadId) {
-      return;
-    }
-    const api = readEnvironmentApi(environmentId);
-    if (!api) {
-      return;
-    }
-    const screenshotCaptureGeneration = screenshotCaptureGenerationRef;
-    const subscriptionGeneration = ++screenshotCaptureGenerationRef.current;
-    const unsubscribe = api.onshape.onCadScreenshotRequest((req) => {
-      if (!shouldHandleCadAgentRequest(req.threadId)) {
+  const handleCadScreenshotRequest = useCallback(
+    (req: CadScreenshotBrowserRequest, claim: CadBrokerClaim) => {
+      if (!environmentApi) {
         return;
       }
       activateRegularCadAgentControl(`cad-screenshot:${req.requestId}`);
-      const uploadEmptyScreenshot = () =>
-        api.onshape
-          .uploadCadScreenshot({ requestId: req.requestId, pngBase64: "" })
-          .catch(() => undefined);
-      const requestStillCurrent = () =>
-        screenshotCaptureGenerationRef.current === subscriptionGeneration &&
-        shouldHandleCadAgentRequestRef.current(req.threadId);
+      const finalizeFailure = (status: "failed" | "cancelled", message: string) =>
+        uploadCadScreenshotCompletion(environmentApi, {
+          requestId: req.requestId,
+          ...claim,
+          status,
+          message,
+        });
       const capture = async () => {
         try {
-          if (!requestStillCurrent()) {
-            await uploadEmptyScreenshot();
-            return;
-          }
-          // Wait up to 10 seconds for the frame to finish loading.
-          let attempts = 0;
-          while (loadStateRef.current !== "loaded" && attempts < 100) {
-            if (!requestStillCurrent()) {
-              await uploadEmptyScreenshot();
-              return;
-            }
+          const viewerReadyDeadline = Date.now() + CAD_AGENT_SCREENSHOT_VIEWER_READY_TIMEOUT_MS;
+          while (loadStateRef.current !== "loaded" && Date.now() < viewerReadyDeadline) {
             if (loadStateRef.current === "error") {
               break;
             }
             await new Promise((resolve) => setTimeout(resolve, 100));
-            attempts++;
           }
 
           if (loadStateRef.current !== "loaded") {
-            await uploadEmptyScreenshot();
-            return;
-          }
-
-          if (!requestStillCurrent()) {
-            await uploadEmptyScreenshot();
+            await finalizeFailure(
+              "failed",
+              loadErrorRef.current
+                ? `CAD viewer failed before screenshot capture: ${loadErrorRef.current}`
+                : "CAD viewer did not become ready before screenshot capture.",
+            );
             return;
           }
           const result = await postFrameRequest(
@@ -1607,31 +1594,70 @@ export default function CadPanel({
             CAD_AGENT_SCREENSHOT_CAPTURE_TIMEOUT_MS,
           );
           const pngBase64 = result?.pngBase64 ?? "";
-          await api.onshape.uploadCadScreenshot({ requestId: req.requestId, pngBase64 });
-        } catch {
-          await uploadEmptyScreenshot();
+          if (!pngBase64) {
+            await finalizeFailure("failed", "CAD viewer returned an empty screenshot.");
+            return;
+          }
+          await uploadCadScreenshotCompletion(environmentApi, {
+            requestId: req.requestId,
+            ...claim,
+            status: "completed",
+            pngBase64,
+          });
+        } catch (error) {
+          await finalizeFailure(
+            "failed",
+            `CAD screenshot capture failed: ${errorFromUnknown(error).message}`,
+          );
         }
       };
       const queuedCapture = screenshotCaptureQueueRef.current.catch(() => undefined).then(capture);
       screenshotCaptureQueueRef.current = queuedCapture.catch(() => undefined);
-      void queuedCapture;
-      return undefined;
+      return queuedCapture;
+    },
+    [activateRegularCadAgentControl, environmentApi, postFrameRequest],
+  );
+
+  useEffect(() => {
+    if (
+      !cadAgentRequestResponderEnabled ||
+      !environmentId ||
+      !environmentApi ||
+      !cadRoutingThreadId
+    ) {
+      return;
+    }
+    return registerCadBrokerResponder(environmentId, environmentApi, {
+      responderId: responderIdRef.current!,
+      routingThreadId: cadRoutingThreadId,
+      sameProjectThreadIds,
+      activeReviewThreadIds: sameProjectActiveCadReviewThreadIds,
+      reviewChildThreadIds: activeCadReviewChildThreadIds,
+      controlsReviewChildren: cadReviewInProgress,
+      allowProjectFallback: !agentControlHost && !cadReviewInProgress,
+      visibility: agentControlHost ? "background" : "visible",
+      onViewCommand: handleCadViewCommand,
+      onHierarchyRequest: handleCadHierarchyRequest,
+      onScreenshotRequest: handleCadScreenshotRequest,
     });
-    return () => {
-      screenshotCaptureGeneration.current++;
-      unsubscribe();
-    };
   }, [
-    cadRoutingThreadId,
-    activateRegularCadAgentControl,
+    activeCadReviewChildThreadIds,
+    agentControlHost,
     cadAgentRequestResponderEnabled,
+    cadReviewInProgress,
+    cadRoutingThreadId,
+    environmentApi,
     environmentId,
-    postFrameRequest,
-    shouldHandleCadAgentRequest,
+    handleCadHierarchyRequest,
+    handleCadScreenshotRequest,
+    handleCadViewCommand,
+    sameProjectActiveCadReviewThreadIds,
+    sameProjectThreadIds,
   ]);
 
   useEffect(() => {
-    if (modelFiles.length === 0) {
+    const currentModelFiles = modelFilesRef.current;
+    if (currentModelFiles.length === 0) {
       screenshotCaptureQueueRef.current = Promise.resolve();
       activeFrameLoadIdRef.current += 1;
       appliedCadComponentVisibilityRef.current = {};
@@ -1641,12 +1667,11 @@ export default function CadPanel({
       consecutiveFrameTimeoutsRef.current = 0;
       setFrameActive(false);
       setFrameReadySequence(0);
-      setLoadState("idle");
-      setLoadError(null);
+      setViewerLifecycle((current) => idleCadViewerLifecycle(current));
       return;
     }
 
-    const blocker = getCadModelViewerBlocker(modelFiles);
+    const blocker = getCadModelViewerBlocker(currentModelFiles);
     if (blocker) {
       activeFrameLoadIdRef.current += 1;
       appliedCadComponentVisibilityRef.current = {};
@@ -1656,12 +1681,12 @@ export default function CadPanel({
       consecutiveFrameTimeoutsRef.current = 0;
       setFrameActive(false);
       setFrameReadySequence(0);
-      setLoadState("error");
-      setLoadError(blocker);
+      setViewerLifecycle((current) => failCadViewerLifecycle(current, blocker));
       return;
     }
 
     activeFrameLoadIdRef.current += 1;
+    const frameLoadId = activeFrameLoadIdRef.current;
     appliedCadComponentVisibilityRef.current = {};
     screenshotCaptureQueueRef.current = Promise.resolve();
     rejectAllPendingFrameRequests("CAD viewer model changed.");
@@ -1669,12 +1694,14 @@ export default function CadPanel({
     frameLoadStartedAtRef.current = performance.now();
     consecutiveFrameTimeoutsRef.current = 0;
     frameReadyRecoveryAttemptsRef.current = 0;
-    setLoadState("loading");
-    setLoadError(null);
+    setViewerLifecycle((current) => {
+      const started = startCadViewerLifecycle(current, modelFileIdentityKey);
+      return started.generation === frameLoadId ? started : { ...started, generation: frameLoadId };
+    });
     setFrameReadySequence(0);
     setFrameActive(true);
     setFrameKey((key) => key + 1);
-  }, [modelFileIdentityKey, modelFiles, rejectAllPendingFrameRequests]);
+  }, [modelFileIdentityKey, rejectAllPendingFrameRequests]);
 
   useEffect(() => {
     if (!frameActive || loadState !== "loading" || frameReadySequence !== 0) {
@@ -1697,8 +1724,12 @@ export default function CadPanel({
       }
       activeFrameLoadIdRef.current += 1;
       setFrameActive(false);
-      setLoadState("error");
-      setLoadError("The CAD viewer frame did not become ready. Close and reopen the CAD panel.");
+      setViewerLifecycle((current) =>
+        advanceCadViewerLifecycle(current, frameLoadId, {
+          status: "failed",
+          message: "The CAD viewer frame did not become ready. Close and reopen the CAD panel.",
+        }),
+      );
     }, CAD_FRAME_READY_RECOVERY_TIMEOUT_MS);
     const loadTimeoutId = setTimeout(
       () => {
@@ -1707,9 +1738,11 @@ export default function CadPanel({
         }
         activeFrameLoadIdRef.current += 1;
         setFrameActive(false);
-        setLoadState("error");
-        setLoadError(
-          `The synced CAD file did not finish importing within ${CAD_MODEL_LOAD_TIMEOUT_MS / 1000} seconds.`,
+        setViewerLifecycle((current) =>
+          advanceCadViewerLifecycle(current, frameLoadId, {
+            status: "failed",
+            message: `The synced CAD file did not finish importing within ${CAD_MODEL_LOAD_TIMEOUT_MS / 1000} seconds.`,
+          }),
         );
       },
       Math.max(1, CAD_MODEL_LOAD_TIMEOUT_MS - (performance.now() - startedAt)),
@@ -1737,6 +1770,12 @@ export default function CadPanel({
     }
     loadedFrameRequestKeyRef.current = requestKey;
     const loadStartedAt = frameLoadStartedAtRef.current || performance.now();
+    setViewerLifecycle((current) =>
+      advanceCadViewerLifecycle(current, frameLoadId, {
+        status: "loading",
+        phase: "fetching-assets",
+      }),
+    );
 
     void (async () => {
       try {
@@ -1774,19 +1813,22 @@ export default function CadPanel({
             targetMs: CAD_MODEL_LOAD_TARGET_MS,
           });
         }
-        setLoadState("loaded");
-        setLoadError(null);
+        setViewerLifecycle((current) =>
+          advanceCadViewerLifecycle(current, frameLoadId, { status: "ready" }),
+        );
       } catch (error) {
         if (frameLoadId !== activeFrameLoadIdRef.current) {
           return;
         }
         setFrameActive(false);
-        setLoadState("error");
-        setLoadError(
-          buildCadWebGlFailureUserMessage(
-            errorFromUnknown(error).message ||
-              `The synced CAD file did not finish importing within ${CAD_MODEL_LOAD_TIMEOUT_MS / 1000} seconds. (Empty error received)`,
-          ),
+        setViewerLifecycle((current) =>
+          advanceCadViewerLifecycle(current, frameLoadId, {
+            status: "failed",
+            message: buildCadWebGlFailureUserMessage(
+              errorFromUnknown(error).message ||
+                `The synced CAD file did not finish importing within ${CAD_MODEL_LOAD_TIMEOUT_MS / 1000} seconds. (Empty error received)`,
+            ),
+          }),
         );
       }
     })();
@@ -1951,6 +1993,11 @@ export default function CadPanel({
       <div
         ref={panelRef}
         data-cad-load-state={loadState}
+        data-cad-load-phase={
+          viewerLifecycle.status === "loading" ? viewerLifecycle.phase : viewerLifecycle.status
+        }
+        data-cad-load-generation={viewerLifecycle.generation}
+        data-cad-load-changed-at={viewerLifecycle.changedAt}
         className={cn(
           "relative min-h-0 flex-1 bg-card/20",
           !fullscreenMounted &&
