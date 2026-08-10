@@ -16,6 +16,7 @@ import {
   syncProjects,
   syncThreads,
   type UiState,
+  useUiStateStore,
 } from "./uiStateStore";
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
@@ -528,6 +529,526 @@ describe("uiStateStore pure functions", () => {
     const next = setThreadChangedFilesExpanded(initialState, thread1, "turn-1", true);
 
     expect(next.threadChangedFilesExpandedById).toEqual({});
+  });
+});
+
+describe("local CAD object URL ownership", () => {
+  beforeEach(() => {
+    useUiStateStore.setState(makeUiState());
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("revokes replaced and explicitly cleared object URLs", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const store = useUiStateStore.getState();
+
+    store.setLocalCadFiles("project-a", [
+      { relativePath: "old.3mf", url: "blob:old", isPreferred: true },
+      { relativePath: "remote.mtl", url: "https://example.test/remote.mtl", isPreferred: false },
+    ]);
+    useUiStateStore
+      .getState()
+      .setLocalCadFiles("project-a", [
+        { relativePath: "next.3mf", url: "blob:next", isPreferred: true },
+      ]);
+    useUiStateStore.getState().clearLocalCadFiles("project-a");
+    await Promise.resolve();
+
+    expect(revokeObjectUrl.mock.calls).toEqual([["blob:old"], ["blob:next"]]);
+  });
+
+  it("revokes files belonging to project scopes that disappear", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        "project-kept": [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }],
+        "project-removed": [
+          { relativePath: "removed.3mf", url: "blob:removed", isPreferred: true },
+        ],
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/kept",
+        cadScopeKey: "project-kept",
+        logicalKey: "project-kept",
+        cwd: "/kept",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "project-kept": [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }],
+    });
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:removed");
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:kept");
+  });
+
+  it("keeps files when the project's physical key differs from its CAD scope key", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const files = [{ relativePath: "kept.3mf", url: "blob:kept", isPreferred: true }];
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: { "environment:project-id": files },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/project/path",
+        cadScopeKey: "environment:project-id",
+        logicalKey: "environment:repository",
+        cwd: "/project/path",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "environment:project-id": files,
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("migrates an unambiguous bare project upload into its hydrated scope", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const files = [{ relativePath: "draft.3mf", url: "blob:draft", isPreferred: true }];
+    useUiStateStore.setState({ localCadFilesByScopeKey: { "draft-project": files } });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/draft-project",
+        cadScopeKey: "environment:draft-project",
+        legacyCadScopeKey: "draft-project",
+        logicalKey: "environment:draft-project",
+        cwd: "/draft-project",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "environment:draft-project": files,
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("does not migrate a bare project upload across colliding environments", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        "colliding-project": [
+          { relativePath: "ambiguous.3mf", url: "blob:ambiguous", isPreferred: true },
+        ],
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment-a:/colliding-project",
+        cadScopeKey: "environment-a:colliding-project",
+        legacyCadScopeKey: "colliding-project",
+        logicalKey: "environment-a:colliding-project",
+        cwd: "/colliding-project",
+      },
+      {
+        key: "environment-b:/colliding-project",
+        cadScopeKey: "environment-b:colliding-project",
+        legacyCadScopeKey: "colliding-project",
+        logicalKey: "environment-b:colliding-project",
+        cwd: "/colliding-project",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({});
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:ambiguous");
+  });
+
+  it("transfers uploads when a physical project's scope identity changes", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const files = [{ relativePath: "kept.3mf", url: "blob:scope-transfer", isPreferred: true }];
+    const initialProject = {
+      key: "environment:/scope-transfer",
+      cadScopeKey: "environment:provisional-project",
+      logicalKey: "environment:scope-transfer",
+      cwd: "/scope-transfer",
+    };
+    useUiStateStore.getState().syncProjects([initialProject]);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: { [initialProject.cadScopeKey]: files },
+    });
+
+    useUiStateStore
+      .getState()
+      .syncProjects([{ ...initialProject, cadScopeKey: "environment:hydrated-project" }]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "environment:hydrated-project": files,
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("moves uploads with their physical projects when scope identities swap", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const firstFiles = [{ relativePath: "first.3mf", url: "blob:first", isPreferred: true }];
+    const secondFiles = [{ relativePath: "second.3mf", url: "blob:second", isPreferred: true }];
+    const firstProject = {
+      key: "environment:/first",
+      cadScopeKey: "environment:first-scope",
+      logicalKey: "environment:first",
+      cwd: "/first",
+    };
+    const secondProject = {
+      key: "environment:/second",
+      cadScopeKey: "environment:second-scope",
+      logicalKey: "environment:second",
+      cwd: "/second",
+    };
+    useUiStateStore.getState().syncProjects([firstProject, secondProject]);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        [firstProject.cadScopeKey]: firstFiles,
+        [secondProject.cadScopeKey]: secondFiles,
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      { ...firstProject, cadScopeKey: secondProject.cadScopeKey },
+      { ...secondProject, cadScopeKey: firstProject.cadScopeKey },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      [firstProject.cadScopeKey]: secondFiles,
+      [secondProject.cadScopeKey]: firstFiles,
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("preserves ownership across scope cycles of varying lengths", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    for (let cycleLength = 3; cycleLength <= 7; cycleLength += 1) {
+      const projects = Array.from({ length: cycleLength }, (_, index) => ({
+        key: `environment:/cycle-${cycleLength}-${index}`,
+        cadScopeKey: `environment:cycle-${cycleLength}-scope-${index}`,
+        logicalKey: `environment:cycle-${cycleLength}-${index}`,
+        cwd: `/cycle-${cycleLength}-${index}`,
+      }));
+      const files = projects.map((_, index) => [
+        {
+          relativePath: `cycle-${cycleLength}-${index}.3mf`,
+          url: `blob:cycle-${cycleLength}-${index}`,
+          isPreferred: true,
+        },
+      ]);
+      useUiStateStore.getState().syncProjects(projects);
+      await Promise.resolve();
+      revokeObjectUrl.mockClear();
+      useUiStateStore.setState({
+        localCadFilesByScopeKey: Object.fromEntries(
+          projects.map((project, index) => [project.cadScopeKey, files[index]!]),
+        ),
+      });
+
+      useUiStateStore.getState().syncProjects(
+        projects.map((project, index) => ({
+          ...project,
+          cadScopeKey: projects[(index + 1) % cycleLength]!.cadScopeKey,
+        })),
+      );
+      await Promise.resolve();
+
+      for (let index = 0; index < cycleLength; index += 1) {
+        expect(
+          useUiStateStore.getState().localCadFilesByScopeKey[
+            projects[(index + 1) % cycleLength]!.cadScopeKey
+          ],
+        ).toEqual(files[index]);
+      }
+      expect(revokeObjectUrl).not.toHaveBeenCalled();
+    }
+  });
+
+  it("preserves every owner when scope migrations converge", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const firstFiles = [{ relativePath: "first.3mf", url: "blob:first", isPreferred: true }];
+    const secondFiles = [{ relativePath: "second.3mf", url: "blob:second", isPreferred: false }];
+    const destinationFiles = [
+      { relativePath: "destination.3mf", url: "blob:destination", isPreferred: false },
+    ];
+    const firstProject = {
+      key: "environment:/first-converging",
+      cadScopeKey: "environment:first-converging",
+      logicalKey: "environment:first-converging",
+      cwd: "/first-converging",
+    };
+    const secondProject = {
+      key: "environment:/second-converging",
+      cadScopeKey: "environment:second-converging",
+      logicalKey: "environment:second-converging",
+      cwd: "/second-converging",
+    };
+    const stationaryProject = {
+      key: "environment:/stationary",
+      cadScopeKey: "environment:destination",
+      logicalKey: "environment:stationary",
+      cwd: "/stationary",
+    };
+    useUiStateStore.getState().syncProjects([firstProject, secondProject, stationaryProject]);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        [firstProject.cadScopeKey]: firstFiles,
+        [secondProject.cadScopeKey]: secondFiles,
+        [stationaryProject.cadScopeKey]: destinationFiles,
+      },
+    });
+
+    useUiStateStore
+      .getState()
+      .syncProjects([
+        { ...firstProject, cadScopeKey: stationaryProject.cadScopeKey },
+        { ...secondProject, cadScopeKey: stationaryProject.cadScopeKey },
+        stationaryProject,
+      ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      [stationaryProject.cadScopeKey]: [...destinationFiles, ...firstFiles, ...secondFiles],
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("preserves distinct file metadata when converging owners share a URL", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const firstProject = {
+      key: "environment:/shared-url-first",
+      cadScopeKey: "environment:shared-url-first",
+      logicalKey: "environment:shared-url-first",
+      cwd: "/shared-url-first",
+    };
+    const secondProject = {
+      key: "environment:/shared-url-second",
+      cadScopeKey: "environment:shared-url-second",
+      logicalKey: "environment:shared-url-second",
+      cwd: "/shared-url-second",
+    };
+    const destinationScopeKey = "environment:shared-url-destination";
+    const firstFile = {
+      relativePath: "first-name.3mf",
+      url: "blob:shared-metadata",
+      isPreferred: true,
+      sizeBytes: 10,
+    };
+    const secondFile = {
+      relativePath: "second-name.3mf",
+      url: "blob:shared-metadata",
+      isPreferred: false,
+      sizeBytes: 20,
+    };
+    useUiStateStore.getState().syncProjects([firstProject, secondProject]);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        [firstProject.cadScopeKey]: [firstFile],
+        [secondProject.cadScopeKey]: [secondFile, firstFile],
+      },
+    });
+
+    const convergedProjects = [
+      { ...firstProject, cadScopeKey: destinationScopeKey },
+      { ...secondProject, cadScopeKey: destinationScopeKey },
+    ];
+    useUiStateStore.getState().syncProjects(convergedProjects);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey[destinationScopeKey]).toEqual([
+      firstFile,
+      secondFile,
+    ]);
+    useUiStateStore.getState().syncProjects(convergedProjects);
+    await Promise.resolve();
+    expect(useUiStateStore.getState().localCadFilesByScopeKey[destinationScopeKey]).toEqual([
+      firstFile,
+      secondFile,
+    ]);
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("merges an unambiguous legacy upload into populated destination data", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const legacyFile = {
+      relativePath: "legacy.3mf",
+      url: "blob:legacy-merge",
+      isPreferred: true,
+    };
+    const destinationFile = {
+      relativePath: "destination.3mf",
+      url: "blob:legacy-destination",
+      isPreferred: false,
+    };
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        "legacy-merge-project": [legacyFile],
+        "environment:legacy-merge-project": [destinationFile],
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/legacy-merge",
+        cadScopeKey: "environment:legacy-merge-project",
+        legacyCadScopeKey: "legacy-merge-project",
+        logicalKey: "environment:legacy-merge-project",
+        cwd: "/legacy-merge",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "environment:legacy-merge-project": [destinationFile, legacyFile],
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("revokes only the removed environment when project ids are shared", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const retainedFiles = [
+      { relativePath: "retained.3mf", url: "blob:retained", isPreferred: true },
+    ];
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        "environment-a:shared-project": [
+          { relativePath: "removed.3mf", url: "blob:removed", isPreferred: true },
+        ],
+        "environment-b:shared-project": retainedFiles,
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment-b:/project/path",
+        cadScopeKey: "environment-b:shared-project",
+        logicalKey: "environment-b:repository",
+        cwd: "/project/path",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "environment-b:shared-project": retainedFiles,
+    });
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:removed");
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:retained");
+  });
+
+  it("keeps a shared URL until its final owning scope is removed", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const sharedFile = { relativePath: "shared.3mf", url: "blob:shared", isPreferred: true };
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        "project-kept": [sharedFile],
+        "project-removed": [
+          sharedFile,
+          { relativePath: "removed.3mf", url: "blob:removed", isPreferred: false },
+        ],
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/kept",
+        cadScopeKey: "project-kept",
+        logicalKey: "project-kept",
+        cwd: "/kept",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(revokeObjectUrl).toHaveBeenCalledTimes(1);
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:removed");
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith("blob:shared");
+
+    useUiStateStore.getState().clearLocalCadFiles("project-kept");
+    await Promise.resolve();
+
+    expect(revokeObjectUrl).toHaveBeenCalledTimes(2);
+    expect(revokeObjectUrl).toHaveBeenLastCalledWith("blob:shared");
+  });
+
+  it("preserves a URL reattached asynchronously by a state subscriber", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const sharedFile = { relativePath: "shared.3mf", url: "blob:shared", isPreferred: true };
+    useUiStateStore.setState({ localCadFilesByScopeKey: { source: [sharedFile] } });
+    let reattachmentScheduled = false;
+    const unsubscribe = useUiStateStore.subscribe((state) => {
+      if (!reattachmentScheduled && !("source" in state.localCadFilesByScopeKey)) {
+        reattachmentScheduled = true;
+        queueMicrotask(() =>
+          useUiStateStore.getState().setLocalCadFiles("destination", [sharedFile]),
+        );
+      }
+    });
+
+    useUiStateStore.getState().clearLocalCadFiles("source");
+    await Promise.resolve();
+    await Promise.resolve();
+    unsubscribe();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey.destination).toEqual([sharedFile]);
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("rechecks ownership after a revocation callback mutates the store", async () => {
+    const firstFile = { relativePath: "first.3mf", url: "blob:first", isPreferred: true };
+    const transferredFile = {
+      relativePath: "transferred.3mf",
+      url: "blob:transferred",
+      isPreferred: true,
+    };
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => {
+      if (url === firstFile.url) {
+        useUiStateStore.getState().setLocalCadFiles("destination", [transferredFile]);
+      }
+    });
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: { source: [firstFile, transferredFile] },
+    });
+
+    useUiStateStore.getState().clearLocalCadFiles("source");
+    await Promise.resolve();
+
+    expect(revokeObjectUrl).toHaveBeenCalledWith(firstFile.url);
+    expect(revokeObjectUrl).not.toHaveBeenCalledWith(transferredFile.url);
+    expect(useUiStateStore.getState().localCadFilesByScopeKey.destination).toEqual([
+      transferredFile,
+    ]);
+  });
+
+  it("continues revoking candidates when one revocation throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => {
+      if (url === "blob:first") {
+        throw new Error("revocation failed");
+      }
+    });
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        source: [
+          { relativePath: "first.3mf", url: "blob:first", isPreferred: true },
+          { relativePath: "second.3mf", url: "blob:second", isPreferred: false },
+        ],
+      },
+    });
+
+    useUiStateStore.getState().clearLocalCadFiles("source");
+    await Promise.resolve();
+
+    expect(revokeObjectUrl.mock.calls).toEqual([["blob:first"], ["blob:second"]]);
+    expect(warn).toHaveBeenCalledWith(
+      "Failed to revoke stale CAD object URL.",
+      expect.objectContaining({ url: "blob:first", error: expect.any(Error) }),
+    );
   });
 });
 

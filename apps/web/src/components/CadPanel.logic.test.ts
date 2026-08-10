@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { EnvironmentId, ProjectId } from "@cadsense/contracts";
 
 import {
   CAD_VIEWER_MODEL_SIZE_LIMIT_BYTES,
   applyCadComponentVisibility,
   cadComponentVisibilityCommandsForScopeChange,
   cadOnshapeModelQueryIdentity,
+  cadProjectScopeKey,
   cadViewerFileName,
   cadViewerFrameOrigin,
   formatCadModelBytes,
@@ -12,6 +14,18 @@ import {
 } from "./CadPanel.logic";
 
 describe("CadPanel logic", () => {
+  it("keeps project CAD scopes environment-qualified before project hydration", () => {
+    const projectId = ProjectId.make("shared-project");
+
+    expect(cadProjectScopeKey(EnvironmentId.make("environment-a"), projectId)).toBe(
+      "environment-a:shared-project",
+    );
+    expect(cadProjectScopeKey(EnvironmentId.make("environment-b"), projectId)).toBe(
+      "environment-b:shared-project",
+    );
+    expect(cadProjectScopeKey(undefined, projectId)).toBeNull();
+  });
+
   it("blocks oversized CAD previews before the viewer imports them", () => {
     const blocker = getCadModelViewerBlocker([
       {

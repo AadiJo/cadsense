@@ -96,6 +96,7 @@ const persistedProjectOrderCwds: string[] = [];
 // one session after upgrade, until persistState rewrites in the new shape.
 let persistedProjectStateUsesLegacyShape = false;
 const currentProjectCwdById = new Map<string, string>();
+const currentCadScopeKeyByPhysicalKey = new Map<string, string>();
 const currentProjectCwdsByLogicalKey = new Map<string, string[]>();
 const currentLogicalKeyByPhysicalKey = new Map<string, string>();
 let legacyKeysCleanedUp = false;
@@ -747,7 +748,14 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
-  syncProjects: (projects: readonly SyncProjectInput[]) => void;
+  syncProjects: (
+    projects: readonly (SyncProjectInput & {
+      /** Project identity key (env + project id). Used for project-scoped ephemeral state. */
+      cadScopeKey: string;
+      /** Pre-scoping project id, used only to migrate unambiguous live in-memory uploads. */
+      legacyCadScopeKey?: string;
+    })[],
+  ) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
   markThreadVisited: (threadId: string, visitedAt?: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
@@ -768,9 +776,178 @@ interface UiStateStore extends UiState {
   ) => void;
 }
 
-export const useUiStateStore = create<UiStateStore>((set) => ({
+const pendingLocalCadFileUrlRevocations = new Set<string>();
+let localCadFileUrlRevocationScheduled = false;
+
+function mergeLocalCadFileLists(
+  lists: readonly (readonly LocalCadFile[])[],
+): readonly LocalCadFile[] {
+  const merged: LocalCadFile[] = [];
+  for (const files of lists) {
+    for (const file of files) {
+      const duplicate = merged.some(
+        (candidate) =>
+          candidate.url === file.url &&
+          candidate.relativePath === file.relativePath &&
+          candidate.isPreferred === file.isPreferred &&
+          candidate.sizeBytes === file.sizeBytes,
+      );
+      if (!duplicate) {
+        merged.push(file);
+      }
+    }
+  }
+  return merged;
+}
+
+function scheduleUnownedLocalCadFileUrlRevocations(
+  files: readonly LocalCadFile[],
+  readFilesByScopeKey: () => UiState["localCadFilesByScopeKey"],
+): void {
+  for (const file of files) {
+    if (file.url.startsWith("blob:")) {
+      pendingLocalCadFileUrlRevocations.add(file.url);
+    }
+  }
+  if (localCadFileUrlRevocationScheduled || pendingLocalCadFileUrlRevocations.size === 0) {
+    return;
+  }
+  localCadFileUrlRevocationScheduled = true;
+  queueMicrotask(() => {
+    localCadFileUrlRevocationScheduled = false;
+    const candidates = [...pendingLocalCadFileUrlRevocations];
+    pendingLocalCadFileUrlRevocations.clear();
+    for (const url of candidates) {
+      const retained = Object.values(readFilesByScopeKey()).some((files) =>
+        files.some((file) => file.url === url),
+      );
+      if (!retained) {
+        try {
+          URL.revokeObjectURL(url);
+        } catch (error) {
+          console.warn("Failed to revoke stale CAD object URL.", { url, error });
+        }
+      }
+    }
+  });
+}
+
+export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
-  syncProjects: (projects) => set((state) => syncProjects(state, projects)),
+  syncProjects: (projects) => {
+    const previousCadScopeKeyByPhysicalKey = new Map(currentCadScopeKeyByPhysicalKey);
+    currentCadScopeKeyByPhysicalKey.clear();
+    const physicalMigrations: Array<{
+      readonly sourceScopeKey: string;
+      readonly destinationScopeKey: string;
+    }> = [];
+    const projectsByLegacyCadScopeKey = new Map<string, typeof projects>();
+    for (const project of projects) {
+      currentCadScopeKeyByPhysicalKey.set(project.key, project.cadScopeKey);
+      const previousCadScopeKey = previousCadScopeKeyByPhysicalKey.get(project.key);
+      if (previousCadScopeKey && previousCadScopeKey !== project.cadScopeKey) {
+        physicalMigrations.push({
+          sourceScopeKey: previousCadScopeKey,
+          destinationScopeKey: project.cadScopeKey,
+        });
+      }
+      if (project.legacyCadScopeKey) {
+        const matchingProjects = projectsByLegacyCadScopeKey.get(project.legacyCadScopeKey);
+        projectsByLegacyCadScopeKey.set(project.legacyCadScopeKey, [
+          ...(matchingProjects ?? []),
+          project,
+        ]);
+      }
+    }
+    const activeScopeKeys = new Set(projects.map((project) => project.cadScopeKey));
+    const physicalMigrationSourceScopeKeys = new Set(
+      physicalMigrations.map(({ sourceScopeKey }) => sourceScopeKey),
+    );
+    const legacyMigrationDestinationBySource = new Map<string, string>();
+    for (const [legacyCadScopeKey, matchingProjects] of projectsByLegacyCadScopeKey) {
+      if (
+        matchingProjects.length === 1 &&
+        !activeScopeKeys.has(legacyCadScopeKey) &&
+        !physicalMigrationSourceScopeKeys.has(legacyCadScopeKey)
+      ) {
+        legacyMigrationDestinationBySource.set(legacyCadScopeKey, matchingProjects[0]!.cadScopeKey);
+      }
+    }
+    const previousLocalCadFilesByScopeKey = get().localCadFilesByScopeKey;
+    const staleScopeEntries = Object.entries(previousLocalCadFilesByScopeKey).filter(
+      ([scopeKey]) => !activeScopeKeys.has(scopeKey),
+    );
+    const migrationCandidates = [
+      ...physicalMigrations.map(
+        ({ sourceScopeKey, destinationScopeKey }) => [sourceScopeKey, destinationScopeKey] as const,
+      ),
+      ...legacyMigrationDestinationBySource,
+    ].flatMap(([sourceScopeKey, destinationScopeKey]) => [
+      ...(previousLocalCadFilesByScopeKey[sourceScopeKey] ?? []),
+      ...(previousLocalCadFilesByScopeKey[destinationScopeKey] ?? []),
+    ]);
+    set((state) => {
+      const nextState = syncProjects(state, projects);
+      if (
+        staleScopeEntries.length === 0 &&
+        physicalMigrations.length === 0 &&
+        legacyMigrationDestinationBySource.size === 0
+      ) {
+        return nextState;
+      }
+      const nextLocalCadFilesByScopeKey = { ...state.localCadFilesByScopeKey };
+      const physicalMoves = physicalMigrations.flatMap(
+        ({ sourceScopeKey, destinationScopeKey }) => {
+          const sourceFiles = state.localCadFilesByScopeKey[sourceScopeKey];
+          return sourceFiles ? [{ sourceScopeKey, destinationScopeKey, sourceFiles }] : [];
+        },
+      );
+      const physicalSourceScopeKeys = new Set(
+        physicalMoves.map(({ sourceScopeKey }) => sourceScopeKey),
+      );
+      for (const { sourceScopeKey } of physicalMoves) {
+        delete nextLocalCadFilesByScopeKey[sourceScopeKey];
+      }
+      const physicalFilesByDestination = new Map<string, Array<readonly LocalCadFile[]>>();
+      for (const { destinationScopeKey, sourceFiles } of physicalMoves) {
+        const lists = physicalFilesByDestination.get(destinationScopeKey) ?? [];
+        lists.push(sourceFiles);
+        physicalFilesByDestination.set(destinationScopeKey, lists);
+      }
+      for (const [destinationScopeKey, sourceFileLists] of physicalFilesByDestination) {
+        const stationaryDestinationFiles = physicalSourceScopeKeys.has(destinationScopeKey)
+          ? []
+          : (state.localCadFilesByScopeKey[destinationScopeKey] ?? []);
+        nextLocalCadFilesByScopeKey[destinationScopeKey] = mergeLocalCadFileLists([
+          stationaryDestinationFiles,
+          ...sourceFileLists,
+        ]);
+      }
+      for (const [sourceScopeKey, destinationScopeKey] of legacyMigrationDestinationBySource) {
+        const sourceFiles = state.localCadFilesByScopeKey[sourceScopeKey];
+        if (!sourceFiles) {
+          continue;
+        }
+        nextLocalCadFilesByScopeKey[destinationScopeKey] = mergeLocalCadFileLists([
+          nextLocalCadFilesByScopeKey[destinationScopeKey] ?? [],
+          sourceFiles,
+        ]);
+        delete nextLocalCadFilesByScopeKey[sourceScopeKey];
+      }
+      return {
+        ...nextState,
+        localCadFilesByScopeKey: Object.fromEntries(
+          Object.entries(nextLocalCadFilesByScopeKey).filter(([scopeKey]) =>
+            activeScopeKeys.has(scopeKey),
+          ),
+        ),
+      };
+    });
+    scheduleUnownedLocalCadFileUrlRevocations(
+      [...staleScopeEntries.flatMap(([, files]) => files), ...migrationCandidates],
+      () => get().localCadFilesByScopeKey,
+    );
+  },
   syncThreads: (threads) => set((state) => syncThreads(state, threads)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
@@ -895,15 +1072,22 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
         [threadId]: (state.cadZoomToFitRequestByThreadId[threadId] ?? 0) + 1,
       },
     })),
-  setLocalCadFiles: (scopeKey, files) =>
+  setLocalCadFiles: (scopeKey, files) => {
+    const nextUrls = new Set(files.map((file) => file.url));
+    const replacedFiles = (get().localCadFilesByScopeKey[scopeKey] ?? []).filter(
+      (file) => !nextUrls.has(file.url),
+    );
     set((state) => ({
       ...state,
       localCadFilesByScopeKey: {
         ...state.localCadFilesByScopeKey,
         [scopeKey]: files,
       },
-    })),
-  clearLocalCadFiles: (scopeKey) =>
+    }));
+    scheduleUnownedLocalCadFileUrlRevocations(replacedFiles, () => get().localCadFilesByScopeKey);
+  },
+  clearLocalCadFiles: (scopeKey) => {
+    const removedFiles = get().localCadFilesByScopeKey[scopeKey] ?? [];
     set((state) => {
       if (!(scopeKey in state.localCadFilesByScopeKey)) {
         return state;
@@ -914,7 +1098,9 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
         ...state,
         localCadFilesByScopeKey: nextFiles,
       };
-    }),
+    });
+    scheduleUnownedLocalCadFileUrlRevocations(removedFiles, () => get().localCadFilesByScopeKey);
+  },
   setDefaultAdvertisedEndpointKey: (key) =>
     set((state) => setDefaultAdvertisedEndpointKey(state, key)),
   toggleProject: (projectId) => set((state) => toggleProject(state, projectId)),

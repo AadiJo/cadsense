@@ -79,6 +79,7 @@ import {
   applyCadComponentVisibility,
   cadComponentVisibilityCommandsForScopeChange,
   cadOnshapeModelQueryIdentity,
+  cadProjectScopeKey,
   cadViewerFileName,
   cadViewerFrameOrigin,
   cadViewerFrameUrl,
@@ -768,9 +769,10 @@ export default function CadPanel({
         : [],
     [activeEnvironmentState, activeThread],
   );
-  const projectCadScopeKey = activeProject
-    ? `${activeProject.environmentId}:${activeProject.id}`
-    : (activeThread?.projectId ?? draftSession?.projectId ?? null);
+  const projectCadScopeKey = cadProjectScopeKey(
+    activeProject?.environmentId ?? environmentId,
+    activeProject?.id ?? activeThread?.projectId ?? draftSession?.projectId,
+  );
   const localCadFiles = useUiStateStore((store) =>
     projectCadScopeKey
       ? (store.localCadFilesByScopeKey[projectCadScopeKey] ?? EMPTY_LOCAL_CAD_FILES)
@@ -926,11 +928,6 @@ export default function CadPanel({
         isPreferred: index === 0,
         sizeBytes: file.size,
       }));
-      for (const file of localCadFiles) {
-        if (file.url.startsWith("blob:")) {
-          URL.revokeObjectURL(file.url);
-        }
-      }
       setLocalCadFiles(projectCadScopeKey, nextFiles);
       setLocalCadFileError(null);
       if (primaryFile.name.toLowerCase().endsWith(".obj")) {
@@ -952,7 +949,7 @@ export default function CadPanel({
           .catch(() => undefined);
       }
     },
-    [localCadFiles, projectCadScopeKey, setLocalCadFiles],
+    [projectCadScopeKey, setLocalCadFiles],
   );
 
   const modelFileIdentityKey = useMemo(
