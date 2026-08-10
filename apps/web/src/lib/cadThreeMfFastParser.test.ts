@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { zipSync, unzipSync } from "three/examples/jsm/libs/fflate.module.js";
 
-import { getThreeMfRootModelByteLength, parseThreeMfFast } from "./cadThreeMfFastParser";
+import {
+  buildThreeMfFastGroupResult,
+  getThreeMfRootModelByteLength,
+  parseThreeMfFast,
+} from "./cadThreeMfFastParser";
 
 const textEncoder = new TextEncoder();
 
@@ -21,6 +25,18 @@ function makeThreeMf(modelXml: string): Record<string, Uint8Array> {
 }
 
 describe("cadThreeMfFastParser", () => {
+  it("returns an error when a parsed worker model has no renderable geometry", () => {
+    const result = buildThreeMfFastGroupResult({
+      three: THREE,
+      model: { meshes: [], roots: [] },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/renderable mesh geometry/);
+    }
+  });
+
   it("loads an Onshape-style mesh through component and build transforms without DOM parsing", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
 <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02" unit="meter">

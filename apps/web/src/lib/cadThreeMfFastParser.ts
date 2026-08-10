@@ -591,6 +591,24 @@ export function buildThreeMfFastGroup(input: {
   return group;
 }
 
+export type CadThreeMfFastGroupBuildResult =
+  | { readonly ok: true; readonly group: ThreeGroup }
+  | { readonly ok: false; readonly error: Error };
+
+export function buildThreeMfFastGroupResult(input: {
+  readonly three: ThreeModule;
+  readonly model: CadThreeMfParsedModel;
+}): CadThreeMfFastGroupBuildResult {
+  try {
+    return { ok: true, group: buildThreeMfFastGroup(input) };
+  } catch (error) {
+    return {
+      ok: false,
+      error: error instanceof Error ? error : new Error(String(error)),
+    };
+  }
+}
+
 export function parseThreeMfFast(input: {
   readonly three: ThreeModule;
   readonly unzipped: Record<string, Uint8Array>;
