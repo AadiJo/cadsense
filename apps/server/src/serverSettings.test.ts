@@ -646,6 +646,92 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
   });
 
+  it.effect("reconciles externally inlined secrets at startup and later removals", () => {
+    const values = new Map<string, Uint8Array>();
+    let notifyRemoved: (() => void) | undefined;
+    const removed = new Promise<void>((resolve) => {
+      notifyRemoved = resolve;
+    });
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) => Effect.sync(() => values.get(name) ?? null),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, Uint8Array.from(value));
+        }),
+      remove: (name) =>
+        Effect.sync(() => {
+          values.delete(name);
+          notifyRemoved?.();
+        }),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const inlineSecret = "externally-edited-secret";
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `{
+  "providerInstances": {
+    "codex_personal": {
+      "driver": "codex",
+      "environment": [
+        {
+          "name": "OPENROUTER_API_KEY",
+          "value": "${inlineSecret}",
+          "sensitive": true,
+          "valueRedacted": true
+        }
+      ],
+      "config": {}
+    }
+  }
+}\n`,
+      );
+
+      yield* serverSettings.start;
+
+      assert.equal(new TextDecoder().decode(Array.from(values.values())[0]), inlineSecret);
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSecret);
+
+      yield* serverSettings.updateSettings({ providerInstances: {} });
+      yield* Effect.promise(() => removed);
+
+      assert.equal(values.size, 0);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("does not rewrite malformed settings while reconciling secrets at startup", () => {
+    let removeCalls = 0;
+    const secretStore: ServerSecretStoreShape = {
+      get: () => Effect.succeed(null),
+      set: () => Effect.void,
+      remove: () =>
+        Effect.sync(() => {
+          removeCalls += 1;
+        }),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const malformed = "{ definitely-not-json\n";
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, malformed);
+
+      yield* serverSettings.start;
+
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), malformed);
+      assert.equal(removeCalls, 0);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
   it.effect("keeps active environment secrets when settings validation fails", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;

@@ -278,6 +278,7 @@ const makeServerSettings = Effect.gen(function* () {
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
   const startedRef = yield* Ref.make(false);
+  const latestDiskReadWasValidRef = yield* Ref.make(true);
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
@@ -309,18 +310,21 @@ const makeServerSettings = Effect.gen(function* () {
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     if (!(yield* readConfigExists)) {
+      yield* Ref.set(latestDiskReadWasValidRef, true);
       return DEFAULT_SERVER_SETTINGS;
     }
 
     const raw = yield* readRawConfig;
     const decoded = decodeServerSettingsJsonExit(raw);
     if (decoded._tag === "Failure") {
+      yield* Ref.set(latestDiskReadWasValidRef, false);
       yield* Effect.logWarning("failed to parse settings.json, using defaults", {
         path: settingsPath,
         issues: Cause.pretty(decoded.cause),
       });
       return DEFAULT_SERVER_SETTINGS;
     }
+    yield* Ref.set(latestDiskReadWasValidRef, true);
     return decoded.value;
   });
 
@@ -582,12 +586,66 @@ const makeServerSettings = Effect.gen(function* () {
       ),
     );
 
+  const commitPreparedSettings = (input: {
+    readonly settings: ServerSettings;
+    readonly mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>;
+  }) =>
+    Effect.gen(function* () {
+      const previousSecrets = yield* snapshotProviderEnvironmentSecrets(input.mutations);
+      const previousSettingsFile = yield* snapshotSettingsFile;
+      const committed = yield* commitSettingsUpdateUninterruptibly(
+        Effect.gen(function* () {
+          yield* writeSettingsAtomically(input.settings);
+
+          const commitExit = yield* applyProviderEnvironmentSecretMutations(input.mutations).pipe(
+            Effect.andThen(materializeProviderEnvironmentSecrets(input.settings)),
+            Effect.exit,
+          );
+          if (commitExit._tag === "Failure") {
+            yield* runBestEffortRollbackSteps(
+              [
+                ...restoreProviderEnvironmentSecrets(previousSecrets),
+                restoreSettingsFile(previousSettingsFile),
+              ],
+              (rollbackError) =>
+                Effect.logError("failed to roll back settings after secret persistence failure", {
+                  detail: rollbackError.detail,
+                }),
+            );
+            return yield* Effect.failCause(commitExit.cause);
+          }
+          return {
+            persisted: input.settings,
+            materialized: commitExit.value,
+          };
+        }),
+        (committed) =>
+          Cache.set(settingsCache, cacheKey, committed.persisted).pipe(
+            Effect.andThen(emitChange(committed.materialized)),
+          ),
+      );
+      return committed.materialized;
+    });
+
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
+      const previous = yield* getSettingsFromCache;
       yield* Cache.invalidate(settingsCache, cacheKey);
       const settings = yield* getSettingsFromCache;
-      const materialized = yield* materializeProviderEnvironmentSecrets(settings);
-      yield* emitChange(materialized);
+      const diskReadWasValid = yield* Ref.get(latestDiskReadWasValidRef);
+      if (!diskReadWasValid) {
+        const materialized = yield* materializeProviderEnvironmentSecrets(settings);
+        yield* emitChange(materialized);
+        return;
+      }
+      const prepared = prepareProviderEnvironmentSecrets(previous, settings);
+      const normalized = yield* normalizeServerSettings(prepared.settings);
+      if (prepared.mutations.length === 0 && Equal.equals(normalized, settings)) {
+        const materialized = yield* materializeProviderEnvironmentSecrets(settings);
+        yield* emitChange(materialized);
+        return;
+      }
+      yield* commitPreparedSettings({ settings: normalized, mutations: prepared.mutations });
     }),
   );
 
@@ -638,8 +696,7 @@ const makeServerSettings = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      yield* Cache.invalidate(settingsCache, cacheKey);
-      yield* getSettingsFromCache;
+      yield* revalidateAndEmit;
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -669,42 +726,11 @@ const makeServerSettings = Effect.gen(function* () {
             applyServerSettingsPatch(current, patch),
           );
           const next = yield* normalizeServerSettings(prepared.settings);
-          const previousSecrets = yield* snapshotProviderEnvironmentSecrets(prepared.mutations);
-          const previousSettingsFile = yield* snapshotSettingsFile;
-          const committed = yield* commitSettingsUpdateUninterruptibly(
-            Effect.gen(function* () {
-              yield* writeSettingsAtomically(next);
-
-              const commitExit = yield* applyProviderEnvironmentSecretMutations(
-                prepared.mutations,
-              ).pipe(Effect.andThen(materializeProviderEnvironmentSecrets(next)), Effect.exit);
-              if (commitExit._tag === "Failure") {
-                yield* runBestEffortRollbackSteps(
-                  [
-                    ...restoreProviderEnvironmentSecrets(previousSecrets),
-                    restoreSettingsFile(previousSettingsFile),
-                  ],
-                  (rollbackError) =>
-                    Effect.logError(
-                      "failed to roll back settings after secret persistence failure",
-                      {
-                        detail: rollbackError.detail,
-                      },
-                    ),
-                );
-                return yield* Effect.failCause(commitExit.cause);
-              }
-              return {
-                persisted: next,
-                materialized: commitExit.value,
-              };
-            }),
-            (committed) =>
-              Cache.set(settingsCache, cacheKey, committed.persisted).pipe(
-                Effect.andThen(emitChange(committed.materialized)),
-              ),
-          );
-          return resolveTextGenerationProvider(committed.materialized);
+          const materialized = yield* commitPreparedSettings({
+            settings: next,
+            mutations: prepared.mutations,
+          });
+          return resolveTextGenerationProvider(materialized);
         }),
       ),
     get streamChanges() {
