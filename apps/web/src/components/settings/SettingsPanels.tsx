@@ -268,7 +268,7 @@ function AboutVersionSection() {
 export function useSettingsRestore(onRestored?: () => void) {
   const { theme, setTheme } = useTheme();
   const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+  const { updateSettingsAndWait } = useUpdateSettings();
 
   const changedSettingLabels = useMemo(
     () => [
@@ -313,17 +313,25 @@ export function useSettingsRestore(onRestored?: () => void) {
     );
     if (!confirmed) return;
 
-    setTheme("system");
-    updateSettings({
-      timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
-      displayCadReviewWorkLog: DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog,
-      sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
-      addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
-      confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
-      confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
-    });
-    onRestored?.();
-  }, [changedSettingLabels, onRestored, setTheme, updateSettings]);
+    try {
+      await updateSettingsAndWait({
+        timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
+        displayCadReviewWorkLog: DEFAULT_UNIFIED_SETTINGS.displayCadReviewWorkLog,
+        sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+        addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+        confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+        confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+      });
+      setTheme("system");
+      onRestored?.();
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Could not restore settings",
+        description: error instanceof Error ? error.message : "Update failed.",
+      });
+    }
+  }, [changedSettingLabels, onRestored, setTheme, updateSettingsAndWait]);
 
   return {
     changedSettingLabels,
