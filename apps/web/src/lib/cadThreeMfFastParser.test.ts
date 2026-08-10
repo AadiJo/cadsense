@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { zipSync, unzipSync } from "three/examples/jsm/libs/fflate.module.js";
 
-import { getThreeMfRootModelByteLength, parseThreeMfFast } from "./cadThreeMfFastParser";
+import {
+  buildThreeMfFastGroupResult,
+  getThreeMfRootModelByteLength,
+  parseThreeMfFast,
+} from "./cadThreeMfFastParser";
 
 const textEncoder = new TextEncoder();
 
@@ -53,6 +57,18 @@ describe("cadThreeMfFastParser", () => {
 
     expect(group.children).toHaveLength(1);
     expect(group.children[0]!.name).toBe("real");
+  });
+
+  it("returns an error when a parsed worker model has no renderable geometry", () => {
+    const result = buildThreeMfFastGroupResult({
+      three: THREE,
+      model: { meshes: [], roots: [] },
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.message).toMatch(/renderable mesh geometry/);
+    }
   });
 
   it("loads an Onshape-style mesh through component and build transforms without DOM parsing", () => {
