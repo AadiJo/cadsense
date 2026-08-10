@@ -8,6 +8,7 @@ interface CadThreadAlias {
 const aliasByProviderThreadId = new Map<string, CadThreadAlias>();
 const providerThreadIdsByOwnerThreadId = new Map<ThreadId, Set<string>>();
 const deletedThreadIds = new Set<ThreadId>();
+export const CAD_THREAD_TOMBSTONE_CAPACITY = 10_000;
 
 function deleteAlias(providerThreadId: string): void {
   const alias = aliasByProviderThreadId.get(providerThreadId);
@@ -67,7 +68,14 @@ export function unregisterCadThreadReferences(threadId: ThreadId): void {
 }
 
 export function markCadThreadDeleted(threadId: ThreadId): void {
+  deletedThreadIds.delete(threadId);
   deletedThreadIds.add(threadId);
+  if (deletedThreadIds.size > CAD_THREAD_TOMBSTONE_CAPACITY) {
+    const oldestThreadId = deletedThreadIds.values().next().value;
+    if (oldestThreadId !== undefined) {
+      deletedThreadIds.delete(oldestThreadId);
+    }
+  }
   unregisterCadThreadReferences(threadId);
 }
 

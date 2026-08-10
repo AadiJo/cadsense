@@ -2,6 +2,7 @@ import { ThreadId } from "@cadsense/contracts";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  CAD_THREAD_TOMBSTONE_CAPACITY,
   clearCadProviderThreadAliasesForTests,
   isCadThreadDeleted,
   markCadThreadCreated,
@@ -119,5 +120,17 @@ describe("CadThreadAliases", () => {
 
     markCadThreadCreated(reusedThreadId);
     expect(isCadThreadDeleted(reusedThreadId)).toBe(false);
+  });
+
+  it("bounds retained deletion tombstones", () => {
+    const oldestThreadId = ThreadId.make("deleted-thread-0");
+    for (let index = 0; index <= CAD_THREAD_TOMBSTONE_CAPACITY; index += 1) {
+      markCadThreadDeleted(ThreadId.make(`deleted-thread-${index}`));
+    }
+
+    expect(isCadThreadDeleted(oldestThreadId)).toBe(false);
+    expect(
+      isCadThreadDeleted(ThreadId.make(`deleted-thread-${CAD_THREAD_TOMBSTONE_CAPACITY}`)),
+    ).toBe(true);
   });
 });
