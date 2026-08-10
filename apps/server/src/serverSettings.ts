@@ -63,6 +63,14 @@ const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const FAILED_RECONCILIATION_SUPPRESSION_WINDOW_NANOS = 1_000_000_000n;
 const SETTINGS_RECONCILIATION_INTERVAL = Duration.seconds(1);
+const MAX_SETTINGS_RECONCILIATION_RETRY_DELAY_MS = 60_000;
+
+export function settingsReconciliationRetryDelayMillis(consecutiveFailures: number): number {
+  const boundedFailures = Number.isFinite(consecutiveFailures)
+    ? Math.max(0, Math.min(Math.trunc(consecutiveFailures), 6))
+    : 6;
+  return Math.min(1_000 * 2 ** boundedFailures, MAX_SETTINGS_RECONCILIATION_RETRY_DELAY_MS);
+}
 
 export function shouldSuppressFailedSettingsContents(input: {
   readonly failedContents: string | null;
@@ -890,11 +898,27 @@ const makeServerSettings = Effect.gen(function* () {
         // inotify queue is under load). Periodically re-read the file so a missed event
         // cannot leave the cache and secret store stale indefinitely. The write semaphore
         // serializes this with watcher callbacks and explicit settings updates.
-        yield* Effect.forever(
-          Effect.sleep(SETTINGS_RECONCILIATION_INTERVAL).pipe(
-            Effect.andThen(revalidateAndEmitSafely),
-          ),
-        ).pipe(Effect.forkIn(watcherScope));
+        const periodicFailureCount = yield* Ref.make(0);
+        const periodicReconciliation = Effect.gen(function* () {
+          const failures = yield* Ref.get(periodicFailureCount);
+          yield* Effect.sleep(
+            failures === 0
+              ? SETTINGS_RECONCILIATION_INTERVAL
+              : Duration.millis(settingsReconciliationRetryDelayMillis(failures)),
+          );
+          const result = yield* revalidateAndEmit.pipe(Effect.exit);
+          if (result._tag === "Success") {
+            yield* Ref.set(periodicFailureCount, 0);
+            return;
+          }
+          const nextFailures = failures + 1;
+          yield* Ref.set(periodicFailureCount, nextFailures);
+          yield* Effect.logWarning("periodic settings reconciliation failed", {
+            retryDelayMs: settingsReconciliationRetryDelayMillis(nextFailures),
+            cause: Cause.pretty(result.cause),
+          });
+        });
+        yield* Effect.forever(periodicReconciliation).pipe(Effect.forkIn(watcherScope));
       }).pipe(Effect.ensuring(cleanupOwnedProbe)),
     ).pipe(Effect.ensuring(cleanupOwnedProbe));
   });
