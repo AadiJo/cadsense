@@ -64,6 +64,7 @@ interface ParsedBuildItem {
 
 const ROOT_RELATIONSHIPS_ENTRY = "_rels/.rels";
 const ROOT_MODEL_RELATIONSHIP_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel";
+const CORE_MODEL_NAMESPACE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
 const PACKAGE_RELATIONSHIPS_NAMESPACE =
   "http://schemas.openxmlformats.org/package/2006/relationships";
 const XML_ATTRIBUTE_TEXT = String.raw`(?:"[^"]*"|'[^']*'|[^'">])*`;
@@ -85,6 +86,19 @@ const VERTEX_PATTERN = new RegExp(`<vertex\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "g
 const TRIANGLE_PATTERN = new RegExp(`<triangle\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
 const MAX_COMPONENT_NESTING_DEPTH = 512;
 const MAX_EXPANDED_NODE_COUNT = 100_000;
+const CORE_ELEMENT_PARENTS = new Map<string, string>([
+  ["resources", "model"],
+  ["object", "resources"],
+  ["mesh", "object"],
+  ["components", "object"],
+  ["vertices", "mesh"],
+  ["triangles", "mesh"],
+  ["vertex", "vertices"],
+  ["triangle", "triangles"],
+  ["component", "components"],
+  ["build", "model"],
+  ["item", "build"],
+]);
 
 function structuralXml(source: string): string {
   let structural = "";
@@ -185,6 +199,184 @@ function structuralXml(source: string): string {
   return structural;
 }
 
+interface XmlAttribute {
+  readonly name: string;
+  readonly value: string;
+}
+
+function parseXmlAttributes(source: string): XmlAttribute[] {
+  const attributes: XmlAttribute[] = [];
+  let cursor = 0;
+  while (cursor < source.length) {
+    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    if (cursor >= source.length || source[cursor] === "/") break;
+
+    const nameStart = cursor;
+    while (cursor < source.length && !/[\s=]/u.test(source[cursor]!)) cursor += 1;
+    const name = source.slice(nameStart, cursor);
+    if (!name || /[\x2f<>'"]/u.test(name)) {
+      throw new Error("3MF XML contains a malformed attribute name.");
+    }
+    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    if (source[cursor] !== "=") {
+      throw new Error("3MF XML contains an attribute without a value.");
+    }
+    cursor += 1;
+    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    const quote = source[cursor];
+    if (quote !== '"' && quote !== "'") {
+      throw new Error("3MF XML contains an unquoted attribute value.");
+    }
+    cursor += 1;
+    const valueStart = cursor;
+    const valueEnd = source.indexOf(quote, valueStart);
+    if (valueEnd < 0) {
+      throw new Error("3MF XML contains an unterminated attribute value.");
+    }
+    attributes.push({ name, value: source.slice(valueStart, valueEnd) });
+    cursor = valueEnd + 1;
+    if (cursor < source.length && !/\s|\//u.test(source[cursor]!)) {
+      throw new Error("3MF XML attributes must be separated by whitespace.");
+    }
+  }
+  return attributes;
+}
+
+interface ModelElementFrame {
+  readonly emittedName: string;
+  readonly localName: string;
+  readonly namespaceChanges: readonly NamespaceChange[];
+}
+
+interface NamespaceChange {
+  readonly prefix: string;
+  readonly previousValue?: string;
+}
+
+function normalizeCoreModelElements(source: string): string {
+  let normalized = "";
+  let cursor = 0;
+  let sawRoot = false;
+  const frames: ModelElementFrame[] = [];
+  const namespaces = new Map<string, string>();
+  const restoreNamespaces = (changes: readonly NamespaceChange[]): void => {
+    for (let index = changes.length - 1; index >= 0; index -= 1) {
+      const change = changes[index]!;
+      if (change.previousValue === undefined) {
+        namespaces.delete(change.prefix);
+      } else {
+        namespaces.set(change.prefix, change.previousValue);
+      }
+    }
+  };
+
+  while (cursor < source.length) {
+    const tagStart = source.indexOf("<", cursor);
+    if (tagStart < 0) {
+      normalized += source.slice(cursor);
+      break;
+    }
+    normalized += source.slice(cursor, tagStart);
+    let tagEnd = tagStart + 1;
+    let quote: '"' | "'" | null = null;
+    for (; tagEnd < source.length; tagEnd += 1) {
+      const character = source[tagEnd]!;
+      if (quote !== null) {
+        if (character === quote) quote = null;
+      } else if (character === '"' || character === "'") {
+        quote = character;
+      } else if (character === ">") {
+        break;
+      }
+    }
+    if (tagEnd >= source.length) {
+      throw new Error("3MF XML contains an unterminated element tag.");
+    }
+
+    const tagBody = source.slice(tagStart + 1, tagEnd);
+    if (tagBody.startsWith("/")) {
+      const frame = frames.pop();
+      if (!frame) {
+        throw new Error("3MF XML contains mismatched element tags.");
+      }
+      normalized += `</${frame.emittedName}>`;
+      restoreNamespaces(frame.namespaceChanges);
+      cursor = tagEnd + 1;
+      continue;
+    }
+
+    const selfClosing = /\/\s*$/u.test(tagBody);
+    const openingBody = selfClosing ? tagBody.replace(/\/\s*$/u, "") : tagBody;
+    const openingMatch = /^([^\s/<>'"=]+)([\s\S]*)$/u.exec(openingBody);
+    if (!openingMatch) {
+      throw new Error("3MF XML contains a malformed element tag.");
+    }
+    const qualifiedName = openingMatch[1]!;
+    const nameParts = qualifiedName.split(":");
+    if (nameParts.length > 2 || nameParts.some((part) => part.length === 0)) {
+      throw new Error("3MF XML contains a malformed qualified element name.");
+    }
+    const prefix = nameParts.length === 2 ? nameParts[0]! : "";
+    const localName = nameParts.at(-1)!;
+    const attributesSource = openingMatch[2]!;
+    const namespaceChanges: NamespaceChange[] = [];
+    const declaredPrefixes = new Set<string>();
+    for (const attribute of parseXmlAttributes(attributesSource)) {
+      let declaredPrefix: string | null = null;
+      if (attribute.name === "xmlns") {
+        declaredPrefix = "";
+      } else if (attribute.name.startsWith("xmlns:")) {
+        declaredPrefix = attribute.name.slice("xmlns:".length);
+      }
+      if (declaredPrefix !== null) {
+        if (declaredPrefixes.has(declaredPrefix)) {
+          throw new Error("3MF XML contains a duplicate namespace declaration.");
+        }
+        declaredPrefixes.add(declaredPrefix);
+        namespaceChanges.push({
+          prefix: declaredPrefix,
+          ...(namespaces.has(declaredPrefix)
+            ? { previousValue: namespaces.get(declaredPrefix)! }
+            : {}),
+        });
+        namespaces.set(declaredPrefix, decodeXmlAttributeValue(attribute.value));
+      }
+    }
+    const namespace = namespaces.get(prefix) ?? null;
+    if (prefix && namespace === null) {
+      throw new Error(`3MF XML element '${qualifiedName}' uses an undeclared namespace prefix.`);
+    }
+
+    const parentName = frames.at(-1)?.localName ?? null;
+    if (!sawRoot) {
+      sawRoot = true;
+      if (localName !== "model" || namespace !== CORE_MODEL_NAMESPACE) {
+        throw new Error("3MF root element is not in the supported core model namespace.");
+      }
+    } else if (frames.length === 0) {
+      throw new Error("3MF XML contains more than one document element.");
+    }
+
+    const expectedParent = CORE_ELEMENT_PARENTS.get(localName);
+    const isCoreElement = namespace === CORE_MODEL_NAMESPACE;
+    const validCoreContext = expectedParent === undefined || parentName === expectedParent;
+    const emittedName =
+      isCoreElement && validCoreContext
+        ? localName
+        : expectedParent === undefined
+          ? qualifiedName
+          : `ignored:${localName}`;
+    normalized += `<${emittedName}${attributesSource}${selfClosing ? "/" : ""}>`;
+    if (selfClosing) {
+      restoreNamespaces(namespaceChanges);
+    } else {
+      frames.push({ emittedName, localName: emittedName, namespaceChanges });
+    }
+    cursor = tagEnd + 1;
+  }
+  return normalized;
+}
+
 function decodeXmlAttributeValue(value: string): string {
   if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\dA-Fa-f]+);)/u.test(value)) {
     throw new Error("3MF XML attribute contains an invalid character reference.");
@@ -227,37 +419,12 @@ function decodeXmlAttributeValue(value: string): string {
 function getAttribute(source: string, name: string): string | null {
   const expectedName = name.toLowerCase();
   let matchedValue: string | undefined;
-  let cursor = 0;
-  while (cursor < source.length) {
-    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
-    if (cursor >= source.length || source[cursor] === "/") break;
-
-    const nameStart = cursor;
-    while (cursor < source.length && !/[\s=]/u.test(source[cursor]!)) cursor += 1;
-    const attributeName = source.slice(nameStart, cursor);
-    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
-    if (source[cursor] !== "=") {
-      while (cursor < source.length && !/\s/u.test(source[cursor]!)) cursor += 1;
-      continue;
-    }
-    cursor += 1;
-    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
-    const quote = source[cursor];
-    if (quote !== '"' && quote !== "'") {
-      throw new Error("3MF XML contains an unquoted attribute value.");
-    }
-    cursor += 1;
-    const valueStart = cursor;
-    const valueEnd = source.indexOf(quote, valueStart);
-    if (valueEnd < 0) {
-      throw new Error("3MF XML contains an unterminated attribute value.");
-    }
-    cursor = valueEnd + 1;
-    if (attributeName.toLowerCase() === expectedName) {
+  for (const attribute of parseXmlAttributes(source)) {
+    if (attribute.name.toLowerCase() === expectedName) {
       if (matchedValue !== undefined) {
         throw new Error(`3MF XML contains a duplicate '${name}' attribute.`);
       }
-      matchedValue = decodeXmlAttributeValue(source.slice(valueStart, valueEnd));
+      matchedValue = decodeXmlAttributeValue(attribute.value);
     }
   }
   return matchedValue ?? null;
@@ -674,7 +841,7 @@ export function parseThreeMfFastModel(input: {
   readonly unzipped: Record<string, Uint8Array>;
 }): CadThreeMfParsedModel {
   const modelBytes = findRootModelXml(input.unzipped);
-  const modelXml = structuralXml(new TextDecoder().decode(modelBytes));
+  const modelXml = normalizeCoreModelElements(structuralXml(new TextDecoder().decode(modelBytes)));
   const colors = parseColors(modelXml);
   const objects = parseObjects(modelXml);
   const buildItems = parseBuildItems(modelXml);

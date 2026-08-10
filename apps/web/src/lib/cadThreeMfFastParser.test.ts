@@ -21,6 +21,40 @@ function makeThreeMf(modelXml: string): Record<string, Uint8Array> {
 }
 
 describe("cadThreeMfFastParser", () => {
+  it("parses namespace-qualified core model elements", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0"?>
+<c:model xmlns:c="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <c:resources>
+    <c:object xmlns:c="https://example.com/shadowed-extension" id="decoy"><c:mesh><c:vertices><c:vertex x="bad" y="0" z="0"/></c:vertices></c:mesh></c:object>
+    <c:object id="1" name="qualified"><c:mesh><c:vertices><c:vertex x="0" y="0" z="0"/><c:vertex x="1" y="0" z="0"/><c:vertex x="0" y="1" z="0"/></c:vertices><c:triangles><c:triangle v1="0" v2="1" v3="2"/></c:triangles></c:mesh></c:object>
+  </c:resources>
+  <c:build><c:item objectid="1"/></c:build>
+</c:model>`);
+
+    const group = parseThreeMfFast({ three: THREE, unzipped });
+
+    expect(group.children).toHaveLength(1);
+    expect(group.children[0]!.name).toBe("qualified");
+  });
+
+  it("ignores core-looking objects outside resources and in extension namespaces", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:ext="https://example.com/extension">
+  <metadata><object id="decoy"><mesh><vertices><vertex x="bad" y="0" z="0"/></vertices></mesh></object></metadata>
+  <resources>
+    <ext:object id="extension-decoy"><ext:mesh><ext:vertices><ext:vertex x="bad" y="0" z="0"/></ext:vertices></ext:mesh></ext:object>
+    <object xmlns="https://example.com/local-extension" id="local-decoy"><mesh><vertices><vertex x="bad" y="0" z="0"/></vertices></mesh></object>
+    <object id="1" name="real"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>
+  </resources>
+  <build><item objectid="1"/></build>
+</model>`);
+
+    const group = parseThreeMfFast({ three: THREE, unzipped });
+
+    expect(group.children).toHaveLength(1);
+    expect(group.children[0]!.name).toBe("real");
+  });
+
   it("loads an Onshape-style mesh through component and build transforms without DOM parsing", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0" encoding="utf-8"?>
 <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02" unit="meter">
