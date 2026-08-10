@@ -105,6 +105,8 @@ const CORE_ELEMENT_PARENTS = new Map<string, string>([
 ]);
 const RELATIONSHIP_ELEMENT_PARENTS = new Map<string, string>([["Relationship", "Relationships"]]);
 const xmlTextDecoder = new TextDecoder("utf-8", { fatal: true });
+const XML_DECLARATION_PATTERN =
+  /^<\?xml[\t\n ]+version[\t\n ]*=[\t\n ]*(?:"1\.0"|'1\.0')(?:[\t\n ]+encoding[\t\n ]*=[\t\n ]*(?:"[Uu][Tt][Ff]-8"|'[Uu][Tt][Ff]-8'))?(?:[\t\n ]+standalone[\t\n ]*=[\t\n ]*(?:"(?:yes|no)"|'(?:yes|no)'))?[\t\n ]*\?>$/u;
 
 function isValidXmlCodePoint(codePoint: number): boolean {
   return (
@@ -126,6 +128,17 @@ function decodeXmlBytes(bytes: Uint8Array): string {
 
 function structuralXml(source: string): string {
   source = source.replace(/\r\n?/gu, "\n");
+  let xmlDeclarationEnd = -1;
+  if (/^<\?xml(?:[\t\n ]|\?>)/u.test(source)) {
+    xmlDeclarationEnd = source.indexOf("?>", 5);
+    if (
+      xmlDeclarationEnd < 0 ||
+      !XML_DECLARATION_PATTERN.test(source.slice(0, xmlDeclarationEnd + 2))
+    ) {
+      throw new Error("3MF XML contains an invalid or unsupported XML declaration.");
+    }
+    xmlDeclarationEnd += 2;
+  }
   for (const character of source) {
     const codePoint = character.codePointAt(0)!;
     if (!isValidXmlCodePoint(codePoint)) {
@@ -140,6 +153,9 @@ function structuralXml(source: string): string {
       throw new Error("3MF XML contains an unterminated comment or CDATA section.");
     }
     decodeXmlAttributeValue(value);
+    if (openTags.length === 0 && /[^\t\n ]/u.test(value)) {
+      throw new Error("3MF XML contains character data outside the document element.");
+    }
     structural += value;
   };
   while (cursor < source.length) {
@@ -163,6 +179,9 @@ function structuralXml(source: string): string {
       continue;
     }
     if (source.startsWith("<![CDATA[", markupStart)) {
+      if (openTags.length === 0) {
+        throw new Error("3MF XML contains CDATA outside the document element.");
+      }
       const end = source.indexOf("]]>", markupStart + 9);
       if (end < 0) {
         throw new Error("3MF XML contains an unterminated comment or CDATA section.");
@@ -174,6 +193,15 @@ function structuralXml(source: string): string {
       const end = source.indexOf("?>", markupStart + 2);
       if (end < 0) {
         throw new Error("3MF XML contains an unterminated processing instruction.");
+      }
+      const target = /^<\?([^\t\n ?]+)(?:[\t\n ]|\?>)/u.exec(
+        source.slice(markupStart, end + 2),
+      )?.[1];
+      if (!target) {
+        throw new Error("3MF XML contains a malformed processing instruction.");
+      }
+      if (target.toLowerCase() === "xml" && end + 2 !== xmlDeclarationEnd) {
+        throw new Error("3MF XML contains an XML declaration outside the document start.");
       }
       cursor = end + 2;
       continue;
@@ -207,18 +235,18 @@ function structuralXml(source: string): string {
     }
     const tag = source.slice(markupStart, tagCursor + 1);
     const tagBody = tag.slice(1, -1);
-    const closingMatch = /^\/([^\s/<>"'=]+)\s*$/u.exec(tagBody);
+    const closingMatch = /^\/([^\t\n /<>"'=]+)[\t\n ]*$/u.exec(tagBody);
     if (closingMatch) {
       const name = closingMatch[1]!;
       if (openTags.pop() !== name) {
         throw new Error("3MF XML contains mismatched element tags.");
       }
     } else {
-      const openingMatch = /^([^\s/<>"'=]+)(?:\s[\s\S]*|\/\s*)?$/u.exec(tagBody);
+      const openingMatch = /^([^\t\n /<>"'=]+)(?:[\t\n ][\s\S]*|\/[\t\n ]*)?$/u.exec(tagBody);
       if (!openingMatch) {
         throw new Error("3MF XML contains a malformed element tag.");
       }
-      if (!/\/\s*$/u.test(tagBody)) {
+      if (!/\/[\t\n ]*$/u.test(tagBody)) {
         openTags.push(openingMatch[1]!);
       }
     }
@@ -257,21 +285,21 @@ function parseXmlAttributes(source: string): XmlAttribute[] {
   const attributes: XmlAttribute[] = [];
   let cursor = 0;
   while (cursor < source.length) {
-    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    while (/[\t\n ]/u.test(source[cursor] ?? "")) cursor += 1;
     if (cursor >= source.length || source[cursor] === "/") break;
 
     const nameStart = cursor;
-    while (cursor < source.length && !/[\s=]/u.test(source[cursor]!)) cursor += 1;
+    while (cursor < source.length && !/[\t\n =]/u.test(source[cursor]!)) cursor += 1;
     const name = source.slice(nameStart, cursor);
     if (!name || /[\x2f<>'"]/u.test(name)) {
       throw new Error("3MF XML contains a malformed attribute name.");
     }
-    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    while (/[\t\n ]/u.test(source[cursor] ?? "")) cursor += 1;
     if (source[cursor] !== "=") {
       throw new Error("3MF XML contains an attribute without a value.");
     }
     cursor += 1;
-    while (/\s/u.test(source[cursor] ?? "")) cursor += 1;
+    while (/[\t\n ]/u.test(source[cursor] ?? "")) cursor += 1;
     const quote = source[cursor];
     if (quote !== '"' && quote !== "'") {
       throw new Error("3MF XML contains an unquoted attribute value.");
@@ -284,7 +312,7 @@ function parseXmlAttributes(source: string): XmlAttribute[] {
     }
     attributes.push({ name, value: source.slice(valueStart, valueEnd) });
     cursor = valueEnd + 1;
-    if (cursor < source.length && !/\s|\//u.test(source[cursor]!)) {
+    if (cursor < source.length && !/[\t\n /]/u.test(source[cursor]!)) {
       throw new Error("3MF XML attributes must be separated by whitespace.");
     }
   }
@@ -366,9 +394,9 @@ function normalizeNamespacedElements(input: {
       continue;
     }
 
-    const selfClosing = /\/\s*$/u.test(tagBody);
-    const openingBody = selfClosing ? tagBody.replace(/\/\s*$/u, "") : tagBody;
-    const openingMatch = /^([^\s/<>'"=]+)([\s\S]*)$/u.exec(openingBody);
+    const selfClosing = /\/[\t\n ]*$/u.test(tagBody);
+    const openingBody = selfClosing ? tagBody.replace(/\/[\t\n ]*$/u, "") : tagBody;
+    const openingMatch = /^([^\t\n /<>'"=]+)([\s\S]*)$/u.exec(openingBody);
     if (!openingMatch) {
       throw new Error("3MF XML contains a malformed element tag.");
     }

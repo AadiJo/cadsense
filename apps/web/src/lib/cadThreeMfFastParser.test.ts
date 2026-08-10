@@ -96,6 +96,33 @@ describe("cadThreeMfFastParser", () => {
     expect(() => parseThreeMfFast({ three: THREE, unzipped: invalidUtf8 })).toThrow(/UTF-8/i);
   });
 
+  it("accepts a UTF-8 BOM but rejects conflicting declarations and data outside the root", () => {
+    const validModel = `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`;
+    const withBom = makeThreeMf(validModel);
+    withBom["3D/3dmodel.model"] = Uint8Array.from([
+      0xef,
+      0xbb,
+      0xbf,
+      ...textEncoder.encode(validModel),
+    ]);
+    expect(parseThreeMfFast({ three: THREE, unzipped: withBom }).children).toHaveLength(1);
+
+    const invalidModels = [
+      `<?xml version="1.0" encoding="utf-16"?>${validModel}`,
+      `before${validModel}`,
+      `${validModel}after`,
+      `\u00a0${validModel}`,
+      `<![CDATA[outside]]>${validModel}`,
+      `<!--before--><?xml version="1.0"?>${validModel}`,
+      validModel.replace("<model xmlns=", "<model\u00a0xmlns="),
+    ];
+    for (const modelXml of invalidModels) {
+      expect(() => parseThreeMfFast({ three: THREE, unzipped: makeThreeMf(modelXml) })).toThrow(
+        /declaration|document element|CDATA|malformed element/i,
+      );
+    }
+  });
+
   it("normalizes raw XML line endings and attribute whitespace", () => {
     const unzipped = makeThreeMf(
       `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" name="line\r\nbreak"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`,
@@ -485,8 +512,8 @@ describe("cadThreeMfFastParser", () => {
 
   it("removes comments and CDATA before rejecting real DTD declarations", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0"?>
-<!-- <!DOCTYPE model> --><![CDATA[<!DOCTYPE model>]]>
-<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`);
+<!-- <!DOCTYPE model> -->
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata><![CDATA[<!DOCTYPE model>]]></metadata><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`);
 
     expect(parseThreeMfFast({ three: THREE, unzipped }).children).toHaveLength(1);
   });
