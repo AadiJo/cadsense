@@ -305,6 +305,12 @@ function readWindowsEnv(env: Record<string, string | undefined>, name: string): 
   return entry?.[1];
 }
 
+function unquoteWindowsCommand(command: string): string {
+  return command.length >= 2 && command.startsWith('"') && command.endsWith('"')
+    ? command.slice(1, -1)
+    : command;
+}
+
 function mergeSpawnEnv(
   overrides: Record<string, string> | undefined,
   platform: NodeJS.Platform = process.platform,
@@ -435,7 +441,12 @@ export function resolveCommandForSpawn(
   const args = options.args ?? [];
   if (platform !== "win32") return { command: options.command, args };
   const env = mergeSpawnEnv(options.env, platform);
-  return resolveWindowsCommandShim(options.command, args, options.cwd ?? process.cwd(), env);
+  return resolveWindowsCommandShim(
+    unquoteWindowsCommand(options.command),
+    args,
+    options.cwd ?? process.cwd(),
+    env,
+  );
 }
 
 export const layerCommand = (

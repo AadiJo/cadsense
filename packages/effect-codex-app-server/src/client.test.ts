@@ -144,6 +144,32 @@ it("resolves commands from quoted Windows PATH entries", () => {
   }
 });
 
+it("resolves quoted explicit Windows command paths", () => {
+  if (process.platform !== "win32") return;
+  const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex quoted command "));
+  try {
+    const script = NodePath.join(prefix, "node_modules", "@openai", "codex", "codex.js");
+    const shim = NodePath.join(prefix, "codex.cmd");
+    mkdirSync(NodePath.dirname(script), { recursive: true });
+    writeFileSync(script, "");
+    writeFileSync(NodePath.join(prefix, "node.exe"), "");
+    writeFileSync(
+      shim,
+      `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%" "%dp0%\\node_modules\\@openai\\codex\\codex.js" %*`,
+    );
+
+    const resolved = CodexClient.resolveCommandForSpawn(
+      { command: `"${shim}"`, args: ["app-server"] },
+      "win32",
+    );
+
+    assert.equal(resolved.command, NodePath.join(prefix, "node.exe"));
+    assert.deepEqual(resolved.args, [script, "app-server"]);
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
 it("resolves command shims from Windows PATH entries relative to the spawn cwd", () => {
   if (process.platform !== "win32") return;
   const prefix = mkdtempSync(NodePath.join(tmpdir(), "codex-relative-path-"));
