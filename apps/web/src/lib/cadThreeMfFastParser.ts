@@ -71,6 +71,8 @@ const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 const XMLNS_NAMESPACE = "http://www.w3.org/2000/xmlns/";
 const XML_NCNAME_PATTERN =
   /^[A-Z_a-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c-\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}][\-.0-9A-Z_a-z\u00b7\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u037d\u037f-\u1fff\u200c-\u200d\u203f-\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}]*$/u;
+const XML_NAME_PATTERN =
+  /^[:A-Z_a-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c-\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}][:\-.0-9A-Z_a-z\u00b7\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u037d\u037f-\u1fff\u200c-\u200d\u203f-\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}]*$/u;
 const XML_ATTRIBUTE_TEXT = String.raw`(?:"[^"]*"|'[^']*'|[^'">])*`;
 const RELATIONSHIP_PATTERN = new RegExp(
   `<(?:([a-z_][\\w.-]*):)?relationship\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`,
@@ -197,7 +199,7 @@ function structuralXml(source: string): string {
       const target = /^<\?([^\t\n ?]+)(?:[\t\n ]|\?>)/u.exec(
         source.slice(markupStart, end + 2),
       )?.[1];
-      if (!target) {
+      if (!target || !XML_NAME_PATTERN.test(target)) {
         throw new Error("3MF XML contains a malformed processing instruction.");
       }
       if (target.toLowerCase() === "xml" && end + 2 !== xmlDeclarationEnd) {
