@@ -821,16 +821,20 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("reconciles settings when the native watcher drops an edit", () =>
+  it.effect("restarts periodic reconciliation after a native event", () =>
     Effect.gen(function* () {
       const liveFileSystem = yield* FileSystem.FileSystem;
+      let deliverSettingsEvents = true;
       const readinessOnlyFileSystem: FileSystem.FileSystem = {
         ...liveFileSystem,
         watch: (directory) =>
           liveFileSystem
             .watch(directory)
             .pipe(
-              Stream.filter((event) => event.path.includes(".cadsense-settings-watcher-ready-")),
+              Stream.filter(
+                (event) =>
+                  deliverSettingsEvents || event.path.includes(".cadsense-settings-watcher-ready-"),
+              ),
             ),
       };
 
@@ -840,7 +844,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const fileSystem = yield* FileSystem.FileSystem;
 
         yield* serverSettings.start;
-        const changed = yield* serverSettings.streamChanges.pipe(
+        const nativeChange = yield* serverSettings.streamChanges.pipe(
           Stream.filter((settings) => !settings.enableAssistantStreaming),
           Stream.runHead,
           Effect.forkChild,
@@ -850,11 +854,27 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           serverConfig.settingsPath,
           '{ "enableAssistantStreaming": false }\n',
         );
-
         assert.isTrue(
-          Option.isSome(yield* Fiber.join(changed).pipe(Effect.timeout(Duration.seconds(5)))),
+          Option.isSome(yield* Fiber.join(nativeChange).pipe(Effect.timeout(Duration.seconds(5)))),
         );
-        assert.isFalse((yield* serverSettings.getSettings).enableAssistantStreaming);
+
+        deliverSettingsEvents = false;
+        const periodicChange = yield* serverSettings.streamChanges.pipe(
+          Stream.filter((settings) => settings.enableAssistantStreaming),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          '{ "enableAssistantStreaming": true }\n',
+        );
+        assert.isTrue(
+          Option.isSome(
+            yield* Fiber.join(periodicChange).pipe(Effect.timeout(Duration.seconds(5))),
+          ),
+        );
+        assert.isTrue((yield* serverSettings.getSettings).enableAssistantStreaming);
       }).pipe(
         Effect.provideService(Clock.Clock, liveClock),
         Effect.provide(makeServerSettingsLayerWithFileSystem(readinessOnlyFileSystem)),

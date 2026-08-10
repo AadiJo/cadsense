@@ -838,7 +838,18 @@ const makeServerSettings = Effect.gen(function* () {
           eventPath === resolvedPath ||
           pathService.resolve(settingsDir, eventPath) === resolvedPath;
 
-        const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+        const periodicFailureCount = yield* Ref.make(0);
+        const initialPeriodicWakeup = yield* Deferred.make<void>();
+        const periodicWakeupRef = yield* Ref.make(initialPeriodicWakeup);
+        const resetPeriodicBackoff = Effect.gen(function* () {
+          yield* Ref.set(periodicFailureCount, 0);
+          const wakeup = yield* Ref.get(periodicWakeupRef);
+          yield* Deferred.succeed(wakeup, undefined).pipe(Effect.asVoid);
+        });
+        const revalidateAndEmitSafely = revalidateAndEmit.pipe(
+          Effect.tap(() => resetPeriodicBackoff),
+          Effect.ignoreCause({ log: true }),
+        );
 
         // Debounce watch events so the file is fully written before we read it.
         // Editors emit multiple events per save (truncate, write, rename) and
@@ -901,14 +912,19 @@ const makeServerSettings = Effect.gen(function* () {
         // inotify queue is under load). Periodically re-read the file so a missed event
         // cannot leave the cache and secret store stale indefinitely. The write semaphore
         // serializes this with watcher callbacks and explicit settings updates.
-        const periodicFailureCount = yield* Ref.make(0);
         const periodicReconciliation = Effect.gen(function* () {
           const failures = yield* Ref.get(periodicFailureCount);
-          yield* Effect.sleep(
-            failures === 0
-              ? SETTINGS_RECONCILIATION_INTERVAL
-              : Duration.millis(settingsReconciliationRetryDelayMillis(failures)),
+          const wakeup = yield* Deferred.make<void>();
+          yield* Ref.set(periodicWakeupRef, wakeup);
+          const timerElapsed = yield* Effect.race(
+            Effect.sleep(
+              failures === 0
+                ? SETTINGS_RECONCILIATION_INTERVAL
+                : Duration.millis(settingsReconciliationRetryDelayMillis(failures)),
+            ).pipe(Effect.as(true)),
+            Deferred.await(wakeup).pipe(Effect.as(false)),
           );
+          if (!timerElapsed) return;
           const result = yield* revalidateAndEmit.pipe(Effect.exit);
           if (result._tag === "Success") {
             yield* Ref.set(periodicFailureCount, 0);
