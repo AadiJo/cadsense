@@ -25,6 +25,7 @@ import {
   type ServerSettingsPatch,
 } from "@cadsense/contracts";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -57,6 +58,7 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const FAILED_RECONCILIATION_SUPPRESSION_WINDOW_MS = 1_000;
 
 const normalizeServerSettings = (
   settings: ServerSettings,
@@ -281,9 +283,9 @@ const makeServerSettings = Effect.gen(function* () {
   const startedRef = yield* Ref.make(false);
   const latestDiskReadWasValidRef = yield* Ref.make(true);
   const latestDiskContentsRef = yield* Ref.make<string | null>(null);
-  const failedReconciliationContentsRef = yield* Ref.make<Option.Option<string | null>>(
-    Option.none(),
-  );
+  const failedReconciliationContentsRef = yield* Ref.make<
+    Option.Option<{ readonly contents: string | null; readonly suppressUntilMs: number }>
+  >(Option.none());
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
@@ -647,7 +649,12 @@ const makeServerSettings = Effect.gen(function* () {
       }
       const diskContents = yield* Ref.get(latestDiskContentsRef);
       const failedContents = yield* Ref.get(failedReconciliationContentsRef);
-      if (Option.isSome(failedContents) && failedContents.value === diskContents) {
+      const nowMs = yield* Clock.currentTimeMillis;
+      if (
+        Option.isSome(failedContents) &&
+        failedContents.value.contents === diskContents &&
+        nowMs < failedContents.value.suppressUntilMs
+      ) {
         yield* Cache.set(settingsCache, cacheKey, previous);
         return;
       }
@@ -668,7 +675,14 @@ const makeServerSettings = Effect.gen(function* () {
         mutations: prepared.mutations,
       }).pipe(Effect.exit);
       if (commitExit._tag === "Failure") {
-        yield* Ref.set(failedReconciliationContentsRef, Option.some(diskContents));
+        const failedAtMs = yield* Clock.currentTimeMillis;
+        yield* Ref.set(
+          failedReconciliationContentsRef,
+          Option.some({
+            contents: diskContents,
+            suppressUntilMs: failedAtMs + FAILED_RECONCILIATION_SUPPRESSION_WINDOW_MS,
+          }),
+        );
         yield* Cache.set(settingsCache, cacheKey, previous);
         return yield* Effect.failCause(commitExit.cause);
       }

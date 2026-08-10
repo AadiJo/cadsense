@@ -801,6 +801,68 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
   });
 
+  it.effect("retries identical watcher contents after a transient secret failure", () => {
+    const values = new Map<string, Uint8Array>();
+    let allowSuccess = false;
+    let notifyReconciled: (() => void) | undefined;
+    const reconciled = new Promise<void>((resolve) => {
+      notifyReconciled = resolve;
+    });
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) => Effect.sync(() => values.get(name) ?? null),
+      set: (name, value) =>
+        Effect.suspend(() => {
+          if (!allowSuccess) {
+            return Effect.fail(
+              new SecretStoreError({ message: "simulated transient secret failure" }),
+            );
+          }
+          return Effect.sync(() => {
+            values.set(name, Uint8Array.from(value));
+            notifyReconciled?.();
+          });
+        }),
+      remove: (name) => Effect.sync(() => values.delete(name)).pipe(Effect.asVoid),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const inlineSettings = `{
+  "providerInstances": {
+    "codex_personal": {
+      "driver": "codex",
+      "environment": [{ "name": "TOKEN", "value": "recovered-secret", "sensitive": true }],
+      "config": {}
+    }
+  }
+}\n`;
+
+      yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, inlineSettings);
+      yield* Effect.promise(() => sleep(1_250));
+      allowSuccess = true;
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, inlineSettings);
+      yield* Effect.promise(() =>
+        Promise.race([
+          reconciled,
+          sleep(5_000).then(() => {
+            throw new Error("settings watcher did not retry identical recovered contents");
+          }),
+        ]),
+      );
+
+      assert.equal(new TextDecoder().decode(Array.from(values.values())[0]), "recovered-secret");
+      assert.notInclude(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+        "recovered-secret",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
   it.effect("keeps active environment secrets when settings validation fails", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;
