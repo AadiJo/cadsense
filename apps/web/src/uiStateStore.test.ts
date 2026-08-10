@@ -727,6 +727,55 @@ describe("local CAD object URL ownership", () => {
     expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
 
+  it("preserves every owner when scope migrations converge", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const firstFiles = [{ relativePath: "first.3mf", url: "blob:first", isPreferred: true }];
+    const secondFiles = [{ relativePath: "second.3mf", url: "blob:second", isPreferred: false }];
+    const destinationFiles = [
+      { relativePath: "destination.3mf", url: "blob:destination", isPreferred: false },
+    ];
+    const firstProject = {
+      key: "environment:/first-converging",
+      cadScopeKey: "environment:first-converging",
+      logicalKey: "environment:first-converging",
+      cwd: "/first-converging",
+    };
+    const secondProject = {
+      key: "environment:/second-converging",
+      cadScopeKey: "environment:second-converging",
+      logicalKey: "environment:second-converging",
+      cwd: "/second-converging",
+    };
+    const stationaryProject = {
+      key: "environment:/stationary",
+      cadScopeKey: "environment:destination",
+      logicalKey: "environment:stationary",
+      cwd: "/stationary",
+    };
+    useUiStateStore.getState().syncProjects([firstProject, secondProject, stationaryProject]);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        [firstProject.cadScopeKey]: firstFiles,
+        [secondProject.cadScopeKey]: secondFiles,
+        [stationaryProject.cadScopeKey]: destinationFiles,
+      },
+    });
+
+    useUiStateStore
+      .getState()
+      .syncProjects([
+        { ...firstProject, cadScopeKey: stationaryProject.cadScopeKey },
+        { ...secondProject, cadScopeKey: stationaryProject.cadScopeKey },
+        stationaryProject,
+      ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      [stationaryProject.cadScopeKey]: [...destinationFiles, ...firstFiles, ...secondFiles],
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
   it("revokes only the removed environment when project ids are shared", async () => {
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const retainedFiles = [

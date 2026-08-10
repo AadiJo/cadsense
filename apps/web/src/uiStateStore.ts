@@ -779,6 +779,18 @@ interface UiStateStore extends UiState {
 const pendingLocalCadFileUrlRevocations = new Set<string>();
 let localCadFileUrlRevocationScheduled = false;
 
+function mergeLocalCadFileLists(
+  lists: readonly (readonly LocalCadFile[])[],
+): readonly LocalCadFile[] {
+  const filesByUrl = new Map<string, LocalCadFile>();
+  for (const files of lists) {
+    for (const file of files) {
+      filesByUrl.set(file.url, file);
+    }
+  }
+  return [...filesByUrl.values()];
+}
+
 function scheduleUnownedLocalCadFileUrlRevocations(
   files: readonly LocalCadFile[],
   readFilesByScopeKey: () => UiState["localCadFilesByScopeKey"],
@@ -816,13 +828,19 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
   syncProjects: (projects) => {
     const previousCadScopeKeyByPhysicalKey = new Map(currentCadScopeKeyByPhysicalKey);
     currentCadScopeKeyByPhysicalKey.clear();
-    const physicalMigrationDestinationBySource = new Map<string, string>();
+    const physicalMigrations: Array<{
+      readonly sourceScopeKey: string;
+      readonly destinationScopeKey: string;
+    }> = [];
     const projectsByLegacyCadScopeKey = new Map<string, typeof projects>();
     for (const project of projects) {
       currentCadScopeKeyByPhysicalKey.set(project.key, project.cadScopeKey);
       const previousCadScopeKey = previousCadScopeKeyByPhysicalKey.get(project.key);
       if (previousCadScopeKey && previousCadScopeKey !== project.cadScopeKey) {
-        physicalMigrationDestinationBySource.set(previousCadScopeKey, project.cadScopeKey);
+        physicalMigrations.push({
+          sourceScopeKey: previousCadScopeKey,
+          destinationScopeKey: project.cadScopeKey,
+        });
       }
       if (project.legacyCadScopeKey) {
         const matchingProjects = projectsByLegacyCadScopeKey.get(project.legacyCadScopeKey);
@@ -844,7 +862,9 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
       ([scopeKey]) => !activeScopeKeys.has(scopeKey),
     );
     const migrationCandidates = [
-      ...physicalMigrationDestinationBySource,
+      ...physicalMigrations.map(
+        ({ sourceScopeKey, destinationScopeKey }) => [sourceScopeKey, destinationScopeKey] as const,
+      ),
       ...legacyMigrationDestinationBySource,
     ].flatMap(([sourceScopeKey, destinationScopeKey]) => [
       ...(previousLocalCadFilesByScopeKey[sourceScopeKey] ?? []),
@@ -854,23 +874,38 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
       const nextState = syncProjects(state, projects);
       if (
         staleScopeEntries.length === 0 &&
-        physicalMigrationDestinationBySource.size === 0 &&
+        physicalMigrations.length === 0 &&
         legacyMigrationDestinationBySource.size === 0
       ) {
         return nextState;
       }
       const nextLocalCadFilesByScopeKey = { ...state.localCadFilesByScopeKey };
-      const physicalMoves = [...physicalMigrationDestinationBySource].flatMap(
-        ([sourceScopeKey, destinationScopeKey]) => {
+      const physicalMoves = physicalMigrations.flatMap(
+        ({ sourceScopeKey, destinationScopeKey }) => {
           const sourceFiles = state.localCadFilesByScopeKey[sourceScopeKey];
           return sourceFiles ? [{ sourceScopeKey, destinationScopeKey, sourceFiles }] : [];
         },
       );
+      const physicalSourceScopeKeys = new Set(
+        physicalMoves.map(({ sourceScopeKey }) => sourceScopeKey),
+      );
       for (const { sourceScopeKey } of physicalMoves) {
         delete nextLocalCadFilesByScopeKey[sourceScopeKey];
       }
+      const physicalFilesByDestination = new Map<string, Array<readonly LocalCadFile[]>>();
       for (const { destinationScopeKey, sourceFiles } of physicalMoves) {
-        nextLocalCadFilesByScopeKey[destinationScopeKey] = sourceFiles;
+        const lists = physicalFilesByDestination.get(destinationScopeKey) ?? [];
+        lists.push(sourceFiles);
+        physicalFilesByDestination.set(destinationScopeKey, lists);
+      }
+      for (const [destinationScopeKey, sourceFileLists] of physicalFilesByDestination) {
+        const stationaryDestinationFiles = physicalSourceScopeKeys.has(destinationScopeKey)
+          ? []
+          : (state.localCadFilesByScopeKey[destinationScopeKey] ?? []);
+        nextLocalCadFilesByScopeKey[destinationScopeKey] = mergeLocalCadFileLists([
+          stationaryDestinationFiles,
+          ...sourceFileLists,
+        ]);
       }
       for (const [sourceScopeKey, destinationScopeKey] of legacyMigrationDestinationBySource) {
         const sourceFiles = state.localCadFilesByScopeKey[sourceScopeKey];
