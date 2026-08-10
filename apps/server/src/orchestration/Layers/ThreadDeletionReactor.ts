@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
+import { markCadThreadCreated, markCadThreadDeleted } from "../../cad/CadThreadAliases.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import {
@@ -13,6 +14,10 @@ import {
 } from "../Services/ThreadDeletionReactor.ts";
 
 type ThreadDeletedEvent = Extract<OrchestrationEvent, { type: "thread.deleted" }>;
+type ThreadLifecycleEvent = Extract<
+  OrchestrationEvent,
+  { type: "thread.created" | "thread.deleted" }
+>;
 
 export const logCleanupCauseUnlessInterrupted = <R, E>({
   effect,
@@ -35,26 +40,43 @@ export const logCleanupCauseUnlessInterrupted = <R, E>({
     }),
   );
 
+export const cleanupDeletedThread = <R, E>({
+  stopProviderSession,
+  threadId,
+}: {
+  readonly stopProviderSession: Effect.Effect<void, E, R>;
+  readonly threadId: ThreadDeletedEvent["payload"]["threadId"];
+}): Effect.Effect<void, E, R> =>
+  Effect.sync(() => markCadThreadDeleted(threadId)).pipe(
+    Effect.andThen(
+      logCleanupCauseUnlessInterrupted({
+        effect: stopProviderSession,
+        message: "thread deletion cleanup skipped provider session stop",
+        threadId,
+      }),
+    ),
+  );
+
 const make = Effect.gen(function* () {
   const orchestrationEngine = yield* OrchestrationEngineService;
   const providerService = yield* ProviderService;
 
-  const stopProviderSession = (threadId: ThreadDeletedEvent["payload"]["threadId"]) =>
-    logCleanupCauseUnlessInterrupted({
-      effect: providerService.stopSession({ threadId }),
-      message: "thread deletion cleanup skipped provider session stop",
-      threadId,
-    });
-
-  const processThreadDeleted = Effect.fn("processThreadDeleted")(function* (
-    event: ThreadDeletedEvent,
+  const processThreadLifecycle = Effect.fn("processThreadLifecycle")(function* (
+    event: ThreadLifecycleEvent,
   ) {
     const { threadId } = event.payload;
-    yield* stopProviderSession(threadId);
+    if (event.type === "thread.created") {
+      yield* Effect.sync(() => markCadThreadCreated(threadId));
+      return;
+    }
+    yield* cleanupDeletedThread({
+      stopProviderSession: providerService.stopSession({ threadId }),
+      threadId,
+    });
   });
 
-  const processThreadDeletedSafely = (event: ThreadDeletedEvent) =>
-    processThreadDeleted(event).pipe(
+  const processThreadLifecycleSafely = (event: ThreadLifecycleEvent) =>
+    processThreadLifecycle(event).pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.failCause(cause);
@@ -67,13 +89,13 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  const worker = yield* makeDrainableWorker(processThreadDeletedSafely);
+  const worker = yield* makeDrainableWorker(processThreadLifecycleSafely);
 
   const start: ThreadDeletionReactorShape["start"] = Effect.fn("start")(function* () {
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* Effect.forkScoped(
       Stream.runForEach(Stream.fromSubscription(domainEvents), (event) => {
-        if (event.type !== "thread.deleted") {
+        if (event.type !== "thread.created" && event.type !== "thread.deleted") {
           return Effect.void;
         }
         return worker.enqueue(event);

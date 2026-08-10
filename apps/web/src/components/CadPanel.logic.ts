@@ -1,9 +1,19 @@
-import type { OnshapeSyncedCadFile } from "@cadsense/contracts";
+import { scopedProjectKey, scopeProjectRef } from "@cadsense/client-runtime";
+import type { EnvironmentId, OnshapeSyncedCadFile, ProjectId } from "@cadsense/contracts";
 import type { CadViewerFrameComponentNode } from "../lib/cadViewerFrameProtocol";
 
 export const CAD_MODEL_LOAD_TARGET_MS = 15_000;
 export const CAD_MODEL_LOAD_TIMEOUT_MS = 120_000;
 export const CAD_VIEWER_MODEL_SIZE_LIMIT_BYTES = 80 * 1024 * 1024;
+
+export function cadProjectScopeKey(
+  environmentId: EnvironmentId | undefined,
+  projectId: ProjectId | undefined,
+): string | null {
+  return environmentId && projectId
+    ? scopedProjectKey(scopeProjectRef(environmentId, projectId))
+    : null;
+}
 
 export function formatCadModelBytes(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) {

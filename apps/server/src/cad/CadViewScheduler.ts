@@ -15,39 +15,40 @@ export class CadViewScheduler extends Context.Service<CadViewScheduler, CadViewS
   "cadsense/cad/CadViewScheduler",
 ) {}
 
-const make = Effect.sync(() => {
-  const tails = new Map<string, Promise<void>>();
+export const makeCadViewScheduler = (onPendingThreadCountChange?: (count: number) => void) =>
+  Effect.sync(() => {
+    const tails = new Map<string, Promise<void>>();
 
-  const enqueue: CadViewSchedulerShape["enqueue"] = (threadId, operationId, operation) =>
-    Effect.contextWith((context) =>
-      Effect.promise(() => {
-        const previous = tails.get(threadId) ?? Promise.resolve();
-        let release!: () => void;
-        const current = new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        tails.set(
-          threadId,
-          previous.then(
+    const enqueue: CadViewSchedulerShape["enqueue"] = (threadId, operationId, operation) =>
+      Effect.contextWith((context) =>
+        Effect.promise(() => {
+          const previous = tails.get(threadId) ?? Promise.resolve();
+          let release!: () => void;
+          const current = new Promise<void>((resolve) => {
+            release = resolve;
+          });
+          const tail = previous.then(
             () => current,
             () => current,
-          ),
-        );
-        return previous.then(async () => {
-          try {
-            return await Effect.runPromise(operation.pipe(Effect.provideContext(context)));
-          } finally {
-            release();
-            if (tails.get(threadId) === current) {
-              tails.delete(threadId);
+          );
+          tails.set(threadId, tail);
+          onPendingThreadCountChange?.(tails.size);
+          return previous.then(async () => {
+            try {
+              return await Effect.runPromise(operation.pipe(Effect.provideContext(context)));
+            } finally {
+              release();
+              if (tails.get(threadId) === tail) {
+                tails.delete(threadId);
+                onPendingThreadCountChange?.(tails.size);
+              }
+              void operationId;
             }
-            void operationId;
-          }
-        });
-      }),
-    );
+          });
+        }),
+      );
 
-  return { enqueue } satisfies CadViewSchedulerShape;
-});
+    return { enqueue } satisfies CadViewSchedulerShape;
+  });
 
-export const CadViewSchedulerLive = Layer.effect(CadViewScheduler, make);
+export const CadViewSchedulerLive = Layer.effect(CadViewScheduler, makeCadViewScheduler());

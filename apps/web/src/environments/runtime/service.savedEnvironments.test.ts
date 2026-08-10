@@ -10,6 +10,8 @@ const mockListSavedEnvironmentRecords = vi.fn();
 const mockSavedEnvironmentRegistrySubscribe = vi.fn();
 const mockReadSavedEnvironmentBearerToken = vi.fn();
 const mockGetSavedEnvironmentRecord = vi.fn();
+const mockRemoveEnvironmentState = vi.fn();
+const mockSyncProjects = vi.fn();
 
 function MockWsTransport() {
   return undefined;
@@ -123,6 +125,7 @@ vi.mock("~/store", () => ({
       syncServerThreadDetail: vi.fn(),
       removeServerThreadDetail: vi.fn(),
       applyServerShellEvent: vi.fn(),
+      removeEnvironmentState: mockRemoveEnvironmentState,
     }),
   },
   selectProjectsAcrossEnvironments: vi.fn(() => []),
@@ -146,6 +149,7 @@ vi.mock("~/uiStateStore", () => ({
     getState: () => ({
       clearThreadUi: vi.fn(),
       syncPromotedDraftThreadRefs: vi.fn(),
+      syncProjects: mockSyncProjects,
     }),
   },
 }));
@@ -323,5 +327,14 @@ describe("saved environment startup", () => {
 
     stop();
     await resetEnvironmentServiceForTests();
+  });
+
+  it("reconciles project-scoped UI state when a saved environment is removed", async () => {
+    const { removeSavedEnvironment } = await import("./service");
+
+    await removeSavedEnvironment(savedRecord.environmentId);
+
+    expect(mockRemoveEnvironmentState).toHaveBeenCalledWith(savedRecord.environmentId);
+    expect(mockSyncProjects).toHaveBeenCalledWith([]);
   });
 });

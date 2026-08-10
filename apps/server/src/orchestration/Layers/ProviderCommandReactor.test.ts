@@ -58,6 +58,11 @@ import * as Clock from "effect/Clock";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { VcsStatusBroadcaster } from "../../vcs/VcsStatusBroadcaster.ts";
 import { GitWorkflowService, type GitWorkflowServiceShape } from "../../git/GitWorkflowService.ts";
+import {
+  clearCadProviderThreadAliasesForTests,
+  registerCadProviderThreadAlias,
+  resolveCadRequestThreadId,
+} from "../../cad/CadThreadAliases.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.make(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId => ApprovalRequestId.make(value);
@@ -96,6 +101,7 @@ describe.sequential("ProviderCommandReactor", () => {
   const createdBaseDirs = new Set<string>();
 
   afterEach(async () => {
+    clearCadProviderThreadAliasesForTests();
     if (scope) {
       await Effect.runPromise(Scope.close(scope, Exit.void));
     }
@@ -1655,6 +1661,65 @@ describe.sequential("ProviderCommandReactor", () => {
     });
   });
 
+  it("releases a stale alias before replacing a missing runtime session", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-missing-runtime"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "ready",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          runtimeMode: "approval-required",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      }),
+    );
+    registerCadProviderThreadAlias({
+      cadThreadId: ThreadId.make("thread-1"),
+      ownerThreadId: ThreadId.make("thread-1"),
+      resumeCursor: { threadId: "missing-runtime-provider-thread" },
+    });
+    expect(resolveCadRequestThreadId(ThreadId.make("missing-runtime-provider-thread"))).toBe(
+      "thread-1",
+    );
+    harness.startSession.mockImplementationOnce(
+      (_: unknown, __: unknown) => Effect.fail("simulated replacement failure") as never,
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-missing-runtime"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-missing-runtime"),
+          role: "user",
+          text: "replace missing session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+    await harness.drain();
+
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(resolveCadRequestThreadId(ThreadId.make("missing-runtime-provider-thread"))).toBe(
+      "missing-runtime-provider-thread",
+    );
+  });
+
   it("rejects active runtime sessions that are missing provider instance ids", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
@@ -1724,6 +1789,182 @@ describe.sequential("ProviderCommandReactor", () => {
         detail: expect.stringContaining("without a provider instance id"),
       },
     });
+  });
+
+  it("does not register an alias when a newly started session cannot be bound", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    harness.startSession.mockImplementationOnce(() =>
+      Effect.succeed({
+        provider: ProviderDriverKind.make("codex"),
+        status: "ready" as const,
+        runtimeMode: "approval-required" as const,
+        threadId: ThreadId.make("thread-1"),
+        resumeCursor: { threadId: "unbound-provider-thread" },
+        createdAt: now,
+        updatedAt: now,
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-unbound-alias"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-unbound-alias"),
+          role: "user",
+          text: "start invalid session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
+      return (
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed") ??
+        false
+      );
+    });
+
+    expect(resolveCadRequestThreadId(ThreadId.make("unbound-provider-thread"))).toBe(
+      "unbound-provider-thread",
+    );
+  });
+
+  it("restores an active session alias after process-local state is lost", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    const session: ProviderSession = {
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "ready" as const,
+      runtimeMode: "approval-required" as const,
+      threadId: ThreadId.make("thread-1"),
+      cwd: "/tmp/provider-project",
+      model: "gpt-5-codex",
+      resumeCursor: { threadId: "restored-provider-thread" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    harness.startSession.mockImplementationOnce(() =>
+      Effect.sync(() => {
+        harness.runtimeSessions.push(session);
+        return session;
+      }),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-alias-before-restart"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-alias-before-restart"),
+          role: "user",
+          text: "start session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 1);
+
+    clearCadProviderThreadAliasesForTests();
+    expect(resolveCadRequestThreadId(ThreadId.make("restored-provider-thread"))).toBe(
+      "restored-provider-thread",
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-alias-after-restart"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-alias-after-restart"),
+          role: "user",
+          text: "reuse session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.sendTurn.mock.calls.length === 2);
+
+    expect(harness.startSession).toHaveBeenCalledTimes(1);
+    expect(resolveCadRequestThreadId(ThreadId.make("restored-provider-thread"))).toBe("thread-1");
+  });
+
+  it("does not restore an alias when its thread is deleted during session startup", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+    let releaseSession!: (session: ProviderSession) => void;
+    const pendingSession = new Promise<ProviderSession>((resolve) => {
+      releaseSession = resolve;
+    });
+    const session: ProviderSession = {
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      status: "ready",
+      runtimeMode: "approval-required",
+      threadId: ThreadId.make("thread-1"),
+      resumeCursor: { threadId: "late-provider-thread" },
+      createdAt: now,
+      updatedAt: now,
+    };
+    harness.startSession.mockImplementationOnce(() =>
+      Effect.promise(() => pendingSession).pipe(
+        Effect.tap((startedSession) =>
+          Effect.sync(() => {
+            harness.runtimeSessions.push(startedSession);
+          }),
+        ),
+      ),
+    );
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-before-delete"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-before-delete"),
+          role: "user",
+          text: "start a slow session",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.delete",
+        commandId: CommandId.make("cmd-delete-during-session-start"),
+        threadId: ThreadId.make("thread-1"),
+      }),
+    );
+    releaseSession(session);
+    await harness.drain();
+
+    expect(harness.stopSession).toHaveBeenCalledTimes(1);
+    expect(harness.runtimeSessions).toEqual([]);
+    expect(harness.sendTurn).not.toHaveBeenCalled();
+    expect(resolveCadRequestThreadId(ThreadId.make("late-provider-thread"))).toBe(
+      "late-provider-thread",
+    );
   });
 
   it("reacts to thread.approval.respond by forwarding provider approval response", async () => {
