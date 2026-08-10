@@ -43,6 +43,7 @@ let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
 let persistedServerSettingsSnapshot: ServerSettingsValue | null = null;
 let lastOptimisticServerSettingsSnapshot: ServerSettingsValue | null = null;
+let serverSettingsBaseHasExternalUpdate = false;
 let serverSettingsPersistenceTail = Promise.resolve();
 let nextServerSettingsWriteId = 0;
 let pendingServerSettingsWrites: Array<{
@@ -178,17 +179,12 @@ function refreshOptimisticServerSettingsSnapshot(): void {
 }
 
 async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> {
-  if (pendingServerSettingsWrites.length === 0) {
-    persistedServerSettingsSnapshot = getServerConfig()?.settings ?? null;
-  } else {
-    const currentSettings = getServerConfig()?.settings;
-    if (
-      currentSettings &&
-      lastOptimisticServerSettingsSnapshot &&
-      currentSettings !== lastOptimisticServerSettingsSnapshot
-    ) {
-      persistedServerSettingsSnapshot = currentSettings;
+  const currentSettings = getServerConfig()?.settings;
+  if (currentSettings && currentSettings !== lastOptimisticServerSettingsSnapshot) {
+    if (pendingServerSettingsWrites.length > 0) {
+      serverSettingsBaseHasExternalUpdate = true;
     }
+    persistedServerSettingsSnapshot = currentSettings;
   }
   const pendingWrite = {
     id: nextServerSettingsWriteId++,
@@ -198,8 +194,13 @@ async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> 
   refreshOptimisticServerSettingsSnapshot();
 
   const write = serverSettingsPersistenceTail.then(async () => {
+    const writeBase = persistedServerSettingsSnapshot;
     const settings = await ensureLocalApi().server.updateSettings(patch);
-    persistedServerSettingsSnapshot = settings;
+    persistedServerSettingsSnapshot =
+      !serverSettingsBaseHasExternalUpdate &&
+      (persistedServerSettingsSnapshot === writeBase || persistedServerSettingsSnapshot === null)
+        ? settings
+        : applyServerSettingsPatch(persistedServerSettingsSnapshot ?? settings, patch);
   });
   serverSettingsPersistenceTail = write.catch(() => undefined);
   let succeeded = false;
@@ -208,11 +209,8 @@ async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> 
     succeeded = true;
   } finally {
     const currentSettings = getServerConfig()?.settings;
-    if (
-      currentSettings &&
-      lastOptimisticServerSettingsSnapshot &&
-      currentSettings !== lastOptimisticServerSettingsSnapshot
-    ) {
+    if (currentSettings && currentSettings !== lastOptimisticServerSettingsSnapshot) {
+      serverSettingsBaseHasExternalUpdate = true;
       persistedServerSettingsSnapshot = succeeded
         ? applyServerSettingsPatch(currentSettings, patch)
         : currentSettings;
@@ -224,6 +222,7 @@ async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> 
     if (pendingServerSettingsWrites.length === 0) {
       persistedServerSettingsSnapshot = null;
       lastOptimisticServerSettingsSnapshot = null;
+      serverSettingsBaseHasExternalUpdate = false;
     }
   }
 }
@@ -347,6 +346,7 @@ export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsHydrationPromise = null;
   persistedServerSettingsSnapshot = null;
   lastOptimisticServerSettingsSnapshot = null;
+  serverSettingsBaseHasExternalUpdate = false;
   serverSettingsPersistenceTail = Promise.resolve();
   nextServerSettingsWriteId = 0;
   pendingServerSettingsWrites = [];

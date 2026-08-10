@@ -158,6 +158,57 @@ describe("updateSettingsAndWait", () => {
     );
   });
 
+  it("preserves an external snapshot captured by a later queued server write", async () => {
+    const initialSettings = DEFAULT_SERVER_SETTINGS;
+    const externalSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      enableAssistantStreaming: false,
+    };
+    const firstConfirmedSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      providerInstances: {},
+    };
+    const secondConfirmedSettings = {
+      ...firstConfirmedSettings,
+      addProjectBaseDirectory: "/projects",
+    };
+    let currentSettings = initialSettings;
+    mocks.getServerConfig.mockImplementation(() => ({ settings: currentSettings }));
+    mocks.applySettingsUpdated.mockImplementation((settings) => {
+      currentSettings = settings;
+    });
+    let finishFirstWrite: ((settings: typeof firstConfirmedSettings) => void) | undefined;
+    let finishSecondWrite: ((settings: typeof secondConfirmedSettings) => void) | undefined;
+    mocks.updateServerSettings
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishFirstWrite = resolve;
+        }),
+      )
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          finishSecondWrite = resolve;
+        }),
+      );
+
+    const firstWrite = updateSettingsAndWait({ providerInstances: {} });
+    await vi.waitFor(() => expect(mocks.updateServerSettings).toHaveBeenCalledTimes(1));
+    currentSettings = externalSettings;
+    const secondWrite = updateSettingsAndWait({ addProjectBaseDirectory: "/projects" });
+
+    finishFirstWrite?.(firstConfirmedSettings);
+    await firstWrite;
+    await vi.waitFor(() => expect(mocks.updateServerSettings).toHaveBeenCalledTimes(2));
+    finishSecondWrite?.(secondConfirmedSettings);
+    await secondWrite;
+
+    expect(currentSettings).toMatchObject({
+      enableAssistantStreaming: false,
+      providerInstances: {},
+      addProjectBaseDirectory: "/projects",
+    });
+  });
+
   it("waits for every persistence target before surfacing a mixed-patch failure", async () => {
     let finishClientWrite: (() => void) | undefined;
     mocks.updateServerSettings.mockRejectedValueOnce(new Error("disk full"));
