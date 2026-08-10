@@ -47,6 +47,7 @@ describe("cadThreeMfFastParser", () => {
   <metadata><object id="decoy"><mesh><vertices><vertex x="bad" y="0" z="0"/></vertices></mesh></object></metadata>
   <resources>
     <ext:object id="extension-decoy"><ext:mesh><ext:vertices><ext:vertex x="bad" y="0" z="0"/></ext:vertices></ext:mesh></ext:object>
+    <object xmlns="" id="undeclared-decoy"><mesh><vertices><vertex x="bad" y="0" z="0"/></vertices></mesh></object>
     <object xmlns="https://example.com/local-extension" id="local-decoy"><mesh><vertices><vertex x="bad" y="0" z="0"/></vertices></mesh></object>
     <object id="1" name="real"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>
   </resources>
@@ -57,6 +58,21 @@ describe("cadThreeMfFastParser", () => {
 
     expect(group.children).toHaveLength(1);
     expect(group.children[0]!.name).toBe("real");
+  });
+
+  it("rejects malformed, reserved, and undeclared namespace uses", () => {
+    const invalidModels = [
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:xml="https://example.com/not-xml"/>`,
+      `<model xmlns:="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"/>`,
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" rogue:value="x"/></resources></model>`,
+      `<c:model xmlns:c="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><c:resources><c:object xmlns:c="" id="1"/></c:resources></c:model>`,
+    ];
+
+    for (const modelXml of invalidModels) {
+      expect(() => parseThreeMfFast({ three: THREE, unzipped: makeThreeMf(modelXml) })).toThrow(
+        /namespace/i,
+      );
+    }
   });
 
   it("returns an error when a parsed worker model has no renderable geometry", () => {
