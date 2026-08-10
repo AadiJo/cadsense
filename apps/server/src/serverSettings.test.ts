@@ -32,6 +32,7 @@ import {
   ServerSettingsBase,
   ServerSettingsLive,
   ServerSettingsService,
+  shouldSuppressFailedSettingsContents,
 } from "./serverSettings.ts";
 
 const makeServerSettingsLayer = () =>
@@ -46,6 +47,23 @@ const makeServerSettingsLayer = () =>
   );
 
 const liveClock = Effect.runSync(Effect.service(Clock.Clock));
+
+it("bounds failed settings content suppression by a strict monotonic deadline", () => {
+  const input = {
+    failedContents: "same",
+    currentContents: "same",
+    suppressUntilNanos: 1_000_000_000n,
+  } as const;
+  assert.isTrue(shouldSuppressFailedSettingsContents({ ...input, nowNanos: 999_999_999n }));
+  assert.isFalse(shouldSuppressFailedSettingsContents({ ...input, nowNanos: 1_000_000_000n }));
+  assert.isFalse(
+    shouldSuppressFailedSettingsContents({
+      ...input,
+      currentContents: "changed",
+      nowNanos: 0n,
+    }),
+  );
+});
 
 const makeServerSettingsLayerWithSecretStore = (secretStore: ServerSecretStoreShape) =>
   ServerSettingsBase.pipe(

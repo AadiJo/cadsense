@@ -58,7 +58,18 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
-const FAILED_RECONCILIATION_SUPPRESSION_WINDOW_MS = 1_000;
+const FAILED_RECONCILIATION_SUPPRESSION_WINDOW_NANOS = 1_000_000_000n;
+
+export function shouldSuppressFailedSettingsContents(input: {
+  readonly failedContents: string | null;
+  readonly currentContents: string | null;
+  readonly nowNanos: bigint;
+  readonly suppressUntilNanos: bigint;
+}): boolean {
+  return (
+    input.failedContents === input.currentContents && input.nowNanos < input.suppressUntilNanos
+  );
+}
 
 const normalizeServerSettings = (
   settings: ServerSettings,
@@ -284,7 +295,7 @@ const makeServerSettings = Effect.gen(function* () {
   const latestDiskReadWasValidRef = yield* Ref.make(true);
   const latestDiskContentsRef = yield* Ref.make<string | null>(null);
   const failedReconciliationContentsRef = yield* Ref.make<
-    Option.Option<{ readonly contents: string | null; readonly suppressUntilMs: number }>
+    Option.Option<{ readonly contents: string | null; readonly suppressUntilNanos: bigint }>
   >(Option.none());
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
@@ -649,11 +660,15 @@ const makeServerSettings = Effect.gen(function* () {
       }
       const diskContents = yield* Ref.get(latestDiskContentsRef);
       const failedContents = yield* Ref.get(failedReconciliationContentsRef);
-      const nowMs = yield* Clock.currentTimeMillis;
+      const nowNanos = yield* Clock.currentTimeNanos;
       if (
         Option.isSome(failedContents) &&
-        failedContents.value.contents === diskContents &&
-        nowMs < failedContents.value.suppressUntilMs
+        shouldSuppressFailedSettingsContents({
+          failedContents: failedContents.value.contents,
+          currentContents: diskContents,
+          nowNanos,
+          suppressUntilNanos: failedContents.value.suppressUntilNanos,
+        })
       ) {
         yield* Cache.set(settingsCache, cacheKey, previous);
         return;
@@ -675,12 +690,12 @@ const makeServerSettings = Effect.gen(function* () {
         mutations: prepared.mutations,
       }).pipe(Effect.exit);
       if (commitExit._tag === "Failure") {
-        const failedAtMs = yield* Clock.currentTimeMillis;
+        const failedAtNanos = yield* Clock.currentTimeNanos;
         yield* Ref.set(
           failedReconciliationContentsRef,
           Option.some({
             contents: diskContents,
-            suppressUntilMs: failedAtMs + FAILED_RECONCILIATION_SUPPRESSION_WINDOW_MS,
+            suppressUntilNanos: failedAtNanos + FAILED_RECONCILIATION_SUPPRESSION_WINDOW_NANOS,
           }),
         );
         yield* Cache.set(settingsCache, cacheKey, previous);
