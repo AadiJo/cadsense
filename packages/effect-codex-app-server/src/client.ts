@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -5,6 +6,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stdio from "effect/Stdio";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import * as NodePath from "node:path";
 
 import * as CodexRpc from "./_generated/meta.gen.ts";
 import * as CodexError from "./errors.ts";
@@ -292,6 +295,160 @@ export interface CodexAppServerCommandLayerOptions extends CodexAppServerClientO
   readonly env?: Record<string, string>;
 }
 
+interface ResolvedSpawnCommand {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
+function readWindowsEnv(env: Record<string, string | undefined>, name: string): string | undefined {
+  const entry = Object.entries(env).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return entry?.[1];
+}
+
+function unquoteWindowsCommand(command: string): string {
+  return command.length >= 2 && command.startsWith('"') && command.endsWith('"')
+    ? command.slice(1, -1)
+    : command;
+}
+
+function mergeSpawnEnv(
+  overrides: Record<string, string> | undefined,
+  platform: NodeJS.Platform = process.platform,
+): Record<string, string | undefined> {
+  const env: Record<string, string | undefined> = { ...process.env };
+  for (const [key, value] of Object.entries(overrides ?? {})) {
+    if (platform === "win32") {
+      for (const existingKey of Object.keys(env)) {
+        if (existingKey !== key && existingKey.toLowerCase() === key.toLowerCase()) {
+          delete env[existingKey];
+        }
+      }
+    }
+    env[key] = value;
+  }
+  return env;
+}
+
+function resolveWindowsCommandPath(
+  command: string,
+  cwd: string,
+  env: Record<string, string | undefined>,
+): string | null {
+  const hasPathSegment =
+    command.includes("/") || command.includes("\\") || /^[a-zA-Z]:/.test(command);
+  const searchDirectories = hasPathSegment
+    ? [NodePath.win32.resolve(cwd, NodePath.win32.dirname(command))]
+    : [
+        cwd,
+        ...(readWindowsEnv(env, "PATH") ?? "").split(";").map((entry) => {
+          const trimmed = entry.trim();
+          const unquoted =
+            trimmed.startsWith('"') && trimmed.endsWith('"') ? trimmed.slice(1, -1) : trimmed;
+          return unquoted.length > 0 ? NodePath.win32.resolve(cwd, unquoted) : unquoted;
+        }),
+      ].filter(
+        (entry, index, entries) =>
+          entry.length > 0 &&
+          entries.findIndex((candidate) => candidate.toLowerCase() === entry.toLowerCase()) ===
+            index,
+      );
+  const commandName = hasPathSegment ? NodePath.win32.basename(command) : command;
+  const extensions = NodePath.win32.extname(commandName)
+    ? [""]
+    : (readWindowsEnv(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+        .split(";")
+        .map((extension) => extension.trim())
+        .filter((extension) => extension.length > 0);
+
+  for (const directory of searchDirectories) {
+    for (const extension of extensions) {
+      const candidate = NodePath.win32.join(directory, `${commandName}${extension}`);
+      try {
+        if (statSync(candidate).isFile()) return candidate;
+      } catch {
+        // Keep searching when a PATH entry is missing or inaccessible.
+      }
+    }
+  }
+  return null;
+}
+
+function resolveWindowsNodeShimScript(source: string): string | null {
+  const cmdShimScript = source.match(
+    /^\s*endLocal\s+&\s+goto\s+#_undefined_#\s+2>NUL\s+\|\|\s+title\s+%COMSPEC%\s+&\s+"%_prog%"\s+"%dp0%[\\/]([^"\r\n]+\.js)"\s+%\*\s*$/im,
+  )?.[1];
+  if (cmdShimScript) return cmdShimScript;
+
+  const pnpmAdjacentScript = source.match(
+    /^\s*"%~dp0[\\/]node\.exe"\s+"%~dp0[\\/]([^"\r\n]+\.js)"\s+%\*\s*$/im,
+  )?.[1];
+  const pnpmPathScript = source.match(
+    /^\s*node(?:\.exe)?\s+"%~dp0[\\/]([^"\r\n]+\.js)"\s+%\*\s*$/im,
+  )?.[1];
+  return pnpmAdjacentScript && pnpmAdjacentScript === pnpmPathScript ? pnpmAdjacentScript : null;
+}
+
+function resolveWindowsCommandShim(
+  command: string,
+  args: ReadonlyArray<string>,
+  cwd: string,
+  env: Record<string, string | undefined>,
+  depth = 0,
+): ResolvedSpawnCommand {
+  if (depth > 5) return { command, args };
+  const resolvedPath = resolveWindowsCommandPath(command, cwd, env);
+  if (!resolvedPath || !/\.(?:cmd|bat)$/i.test(resolvedPath)) {
+    return { command: resolvedPath ?? command, args };
+  }
+
+  try {
+    const source = readFileSync(resolvedPath, "utf8");
+    const nodeShimScript = resolveWindowsNodeShimScript(source);
+    if (nodeShimScript) {
+      const shimDirectory = NodePath.win32.dirname(resolvedPath);
+      const scriptPath = NodePath.win32.resolve(shimDirectory, nodeShimScript);
+      const relativeScriptPath = NodePath.win32.relative(shimDirectory, scriptPath);
+      if (
+        relativeScriptPath.length > 0 &&
+        !relativeScriptPath.startsWith(`..${NodePath.win32.sep}`) &&
+        !NodePath.win32.isAbsolute(relativeScriptPath) &&
+        existsSync(scriptPath)
+      ) {
+        const adjacentNode = NodePath.win32.join(NodePath.win32.dirname(resolvedPath), "node.exe");
+        return {
+          command: existsSync(adjacentNode)
+            ? adjacentNode
+            : (resolveWindowsCommandPath("node.exe", cwd, env) ?? "node"),
+          args: [scriptPath, ...args],
+        };
+      }
+    }
+
+    const forwardingShim = source.match(/^\s*["']([^"'\r\n]+\.(?:cmd|bat))["']\s+%\*\s*$/im)?.[1];
+    if (forwardingShim) {
+      return resolveWindowsCommandShim(forwardingShim, args, cwd, env, depth + 1);
+    }
+  } catch {
+    // Preserve the normal spawn error when a shim cannot be inspected.
+  }
+  return { command: resolvedPath, args };
+}
+
+export function resolveCommandForSpawn(
+  options: Pick<CodexAppServerCommandLayerOptions, "command" | "args" | "cwd" | "env">,
+  platform: NodeJS.Platform = process.platform,
+): ResolvedSpawnCommand {
+  const args = options.args ?? [];
+  if (platform !== "win32") return { command: options.command, args };
+  const env = mergeSpawnEnv(options.env, platform);
+  return resolveWindowsCommandShim(
+    unquoteWindowsCommand(options.command),
+    args,
+    options.cwd ?? process.cwd(),
+    env,
+  );
+}
+
 export const layerCommand = (
   options: CodexAppServerCommandLayerOptions,
 ): Layer.Layer<
@@ -303,11 +460,15 @@ export const layerCommand = (
     CodexAppServerClient,
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const command = ChildProcess.make(options.command, [...(options.args ?? [])], {
+      const resolved = resolveCommandForSpawn(options);
+      const command = ChildProcess.make(resolved.command, [...resolved.args], {
         ...(options.cwd ? { cwd: options.cwd } : {}),
-        ...(options.env ? { env: { ...process.env, ...options.env } } : {}),
+        ...(options.env ? { env: mergeSpawnEnv(options.env) } : {}),
         forceKillAfter: DEFAULT_APP_SERVER_FORCE_KILL_AFTER,
-        shell: process.platform === "win32",
+        // Keep command arguments out of a command shell. In particular, provider
+        // settings can contain user-controlled paths and arguments that must be
+        // passed verbatim rather than interpreted as cmd.exe syntax on Windows.
+        shell: false,
       });
       return yield* spawner.spawn(command).pipe(
         Effect.mapError(
