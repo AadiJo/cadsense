@@ -263,6 +263,28 @@ describe("cadThreeMfFastParser", () => {
     expect(parseThreeMfFast({ three: THREE, unzipped }).children).toHaveLength(1);
   });
 
+  it("rejects markup delimiters inside quoted attribute values", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1"><mesh><vertices><vertex x="0<?decoy?>" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>`);
+
+    expect(() => parseThreeMfFast({ three: THREE, unzipped })).toThrow(
+      /markup inside a tag or attribute value/i,
+    );
+  });
+
+  it("rejects mismatched element nesting before scanning object bodies", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0"?>
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></resources></object>
+  <build><item objectid="1"/></build>
+</model>`);
+
+    expect(() => parseThreeMfFast({ three: THREE, unzipped })).toThrow(/mismatched element tags/i);
+  });
+
   it("rejects DTD declarations rather than interpreting custom entity markup", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0"?>
 <!DOCTYPE model [<!ENTITY decoy "<vertex x='0' y='0' z='0'/>">]>

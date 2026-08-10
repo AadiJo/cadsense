@@ -89,6 +89,7 @@ const MAX_EXPANDED_NODE_COUNT = 100_000;
 function structuralXml(source: string): string {
   let structural = "";
   let cursor = 0;
+  const openTags: string[] = [];
   const appendCharacterData = (value: string): void => {
     if (value.includes("]]>")) {
       throw new Error("3MF XML contains an unterminated comment or CDATA section.");
@@ -138,8 +139,48 @@ function structuralXml(source: string): string {
       throw new Error("3MF XML contains an unsupported markup declaration.");
     }
 
-    structural += "<";
-    cursor = markupStart + 1;
+    let tagCursor = markupStart + 1;
+    let quote: '"' | "'" | null = null;
+    for (; tagCursor < source.length; tagCursor += 1) {
+      const character = source[tagCursor]!;
+      if (character === "<") {
+        throw new Error("3MF XML contains markup inside a tag or attribute value.");
+      }
+      if (quote !== null) {
+        if (character === quote) quote = null;
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        continue;
+      }
+      if (character === ">") break;
+    }
+    if (tagCursor >= source.length || quote !== null) {
+      throw new Error("3MF XML contains an unterminated tag or attribute value.");
+    }
+    const tag = source.slice(markupStart, tagCursor + 1);
+    const tagBody = tag.slice(1, -1);
+    const closingMatch = /^\/([^\s/<>"'=]+)\s*$/u.exec(tagBody);
+    if (closingMatch) {
+      const name = closingMatch[1]!;
+      if (openTags.pop() !== name) {
+        throw new Error("3MF XML contains mismatched element tags.");
+      }
+    } else {
+      const openingMatch = /^([^\s/<>"'=]+)(?:\s[\s\S]*|\/\s*)?$/u.exec(tagBody);
+      if (!openingMatch) {
+        throw new Error("3MF XML contains a malformed element tag.");
+      }
+      if (!/\/\s*$/u.test(tagBody)) {
+        openTags.push(openingMatch[1]!);
+      }
+    }
+    structural += tag;
+    cursor = tagCursor + 1;
+  }
+  if (openTags.length > 0) {
+    throw new Error("3MF XML contains an unterminated element tag.");
   }
   return structural;
 }
