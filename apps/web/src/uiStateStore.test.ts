@@ -690,6 +690,43 @@ describe("local CAD object URL ownership", () => {
     expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
 
+  it("moves uploads with their physical projects when scope identities swap", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const firstFiles = [{ relativePath: "first.3mf", url: "blob:first", isPreferred: true }];
+    const secondFiles = [{ relativePath: "second.3mf", url: "blob:second", isPreferred: true }];
+    const firstProject = {
+      key: "environment:/first",
+      cadScopeKey: "environment:first-scope",
+      logicalKey: "environment:first",
+      cwd: "/first",
+    };
+    const secondProject = {
+      key: "environment:/second",
+      cadScopeKey: "environment:second-scope",
+      logicalKey: "environment:second",
+      cwd: "/second",
+    };
+    useUiStateStore.getState().syncProjects([firstProject, secondProject]);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        [firstProject.cadScopeKey]: firstFiles,
+        [secondProject.cadScopeKey]: secondFiles,
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      { ...firstProject, cadScopeKey: secondProject.cadScopeKey },
+      { ...secondProject, cadScopeKey: firstProject.cadScopeKey },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      [firstProject.cadScopeKey]: secondFiles,
+      [secondProject.cadScopeKey]: firstFiles,
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
   it("revokes only the removed environment when project ids are shared", async () => {
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const retainedFiles = [
