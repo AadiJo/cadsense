@@ -884,7 +884,7 @@ const makeServerSettings = Effect.gen(function* () {
             detail: "settings file watcher did not become ready",
           });
         }).pipe(Effect.onError(() => Fiber.interrupt(watcherFiber).pipe(Effect.asVoid)));
-      }),
+      }).pipe(Effect.ensuring(cleanupOwnedProbe)),
     ).pipe(Effect.ensuring(cleanupOwnedProbe));
   });
 
