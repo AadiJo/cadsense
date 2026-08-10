@@ -801,6 +801,33 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("fails safely after exhausting watcher probe collisions", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const settingsDirectory = pathService.dirname(serverConfig.settingsPath);
+      const collisionUuid = "22222222-2222-4222-8222-222222222222";
+      const collisionPath = pathService.join(
+        settingsDirectory,
+        `.cadsense-settings-watcher-ready-${collisionUuid}`,
+      );
+      yield* fileSystem.makeDirectory(settingsDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(collisionPath, "user-owned collision");
+      const randomUuid = vi.spyOn(crypto, "randomUUID").mockReturnValue(collisionUuid);
+
+      const result = yield* serverSettings.start.pipe(
+        Effect.provideService(Clock.Clock, liveClock),
+        Effect.result,
+        Effect.ensuring(Effect.sync(() => randomUuid.mockRestore())),
+      );
+
+      assert.isTrue(result._tag === "Failure");
+      assert.equal(yield* fileSystem.readFileString(collisionPath), "user-owned collision");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("does not rewrite malformed settings while reconciling secrets at startup", () => {
     let removeCalls = 0;
     const secretStore: ServerSecretStoreShape = {
