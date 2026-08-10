@@ -31,6 +31,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Equal from "effect/Equal";
 import * as PubSub from "effect/PubSub";
@@ -279,6 +280,10 @@ const makeServerSettings = Effect.gen(function* () {
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
   const startedRef = yield* Ref.make(false);
   const latestDiskReadWasValidRef = yield* Ref.make(true);
+  const latestDiskContentsRef = yield* Ref.make<string | null>(null);
+  const failedReconciliationContentsRef = yield* Ref.make<Option.Option<string | null>>(
+    Option.none(),
+  );
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
@@ -311,10 +316,12 @@ const makeServerSettings = Effect.gen(function* () {
   const loadSettingsFromDisk = Effect.gen(function* () {
     if (!(yield* readConfigExists)) {
       yield* Ref.set(latestDiskReadWasValidRef, true);
+      yield* Ref.set(latestDiskContentsRef, null);
       return DEFAULT_SERVER_SETTINGS;
     }
 
     const raw = yield* readRawConfig;
+    yield* Ref.set(latestDiskContentsRef, raw);
     const decoded = decodeServerSettingsJsonExit(raw);
     if (decoded._tag === "Failure") {
       yield* Ref.set(latestDiskReadWasValidRef, false);
@@ -634,8 +641,18 @@ const makeServerSettings = Effect.gen(function* () {
       const settings = yield* getSettingsFromCache;
       const diskReadWasValid = yield* Ref.get(latestDiskReadWasValidRef);
       if (!diskReadWasValid) {
+        yield* Ref.set(failedReconciliationContentsRef, Option.none());
         yield* Cache.set(settingsCache, cacheKey, previous);
         return;
+      }
+      const diskContents = yield* Ref.get(latestDiskContentsRef);
+      const failedContents = yield* Ref.get(failedReconciliationContentsRef);
+      if (Option.isSome(failedContents) && failedContents.value === diskContents) {
+        yield* Cache.set(settingsCache, cacheKey, previous);
+        return;
+      }
+      if (Option.isSome(failedContents)) {
+        yield* Ref.set(failedReconciliationContentsRef, Option.none());
       }
       const prepared = prepareProviderEnvironmentSecrets(previous, settings);
       const normalized = yield* normalizeServerSettings(prepared.settings);
@@ -646,7 +663,15 @@ const makeServerSettings = Effect.gen(function* () {
         }
         return;
       }
-      yield* commitPreparedSettings({ settings: normalized, mutations: prepared.mutations });
+      const commitExit = yield* commitPreparedSettings({
+        settings: normalized,
+        mutations: prepared.mutations,
+      }).pipe(Effect.exit);
+      if (commitExit._tag === "Failure") {
+        yield* Ref.set(failedReconciliationContentsRef, Option.some(diskContents));
+        yield* Cache.set(settingsCache, cacheKey, previous);
+        return yield* Effect.failCause(commitExit.cause);
+      }
     }),
   );
 

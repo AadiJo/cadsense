@@ -10,6 +10,7 @@ import {
 import { createModelSelection } from "@cadsense/shared/model";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
@@ -19,7 +20,6 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 import {
   SecretStoreError,
   ServerSecretStore,
@@ -44,6 +44,8 @@ const makeServerSettingsLayer = () =>
       ),
     ),
   );
+
+const liveClock = Effect.runSync(Effect.service(Clock.Clock));
 
 const makeServerSettingsLayerWithSecretStore = (secretStore: ServerSecretStoreShape) =>
   ServerSettingsBase.pipe(
@@ -696,18 +698,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 }\n`,
       );
 
-      yield* serverSettings.start;
+      yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
 
       assert.equal(new TextDecoder().decode(Array.from(values.values())[0]), inlineSecret);
       assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSecret);
 
       const malformed = "{ temporarily-malformed\n";
       yield* fileSystem.writeFileString(serverConfig.settingsPath, malformed);
-      for (let attempt = 0; attempt < 5; attempt++) {
-        yield* Effect.promise(() => sleep(50));
-        yield* TestClock.adjust(Duration.millis(150));
-        yield* Effect.yieldNow;
-      }
+      yield* Effect.promise(() => sleep(250));
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), malformed);
       assert.equal(
@@ -716,12 +714,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
 
       yield* fileSystem.writeFileString(serverConfig.settingsPath, "{}\n");
-      for (let attempt = 0; attempt < 100 && values.size > 0; attempt++) {
-        yield* Effect.promise(() => sleep(50));
-        yield* TestClock.adjust(Duration.millis(150));
-        yield* Effect.yieldNow;
-      }
-      yield* Effect.promise(() => removed);
+      yield* Effect.promise(() =>
+        Promise.race([
+          removed,
+          sleep(5_000).then(() => {
+            throw new Error("settings watcher did not reconcile secret removal");
+          }),
+        ]),
+      );
 
       assert.equal(values.size, 0);
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
@@ -751,6 +751,53 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), malformed);
       assert.equal(removeCalls, 0);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("does not loop on watcher events emitted by a failed secret rollback", () => {
+    let setCalls = 0;
+    const secretStore: ServerSecretStoreShape = {
+      get: () => Effect.succeed(null),
+      set: () =>
+        Effect.sync(() => {
+          setCalls += 1;
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(new SecretStoreError({ message: "simulated secret persistence failure" })),
+          ),
+        ),
+      remove: () => Effect.void,
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const inlineSettings = `{
+  "providerInstances": {
+    "codex_personal": {
+      "driver": "codex",
+      "environment": [
+        {
+          "name": "OPENROUTER_API_KEY",
+          "value": "failed-inline-secret",
+          "sensitive": true
+        }
+      ],
+      "config": {}
+    }
+  }
+}\n`;
+
+      yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, inlineSettings);
+      yield* Effect.promise(() => sleep(750));
+
+      assert.equal(setCalls, 1);
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSettings);
+      assert.deepEqual(yield* serverSettings.getSettings, DEFAULT_SERVER_SETTINGS);
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
   });
 
