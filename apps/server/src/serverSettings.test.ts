@@ -82,8 +82,8 @@ it("bounds failed settings content suppression by a strict monotonic deadline", 
 
 it("backs off repeated periodic settings reconciliation failures", () => {
   assert.deepEqual(
-    [-1, 0, 1, 2, 5, 6, 100].map(settingsReconciliationRetryDelayMillis),
-    [1_000, 1_000, 2_000, 4_000, 32_000, 60_000, 60_000],
+    [-1, 0, 1, 2, 5, 6, 7, 100].map(settingsReconciliationRetryDelayMillis),
+    [1_000, 1_000, 1_000, 2_000, 16_000, 32_000, 60_000, 60_000],
   );
 });
 

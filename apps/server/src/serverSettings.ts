@@ -67,9 +67,12 @@ const MAX_SETTINGS_RECONCILIATION_RETRY_DELAY_MS = 60_000;
 
 export function settingsReconciliationRetryDelayMillis(consecutiveFailures: number): number {
   const boundedFailures = Number.isFinite(consecutiveFailures)
-    ? Math.max(0, Math.min(Math.trunc(consecutiveFailures), 6))
-    : 6;
-  return Math.min(1_000 * 2 ** boundedFailures, MAX_SETTINGS_RECONCILIATION_RETRY_DELAY_MS);
+    ? Math.max(0, Math.min(Math.trunc(consecutiveFailures), 7))
+    : 7;
+  return Math.min(
+    1_000 * 2 ** Math.max(0, boundedFailures - 1),
+    MAX_SETTINGS_RECONCILIATION_RETRY_DELAY_MS,
+  );
 }
 
 export function shouldSuppressFailedSettingsContents(input: {
