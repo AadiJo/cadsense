@@ -709,14 +709,6 @@ const makeServerSettings = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
     const settingsFile = pathService.basename(settingsPath);
     const settingsPathResolved = pathService.resolve(settingsPath);
-    const watcherReadyFile = `.cadsense-settings-watcher-ready-${crypto.randomUUID()}`;
-    const watcherReadyPath = pathService.resolve(settingsDir, watcherReadyFile);
-    const watcherReady = yield* Deferred.make<void, ServerSettingsError>();
-
-    const eventMatchesPath = (eventPath: string, file: string, resolvedPath: string) =>
-      eventPath === file ||
-      eventPath === resolvedPath ||
-      pathService.resolve(settingsDir, eventPath) === resolvedPath;
 
     yield* fs.makeDirectory(settingsDir, { recursive: true }).pipe(
       Effect.mapError(
@@ -729,55 +721,119 @@ const makeServerSettings = Effect.gen(function* () {
       ),
     );
 
-    const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
-
-    // Debounce watch events so the file is fully written before we read it.
-    // Editors emit multiple events per save (truncate, write, rename) and
-    // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedSettingsEvents = fs.watch(settingsDir).pipe(
-      Stream.tap((event) =>
-        eventMatchesPath(event.path, watcherReadyFile, watcherReadyPath)
-          ? Deferred.succeed(watcherReady, undefined).pipe(Effect.asVoid)
-          : Effect.void,
-      ),
-      Stream.filter((event) => {
-        return eventMatchesPath(event.path, settingsFile, settingsPathResolved);
-      }),
-      Stream.debounce(Duration.millis(100)),
-    );
-
-    const watcherFiber = yield* Stream.runForEach(
-      debouncedSettingsEvents,
-      () => revalidateAndEmitSafely,
-    ).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope));
-
-    // `FileSystem.watch` is a lazy stream. Confirm that its native subscription is
-    // active before `start` reports readiness, otherwise an edit made immediately
-    // after startup can be lost while the watcher fiber is still acquiring it.
-    yield* Effect.gen(function* () {
-      for (let attempt = 0; attempt < 256; attempt += 1) {
-        if (yield* Deferred.isDone(watcherReady)) {
-          return;
+    const watcherProbe = yield* Effect.gen(function* () {
+      for (let attempt = 0; attempt < 16; attempt += 1) {
+        const uuid = yield* Effect.try({
+          try: () => crypto.randomUUID(),
+          catch: (cause) =>
+            new ServerSettingsError({
+              settingsPath,
+              detail: "failed to generate settings watcher readiness probe",
+              cause,
+            }),
+        });
+        if (!/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/iu.test(uuid)) {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            detail: "generated an invalid settings watcher readiness probe identifier",
+          });
         }
-        yield* fs.writeFileString(watcherReadyPath, String(attempt)).pipe(
+        const file = `.cadsense-settings-watcher-ready-${uuid}`;
+        const resolvedPath = pathService.resolve(settingsDir, file);
+        if (pathService.dirname(resolvedPath) !== pathService.resolve(settingsDir)) {
+          return yield* new ServerSettingsError({
+            settingsPath,
+            detail: "settings watcher readiness probe escaped the settings directory",
+          });
+        }
+        if (
+          yield* fs.exists(resolvedPath).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  detail: "failed to inspect settings watcher readiness probe",
+                  cause,
+                }),
+            ),
+          )
+        ) {
+          continue;
+        }
+        yield* fs.writeFileString(resolvedPath, "reserved", { flag: "wx", mode: 0o600 }).pipe(
           Effect.mapError(
             (cause) =>
               new ServerSettingsError({
                 settingsPath,
-                detail: "failed to confirm settings file watcher readiness",
+                detail: "failed to reserve settings watcher readiness probe",
                 cause,
               }),
           ),
         );
-        yield* Effect.yieldNow;
+        return { file, resolvedPath };
       }
       return yield* new ServerSettingsError({
         settingsPath,
-        detail: "settings file watcher did not become ready",
+        detail: "could not reserve a unique settings watcher readiness probe",
       });
+    });
+    yield* Effect.gen(function* () {
+      const watcherReady = yield* Deferred.make<void, ServerSettingsError>();
+
+      const eventMatchesPath = (eventPath: string, file: string, resolvedPath: string) =>
+        eventPath === file ||
+        eventPath === resolvedPath ||
+        pathService.resolve(settingsDir, eventPath) === resolvedPath;
+
+      const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+
+      // Debounce watch events so the file is fully written before we read it.
+      // Editors emit multiple events per save (truncate, write, rename) and
+      // `fs.watch` can fire before the content has been flushed to disk.
+      const debouncedSettingsEvents = fs.watch(settingsDir).pipe(
+        Stream.tap((event) =>
+          eventMatchesPath(event.path, watcherProbe.file, watcherProbe.resolvedPath)
+            ? Deferred.succeed(watcherReady, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        ),
+        Stream.filter((event) => {
+          return eventMatchesPath(event.path, settingsFile, settingsPathResolved);
+        }),
+        Stream.debounce(Duration.millis(100)),
+      );
+
+      const watcherFiber = yield* Stream.runForEach(
+        debouncedSettingsEvents,
+        () => revalidateAndEmitSafely,
+      ).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope));
+
+      // `FileSystem.watch` is a lazy stream. Confirm that its native subscription is
+      // active before `start` reports readiness, otherwise an edit made immediately
+      // after startup can be lost while the watcher fiber is still acquiring it.
+      yield* Effect.gen(function* () {
+        for (let attempt = 0; attempt < 256; attempt += 1) {
+          if (yield* Deferred.isDone(watcherReady)) {
+            return;
+          }
+          yield* fs.writeFileString(watcherProbe.resolvedPath, String(attempt)).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  detail: "failed to confirm settings file watcher readiness",
+                  cause,
+                }),
+            ),
+          );
+          yield* Effect.yieldNow;
+        }
+        return yield* new ServerSettingsError({
+          settingsPath,
+          detail: "settings file watcher did not become ready",
+        });
+      }).pipe(Effect.onError(() => Fiber.interrupt(watcherFiber).pipe(Effect.asVoid)));
     }).pipe(
-      Effect.onError(() => Fiber.interrupt(watcherFiber).pipe(Effect.asVoid)),
-      Effect.ensuring(fs.remove(watcherReadyPath, { force: true }).pipe(Effect.ignore)),
+      Effect.ensuring(fs.remove(watcherProbe.resolvedPath, { force: true }).pipe(Effect.ignore)),
     );
   });
 

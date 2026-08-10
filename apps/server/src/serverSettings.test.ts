@@ -9,6 +9,7 @@ import {
 } from "@cadsense/contracts";
 import { createModelSelection } from "@cadsense/shared/model";
 import { assert, it } from "@effect/vitest";
+import { vi } from "vitest";
 import * as Effect from "effect/Effect";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -763,6 +764,40 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
 
       assert.equal(yield* fileSystem.readFileString(legacySentinelPath), "user-owned contents");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("does not overwrite a colliding randomized watcher probe", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const settingsDirectory = pathService.dirname(serverConfig.settingsPath);
+      const collisionUuid = "00000000-0000-4000-8000-000000000000";
+      const uniqueUuid = "11111111-1111-4111-8111-111111111111";
+      const collisionPath = pathService.join(
+        settingsDirectory,
+        `.cadsense-settings-watcher-ready-${collisionUuid}`,
+      );
+      const uniquePath = pathService.join(
+        settingsDirectory,
+        `.cadsense-settings-watcher-ready-${uniqueUuid}`,
+      );
+      yield* fileSystem.makeDirectory(settingsDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(collisionPath, "user-owned collision");
+      const randomUuid = vi
+        .spyOn(crypto, "randomUUID")
+        .mockReturnValueOnce(collisionUuid)
+        .mockReturnValue(uniqueUuid);
+
+      yield* serverSettings.start.pipe(
+        Effect.provideService(Clock.Clock, liveClock),
+        Effect.ensuring(Effect.sync(() => randomUuid.mockRestore())),
+      );
+
+      assert.equal(yield* fileSystem.readFileString(collisionPath), "user-owned collision");
+      assert.isFalse(yield* fileSystem.exists(uniquePath));
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
