@@ -25,13 +25,18 @@ import {
   type ServerSettingsPatch,
 } from "@cadsense/contracts";
 import * as Cache from "effect/Cache";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as Predicate from "effect/Predicate";
 import * as Equal from "effect/Equal";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
@@ -56,6 +61,30 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
+const FAILED_RECONCILIATION_SUPPRESSION_WINDOW_NANOS = 1_000_000_000n;
+const SETTINGS_RECONCILIATION_INTERVAL = Duration.seconds(1);
+const MAX_SETTINGS_RECONCILIATION_RETRY_DELAY_MS = 60_000;
+
+export function settingsReconciliationRetryDelayMillis(consecutiveFailures: number): number {
+  const boundedFailures = Number.isFinite(consecutiveFailures)
+    ? Math.max(0, Math.min(Math.trunc(consecutiveFailures), 7))
+    : 7;
+  return Math.min(
+    1_000 * 2 ** Math.max(0, boundedFailures - 1),
+    MAX_SETTINGS_RECONCILIATION_RETRY_DELAY_MS,
+  );
+}
+
+export function shouldSuppressFailedSettingsContents(input: {
+  readonly failedContents: string | null;
+  readonly currentContents: string | null;
+  readonly nowNanos: bigint;
+  readonly suppressUntilNanos: bigint;
+}): boolean {
+  return (
+    input.failedContents === input.currentContents && input.nowNanos < input.suppressUntilNanos
+  );
+}
 
 const normalizeServerSettings = (
   settings: ServerSettings,
@@ -91,6 +120,22 @@ function redactProviderEnvironmentVariable(
     value: "",
     ...(variable.value.length > 0 || variable.valueRedacted ? { valueRedacted: true } : {}),
   };
+}
+
+export function runBestEffortRollbackSteps<E, R>(
+  steps: ReadonlyArray<Effect.Effect<void, E, R>>,
+  onFailure: (error: E) => Effect.Effect<void>,
+): Effect.Effect<void, never, R> {
+  return Effect.forEach(steps, (step) => step.pipe(Effect.catch(onFailure)), {
+    discard: true,
+  });
+}
+
+export function commitSettingsUpdateUninterruptibly<A, E, R>(
+  persist: Effect.Effect<A, E, R>,
+  synchronize: (value: A) => Effect.Effect<void, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.uninterruptible(persist.pipe(Effect.tap((value) => synchronize(value))));
 }
 
 export function redactServerSettingsForClient(settings: ServerSettings): ServerSettings {
@@ -262,6 +307,11 @@ const makeServerSettings = Effect.gen(function* () {
   const cacheKey = "settings" as const;
   const changesPubSub = yield* PubSub.unbounded<ServerSettings>();
   const startedRef = yield* Ref.make(false);
+  const latestDiskReadWasValidRef = yield* Ref.make(true);
+  const latestDiskContentsRef = yield* Ref.make<string | null>(null);
+  const failedReconciliationContentsRef = yield* Ref.make<
+    Option.Option<{ readonly contents: string | null; readonly suppressUntilNanos: bigint }>
+  >(Option.none());
   const startedDeferred = yield* Deferred.make<void, ServerSettingsError>();
   const watcherScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(watcherScope, Exit.void));
@@ -293,18 +343,23 @@ const makeServerSettings = Effect.gen(function* () {
 
   const loadSettingsFromDisk = Effect.gen(function* () {
     if (!(yield* readConfigExists)) {
+      yield* Ref.set(latestDiskReadWasValidRef, true);
+      yield* Ref.set(latestDiskContentsRef, null);
       return DEFAULT_SERVER_SETTINGS;
     }
 
     const raw = yield* readRawConfig;
+    yield* Ref.set(latestDiskContentsRef, raw);
     const decoded = decodeServerSettingsJsonExit(raw);
     if (decoded._tag === "Failure") {
+      yield* Ref.set(latestDiskReadWasValidRef, false);
       yield* Effect.logWarning("failed to parse settings.json, using defaults", {
         path: settingsPath,
         issues: Cause.pretty(decoded.cause),
       });
       return DEFAULT_SERVER_SETTINGS;
     }
+    yield* Ref.set(latestDiskReadWasValidRef, true);
     return decoded.value;
   });
 
@@ -333,7 +388,7 @@ const makeServerSettings = Effect.gen(function* () {
         if (!instance.environment) continue;
         const environment: ProviderInstanceEnvironmentVariable[] = [];
         for (const variable of instance.environment) {
-          if (!variable.sensitive || !variable.valueRedacted) {
+          if (!variable.sensitive || !variable.valueRedacted || variable.value.length > 0) {
             environment.push(variable);
             continue;
           }
@@ -363,89 +418,98 @@ const makeServerSettings = Effect.gen(function* () {
       };
     });
 
-  const persistProviderEnvironmentSecrets = (
+  type ProviderEnvironmentSecretMutation =
+    | {
+        readonly type: "set";
+        readonly name: string;
+        readonly variableName: string;
+        readonly value: Uint8Array;
+      }
+    | {
+        readonly type: "remove";
+        readonly name: string;
+        readonly variableName: string;
+      };
+
+  const prepareProviderEnvironmentSecrets = (
     current: ServerSettings,
     next: ServerSettings,
-  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
-    Effect.gen(function* () {
-      const providerInstances: Record<string, ProviderInstanceConfig> = {
-        ...next.providerInstances,
-      };
+  ): {
+    readonly settings: ServerSettings;
+    readonly mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>;
+  } => {
+    const providerInstances: Record<string, ProviderInstanceConfig> = {
+      ...next.providerInstances,
+    };
+    const mutations = new Map<string, ProviderEnvironmentSecretMutation>();
+    const nextSecretKeys = new Set<string>();
 
-      const nextSecretKeys = new Set<string>();
-      for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
-        if (!instance.environment) continue;
-        const environment: ProviderInstanceEnvironmentVariable[] = [];
-        for (const variable of instance.environment) {
-          const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
-          if (!variable.sensitive) {
-            yield* secretStore
-              .remove(secretName)
-              .pipe(
-                Effect.mapError((cause) =>
-                  toSettingsError(`failed to remove environment secret ${variable.name}`, cause),
-                ),
-              );
-            environment.push(redactProviderEnvironmentVariable(variable));
-            continue;
-          }
-
-          nextSecretKeys.add(secretName);
-          if (!variable.valueRedacted) {
-            if (variable.value.length > 0) {
-              yield* secretStore
-                .set(secretName, textEncoder.encode(variable.value))
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toSettingsError(`failed to persist environment secret ${variable.name}`, cause),
-                  ),
-                );
-              environment.push({ ...variable, value: "", valueRedacted: true });
-            } else {
-              yield* secretStore
-                .remove(secretName)
-                .pipe(
-                  Effect.mapError((cause) =>
-                    toSettingsError(`failed to remove environment secret ${variable.name}`, cause),
-                  ),
-                );
-              const { valueRedacted: _omit, ...rest } = variable;
-              environment.push(rest);
-            }
-            continue;
-          }
-
+    for (const [instanceId, instance] of Object.entries(next.providerInstances)) {
+      if (!instance.environment) continue;
+      const environment: ProviderInstanceEnvironmentVariable[] = [];
+      for (const variable of instance.environment) {
+        const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
+        if (!variable.sensitive) {
+          mutations.set(secretName, {
+            type: "remove",
+            name: secretName,
+            variableName: variable.name,
+          });
           environment.push(redactProviderEnvironmentVariable(variable));
+          continue;
         }
-        providerInstances[instanceId] = {
-          ...instance,
-          environment,
-        } satisfies ProviderInstanceConfig;
-      }
 
-      for (const [instanceId, instance] of Object.entries(current.providerInstances)) {
-        for (const variable of instance.environment ?? []) {
-          if (!variable.sensitive) continue;
-          const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
-          if (nextSecretKeys.has(secretName)) continue;
-          yield* secretStore
-            .remove(secretName)
-            .pipe(
-              Effect.mapError((cause) =>
-                toSettingsError(
-                  `failed to remove stale environment secret ${variable.name}`,
-                  cause,
-                ),
-              ),
-            );
+        nextSecretKeys.add(secretName);
+        if (!variable.valueRedacted || variable.value.length > 0) {
+          if (variable.value.length > 0) {
+            mutations.set(secretName, {
+              type: "set",
+              name: secretName,
+              variableName: variable.name,
+              value: textEncoder.encode(variable.value),
+            });
+            environment.push({ ...variable, value: "", valueRedacted: true });
+          } else {
+            mutations.set(secretName, {
+              type: "remove",
+              name: secretName,
+              variableName: variable.name,
+            });
+            const { valueRedacted: _omit, ...rest } = variable;
+            environment.push(rest);
+          }
+          continue;
         }
-      }
 
-      return {
+        environment.push(redactProviderEnvironmentVariable(variable));
+      }
+      providerInstances[instanceId] = {
+        ...instance,
+        environment,
+      } satisfies ProviderInstanceConfig;
+    }
+
+    for (const [instanceId, instance] of Object.entries(current.providerInstances)) {
+      for (const variable of instance.environment ?? []) {
+        if (!variable.sensitive) continue;
+        const secretName = providerEnvironmentSecretName({ instanceId, name: variable.name });
+        if (nextSecretKeys.has(secretName)) continue;
+        mutations.set(secretName, {
+          type: "remove",
+          name: secretName,
+          variableName: variable.name,
+        });
+      }
+    }
+
+    return {
+      settings: {
         ...next,
         providerInstances: providerInstances as ServerSettings["providerInstances"],
-      };
-    });
+      },
+      mutations: Array.from(mutations.values()),
+    };
+  };
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
@@ -471,11 +535,188 @@ const makeServerSettings = Effect.gen(function* () {
     ),
   );
 
+  type SettingsFileSnapshot =
+    | { readonly exists: false }
+    | { readonly exists: true; readonly contents: string };
+
+  const snapshotSettingsFile: Effect.Effect<SettingsFileSnapshot, ServerSettingsError> = Effect.gen(
+    function* () {
+      if (!(yield* readConfigExists)) {
+        return { exists: false } as const;
+      }
+      return { exists: true, contents: yield* readRawConfig } as const;
+    },
+  );
+
+  const restoreSettingsFile = (snapshot: SettingsFileSnapshot) =>
+    (snapshot.exists
+      ? writeFileStringAtomically({
+          filePath: settingsPath,
+          contents: snapshot.contents,
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, pathService),
+        )
+      : fs.remove(settingsPath, { force: true })
+    ).pipe(
+      Effect.mapError((cause) =>
+        toSettingsError("failed to restore settings file after update failure", cause),
+      ),
+    );
+
+  const snapshotProviderEnvironmentSecrets = (
+    mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>,
+  ) =>
+    Effect.forEach(mutations, (mutation) =>
+      secretStore.get(mutation.name).pipe(
+        Effect.mapError((cause) =>
+          toSettingsError(
+            `failed to read environment secret ${mutation.variableName} before updating settings`,
+            cause,
+          ),
+        ),
+        Effect.map((value) => ({
+          name: mutation.name,
+          variableName: mutation.variableName,
+          value,
+        })),
+      ),
+    );
+
+  const applyProviderEnvironmentSecretMutations = (
+    mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>,
+  ) =>
+    Effect.forEach(
+      mutations,
+      (mutation) =>
+        (mutation.type === "set"
+          ? secretStore.set(mutation.name, mutation.value)
+          : secretStore.remove(mutation.name)
+        ).pipe(
+          Effect.mapError((cause) =>
+            toSettingsError(
+              `failed to ${mutation.type === "set" ? "persist" : "remove"} environment secret ${mutation.variableName}`,
+              cause,
+            ),
+          ),
+        ),
+      { discard: true },
+    );
+
+  const restoreProviderEnvironmentSecrets = (
+    snapshots: ReadonlyArray<{
+      readonly name: string;
+      readonly variableName: string;
+      readonly value: Uint8Array | null;
+    }>,
+  ) =>
+    snapshots.map((snapshot) =>
+      (snapshot.value === null
+        ? secretStore.remove(snapshot.name)
+        : secretStore.set(snapshot.name, snapshot.value)
+      ).pipe(
+        Effect.mapError((cause) =>
+          toSettingsError(`failed to restore environment secret ${snapshot.variableName}`, cause),
+        ),
+      ),
+    );
+
+  const commitPreparedSettings = (input: {
+    readonly settings: ServerSettings;
+    readonly mutations: ReadonlyArray<ProviderEnvironmentSecretMutation>;
+  }) =>
+    Effect.gen(function* () {
+      const previousSecrets = yield* snapshotProviderEnvironmentSecrets(input.mutations);
+      const previousSettingsFile = yield* snapshotSettingsFile;
+      const committed = yield* commitSettingsUpdateUninterruptibly(
+        Effect.gen(function* () {
+          yield* writeSettingsAtomically(input.settings);
+
+          const commitExit = yield* applyProviderEnvironmentSecretMutations(input.mutations).pipe(
+            Effect.andThen(materializeProviderEnvironmentSecrets(input.settings)),
+            Effect.exit,
+          );
+          if (commitExit._tag === "Failure") {
+            yield* runBestEffortRollbackSteps(
+              [
+                ...restoreProviderEnvironmentSecrets(previousSecrets),
+                restoreSettingsFile(previousSettingsFile),
+              ],
+              (rollbackError) =>
+                Effect.logError("failed to roll back settings after secret persistence failure", {
+                  detail: rollbackError.detail,
+                }),
+            );
+            return yield* Effect.failCause(commitExit.cause);
+          }
+          return {
+            persisted: input.settings,
+            materialized: commitExit.value,
+          };
+        }),
+        (committed) =>
+          Cache.set(settingsCache, cacheKey, committed.persisted).pipe(
+            Effect.andThen(emitChange(committed.materialized)),
+          ),
+      );
+      return committed.materialized;
+    });
+
   const revalidateAndEmit = writeSemaphore.withPermits(1)(
     Effect.gen(function* () {
+      const previous = yield* getSettingsFromCache;
       yield* Cache.invalidate(settingsCache, cacheKey);
       const settings = yield* getSettingsFromCache;
-      yield* emitChange(settings);
+      const diskReadWasValid = yield* Ref.get(latestDiskReadWasValidRef);
+      if (!diskReadWasValid) {
+        yield* Ref.set(failedReconciliationContentsRef, Option.none());
+        yield* Cache.set(settingsCache, cacheKey, previous);
+        return true;
+      }
+      const diskContents = yield* Ref.get(latestDiskContentsRef);
+      const failedContents = yield* Ref.get(failedReconciliationContentsRef);
+      const nowNanos = yield* Clock.currentTimeNanos;
+      if (
+        Option.isSome(failedContents) &&
+        shouldSuppressFailedSettingsContents({
+          failedContents: failedContents.value.contents,
+          currentContents: diskContents,
+          nowNanos,
+          suppressUntilNanos: failedContents.value.suppressUntilNanos,
+        })
+      ) {
+        yield* Cache.set(settingsCache, cacheKey, previous);
+        return false;
+      }
+      if (Option.isSome(failedContents)) {
+        yield* Ref.set(failedReconciliationContentsRef, Option.none());
+      }
+      const prepared = prepareProviderEnvironmentSecrets(previous, settings);
+      const normalized = yield* normalizeServerSettings(prepared.settings);
+      if (prepared.mutations.length === 0 && Equal.equals(normalized, settings)) {
+        if (!Equal.equals(previous, settings)) {
+          const materialized = yield* materializeProviderEnvironmentSecrets(settings);
+          yield* emitChange(materialized);
+        }
+        return true;
+      }
+      const commitExit = yield* commitPreparedSettings({
+        settings: normalized,
+        mutations: prepared.mutations,
+      }).pipe(Effect.exit);
+      if (commitExit._tag === "Failure") {
+        const failedAtNanos = yield* Clock.currentTimeNanos;
+        yield* Ref.set(
+          failedReconciliationContentsRef,
+          Option.some({
+            contents: diskContents,
+            suppressUntilNanos: failedAtNanos + FAILED_RECONCILIATION_SUPPRESSION_WINDOW_NANOS,
+          }),
+        );
+        yield* Cache.set(settingsCache, cacheKey, previous);
+        return yield* Effect.failCause(commitExit.cause);
+      }
+      return true;
     }),
   );
 
@@ -495,27 +736,227 @@ const makeServerSettings = Effect.gen(function* () {
       ),
     );
 
-    const revalidateAndEmitSafely = revalidateAndEmit.pipe(Effect.ignoreCause({ log: true }));
+    const isPlatformError = (error: unknown): error is PlatformError.PlatformError =>
+      Predicate.isTagged(error, "PlatformError");
+    const isAlreadyExists = (error: unknown): error is PlatformError.PlatformError =>
+      isPlatformError(error) && error.reason._tag === "AlreadyExists";
+    let cleanupProbe:
+      | {
+          readonly resolvedPath: string;
+          readonly info: FileSystem.File.Info;
+        }
+      | undefined;
 
-    // Debounce watch events so the file is fully written before we read it.
-    // Editors emit multiple events per save (truncate, write, rename) and
-    // `fs.watch` can fire before the content has been flushed to disk.
-    const debouncedSettingsEvents = fs.watch(settingsDir).pipe(
-      Stream.filter((event) => {
-        return (
-          event.path === settingsFile ||
-          event.path === settingsPath ||
-          pathService.resolve(settingsDir, event.path) === settingsPathResolved
+    const cleanupOwnedProbe = Effect.suspend(() => {
+      if (!cleanupProbe) return Effect.void;
+      return fs.stat(cleanupProbe.resolvedPath).pipe(
+        Effect.flatMap((currentInfo) => {
+          const ownedInode = cleanupProbe!.info.ino;
+          const currentInode = currentInfo.ino;
+          if (
+            cleanupProbe!.info.dev !== currentInfo.dev ||
+            Option.isNone(ownedInode) ||
+            Option.isNone(currentInode) ||
+            ownedInode.value !== currentInode.value
+          ) {
+            return Effect.logWarning("settings watcher readiness probe ownership changed", {
+              path: cleanupProbe!.resolvedPath,
+            });
+          }
+          return fs.remove(cleanupProbe!.resolvedPath, { force: true }).pipe(Effect.ignore);
+        }),
+        Effect.catch((cause) =>
+          cause.reason._tag === "NotFound"
+            ? Effect.void
+            : Effect.logWarning("failed to inspect settings watcher readiness probe for cleanup", {
+                path: cleanupProbe!.resolvedPath,
+                cause,
+              }),
+        ),
+      );
+    });
+
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const watcherProbe = yield* Effect.gen(function* () {
+          for (let attempt = 0; attempt < 16; attempt += 1) {
+            const uuid = yield* Effect.try({
+              try: () => crypto.randomUUID(),
+              catch: (cause) =>
+                new ServerSettingsError({
+                  settingsPath,
+                  detail: "failed to generate settings watcher readiness probe",
+                  cause,
+                }),
+            });
+            if (!/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/iu.test(uuid)) {
+              return yield* new ServerSettingsError({
+                settingsPath,
+                detail: "generated an invalid settings watcher readiness probe identifier",
+              });
+            }
+            const file = `.cadsense-settings-watcher-ready-${uuid}`;
+            const resolvedPath = pathService.resolve(settingsDir, file);
+            if (pathService.dirname(resolvedPath) !== pathService.resolve(settingsDir)) {
+              return yield* new ServerSettingsError({
+                settingsPath,
+                detail: "settings watcher readiness probe escaped the settings directory",
+              });
+            }
+            const opened = yield* fs
+              .open(resolvedPath, { flag: "wx", mode: 0o600 })
+              .pipe(Effect.result);
+            if (opened._tag === "Failure") {
+              if (isAlreadyExists(opened.failure)) continue;
+              return yield* new ServerSettingsError({
+                settingsPath,
+                detail: "failed to reserve settings watcher readiness probe",
+                cause: opened.failure,
+              });
+            }
+            const info = yield* opened.success.stat.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    detail: "failed to inspect reserved settings watcher readiness probe",
+                    cause,
+                  }),
+              ),
+            );
+            cleanupProbe = { resolvedPath, info };
+            return { file, resolvedPath, handle: opened.success };
+          }
+          return yield* new ServerSettingsError({
+            settingsPath,
+            detail: "could not reserve a unique settings watcher readiness probe",
+          });
+        });
+        const watcherReady = yield* Deferred.make<void, ServerSettingsError>();
+
+        const eventMatchesPath = (eventPath: string, file: string, resolvedPath: string) =>
+          eventPath === file ||
+          eventPath === resolvedPath ||
+          pathService.resolve(settingsDir, eventPath) === resolvedPath;
+
+        const initialPeriodicWakeup = yield* Deferred.make<void>();
+        const periodicStateRef = yield* Ref.make({
+          failures: 0,
+          generation: 0n,
+          wakeup: initialPeriodicWakeup,
+        });
+        const resetPeriodicBackoff = Effect.gen(function* () {
+          const wakeup = yield* Ref.modify(periodicStateRef, (state) => [
+            state.wakeup,
+            { failures: 0, generation: state.generation + 1n, wakeup: state.wakeup },
+          ]);
+          yield* Deferred.succeed(wakeup, undefined).pipe(Effect.asVoid);
+        });
+        const revalidateAndEmitSafely = revalidateAndEmit.pipe(
+          Effect.tap((reconciled) => (reconciled ? resetPeriodicBackoff : Effect.void)),
+          Effect.asVoid,
+          Effect.ignoreCause({ log: true }),
         );
-      }),
-      Stream.debounce(Duration.millis(100)),
-    );
 
-    yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-      Effect.asVoid,
-    );
+        // Debounce watch events so the file is fully written before we read it.
+        // Editors emit multiple events per save (truncate, write, rename) and
+        // `fs.watch` can fire before the content has been flushed to disk.
+        const debouncedSettingsEvents = fs.watch(settingsDir).pipe(
+          Stream.tap((event) =>
+            eventMatchesPath(event.path, watcherProbe.file, watcherProbe.resolvedPath)
+              ? Deferred.succeed(watcherReady, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+          Stream.filter((event) => {
+            return eventMatchesPath(event.path, settingsFile, settingsPathResolved);
+          }),
+          Stream.debounce(Duration.millis(100)),
+        );
+
+        const watcherFiber = yield* Stream.runForEach(
+          debouncedSettingsEvents,
+          () => revalidateAndEmitSafely,
+        ).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope));
+
+        // `FileSystem.watch` is a lazy stream. Confirm that its native subscription is
+        // active before `start` reports readiness, otherwise an edit made immediately
+        // after startup can be lost while the watcher fiber is still acquiring it.
+        yield* Effect.gen(function* () {
+          for (let attempt = 0; attempt < 256; attempt += 1) {
+            if (yield* Deferred.isDone(watcherReady)) {
+              return;
+            }
+            yield* watcherProbe.handle.seek(0, "start");
+            yield* watcherProbe.handle.truncate(0).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    detail: "failed to confirm settings file watcher readiness",
+                    cause,
+                  }),
+              ),
+            );
+            yield* watcherProbe.handle.writeAll(textEncoder.encode(String(attempt))).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ServerSettingsError({
+                    settingsPath,
+                    detail: "failed to confirm settings file watcher readiness",
+                    cause,
+                  }),
+              ),
+            );
+            yield* Effect.yieldNow;
+          }
+          return yield* new ServerSettingsError({
+            settingsPath,
+            detail: "settings file watcher did not become ready",
+          });
+        }).pipe(Effect.onError(() => Fiber.interrupt(watcherFiber).pipe(Effect.asVoid)));
+
+        // Native file watchers can drop or coalesce notifications (for example when an
+        // inotify queue is under load). Periodically re-read the file so a missed event
+        // cannot leave the cache and secret store stale indefinitely. The write semaphore
+        // serializes this with watcher callbacks and explicit settings updates.
+        const periodicReconciliation = Effect.gen(function* () {
+          const wakeup = yield* Deferred.make<void>();
+          const installed = yield* Ref.modify(periodicStateRef, (state) => [
+            { failures: state.failures, generation: state.generation },
+            { ...state, wakeup },
+          ]);
+          const timerElapsed = yield* Effect.race(
+            Effect.sleep(
+              installed.failures === 0
+                ? SETTINGS_RECONCILIATION_INTERVAL
+                : Duration.millis(settingsReconciliationRetryDelayMillis(installed.failures)),
+            ).pipe(Effect.as(true)),
+            Deferred.await(wakeup).pipe(Effect.as(false)),
+          );
+          if (!timerElapsed) return;
+          const result = yield* revalidateAndEmit.pipe(Effect.exit);
+          if (result._tag === "Success") {
+            if (!result.value) return;
+            yield* Ref.update(periodicStateRef, (state) =>
+              state.generation === installed.generation ? { ...state, failures: 0 } : state,
+            );
+            return;
+          }
+          const nextFailures = installed.failures + 1;
+          const failureIsCurrent = yield* Ref.modify(periodicStateRef, (state) =>
+            state.generation === installed.generation
+              ? [true, { ...state, failures: nextFailures }]
+              : [false, state],
+          );
+          if (!failureIsCurrent) return;
+          yield* Effect.logWarning("periodic settings reconciliation failed", {
+            retryDelayMs: settingsReconciliationRetryDelayMillis(nextFailures),
+            cause: Cause.pretty(result.cause),
+          });
+        });
+        yield* Effect.forever(periodicReconciliation).pipe(Effect.forkIn(watcherScope));
+      }).pipe(Effect.ensuring(cleanupOwnedProbe)),
+    ).pipe(Effect.ensuring(cleanupOwnedProbe));
   });
 
   const start = Effect.gen(function* () {
@@ -526,8 +967,7 @@ const makeServerSettings = Effect.gen(function* () {
 
     const startup = Effect.gen(function* () {
       yield* startWatcher;
-      yield* Cache.invalidate(settingsCache, cacheKey);
-      yield* getSettingsFromCache;
+      yield* revalidateAndEmit;
     });
 
     const startupExit = yield* Effect.exit(startup);
@@ -542,43 +982,34 @@ const makeServerSettings = Effect.gen(function* () {
   return {
     start,
     ready: Deferred.await(startedDeferred),
-    getSettings: getSettingsFromCache.pipe(
-      Effect.flatMap(materializeProviderEnvironmentSecrets),
-      Effect.map(resolveTextGenerationProvider),
+    getSettings: writeSemaphore.withPermits(1)(
+      getSettingsFromCache.pipe(
+        Effect.flatMap(materializeProviderEnvironmentSecrets),
+        Effect.map(resolveTextGenerationProvider),
+      ),
     ),
     updateSettings: (patch) =>
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
+          const prepared = prepareProviderEnvironmentSecrets(
             current,
             applyServerSettingsPatch(current, patch),
           );
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
+          const next = yield* normalizeServerSettings(prepared.settings);
+          const materialized = yield* commitPreparedSettings({
+            settings: next,
+            mutations: prepared.mutations,
+          });
           return resolveTextGenerationProvider(materialized);
         }),
       ),
     get streamChanges() {
-      return Stream.fromPubSub(changesPubSub).pipe(
-        Stream.mapEffect((settings) =>
-          materializeProviderEnvironmentSecrets(settings).pipe(
-            Effect.catch((error: ServerSettingsError) =>
-              Effect.logWarning("failed to materialize provider environment secrets", {
-                detail: error.detail,
-              }).pipe(Effect.as(settings)),
-            ),
-          ),
-        ),
-        Stream.map(resolveTextGenerationProvider),
-      );
+      return Stream.fromPubSub(changesPubSub).pipe(Stream.map(resolveTextGenerationProvider));
     },
   } satisfies ServerSettingsShape;
 });
 
-export const ServerSettingsLive = Layer.effect(ServerSettingsService, makeServerSettings).pipe(
-  Layer.provide(ServerSecretStoreLive),
-);
+export const ServerSettingsBase = Layer.effect(ServerSettingsService, makeServerSettings);
+
+export const ServerSettingsLive = ServerSettingsBase.pipe(Layer.provide(ServerSecretStoreLive));

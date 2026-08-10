@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
@@ -8,13 +9,34 @@ import {
 } from "@cadsense/contracts";
 import { createModelSelection } from "@cadsense/shared/model";
 import { assert, it } from "@effect/vitest";
+import { vi } from "vitest";
 import * as Effect from "effect/Effect";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Path from "effect/Path";
+import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import {
+  SecretStoreError,
+  ServerSecretStore,
+  type ServerSecretStoreShape,
+} from "./auth/Services/ServerSecretStore.ts";
 import { ServerConfig } from "./config.ts";
-import { ServerSettingsLive, ServerSettingsService } from "./serverSettings.ts";
+import {
+  commitSettingsUpdateUninterruptibly,
+  runBestEffortRollbackSteps,
+  ServerSettingsBase,
+  ServerSettingsLive,
+  ServerSettingsService,
+  settingsReconciliationRetryDelayMillis,
+  shouldSuppressFailedSettingsContents,
+} from "./serverSettings.ts";
 
 const makeServerSettingsLayer = () =>
   ServerSettingsLive.pipe(
@@ -27,7 +49,98 @@ const makeServerSettingsLayer = () =>
     ),
   );
 
+const makeServerSettingsLayerWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
+  ServerSettingsLive.pipe(
+    Layer.provide(Layer.succeed(FileSystem.FileSystem, fileSystem)),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "cadsense-server-settings-watch-fallback-test-",
+        }),
+      ),
+    ),
+  );
+
+const liveClock = Effect.runSync(Effect.service(Clock.Clock));
+
+it("bounds failed settings content suppression by a strict monotonic deadline", () => {
+  const input = {
+    failedContents: "same",
+    currentContents: "same",
+    suppressUntilNanos: 1_000_000_000n,
+  } as const;
+  assert.isTrue(shouldSuppressFailedSettingsContents({ ...input, nowNanos: 999_999_999n }));
+  assert.isFalse(shouldSuppressFailedSettingsContents({ ...input, nowNanos: 1_000_000_000n }));
+  assert.isFalse(
+    shouldSuppressFailedSettingsContents({
+      ...input,
+      currentContents: "changed",
+      nowNanos: 0n,
+    }),
+  );
+});
+
+it("backs off repeated periodic settings reconciliation failures", () => {
+  assert.deepEqual(
+    [-1, 0, 1, 2, 5, 6, 7, 100].map(settingsReconciliationRetryDelayMillis),
+    [1_000, 1_000, 1_000, 2_000, 16_000, 32_000, 60_000, 60_000],
+  );
+});
+
+const makeServerSettingsLayerWithSecretStore = (secretStore: ServerSecretStoreShape) =>
+  ServerSettingsBase.pipe(
+    Layer.provide(Layer.succeed(ServerSecretStore, secretStore)),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "cadsense-server-settings-fault-test-",
+        }),
+      ),
+    ),
+  );
+
 it.layer(NodeServices.layer)("server settings", (it) => {
+  it.effect("synchronizes committed settings before honoring interruption", () =>
+    Effect.gen(function* () {
+      const persisted = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const synchronized = yield* Ref.make(false);
+      const fiber = yield* commitSettingsUpdateUninterruptibly(
+        Deferred.succeed(persisted, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as("committed"),
+        ),
+        () => Ref.set(synchronized, true),
+      ).pipe(Effect.forkChild);
+
+      yield* Deferred.await(persisted);
+      yield* Fiber.interrupt(fiber).pipe(Effect.forkDetach);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.await(fiber);
+
+      assert.isTrue(yield* Ref.get(synchronized));
+    }),
+  );
+
+  it.effect("attempts every rollback step after an earlier restoration fails", () =>
+    Effect.gen(function* () {
+      const attempted = yield* Ref.make<string[]>([]);
+      const failures = yield* Ref.make<string[]>([]);
+      const step = (name: string, shouldFail = false) =>
+        Ref.update(attempted, (current) => [...current, name]).pipe(
+          Effect.andThen(shouldFail ? Effect.fail(name) : Effect.void),
+        );
+
+      yield* runBestEffortRollbackSteps(
+        [step("first-secret", true), step("second-secret"), step("settings")],
+        (error) => Ref.update(failures, (current) => [...current, error]),
+      );
+
+      assert.deepEqual(yield* Ref.get(attempted), ["first-secret", "second-secret", "settings"]);
+      assert.deepEqual(yield* Ref.get(failures), ["first-secret"]);
+    }),
+  );
+
   it.effect("decodes nested settings patches", () =>
     Effect.sync(() => {
       const decodePatch = Schema.decodeUnknownSync(ServerSettingsPatch);
@@ -528,4 +641,635 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
+
+  it.effect("migrates inline redacted secrets before unrelated settings updates", () => {
+    const values = new Map<string, Uint8Array>();
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) => Effect.sync(() => values.get(name) ?? null),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, Uint8Array.from(value));
+        }),
+      remove: (name) => Effect.sync(() => values.delete(name)).pipe(Effect.asVoid),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const inlineSecret = "externally-managed-secret";
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `{
+  "providerInstances": {
+    "codex_personal": {
+      "driver": "codex",
+      "environment": [
+        {
+          "name": "OPENROUTER_API_KEY",
+          "value": "${inlineSecret}",
+          "sensitive": true,
+          "valueRedacted": true
+        }
+      ],
+      "config": {}
+    }
+  }
+}\n`,
+      );
+
+      const next = yield* serverSettings.updateSettings({ enableAssistantStreaming: false });
+
+      assert.equal(next.providerInstances[instanceId]?.environment?.[0]?.value, inlineSecret);
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSecret);
+      assert.equal(new TextDecoder().decode(Array.from(values.values())[0]), inlineSecret);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("reconciles external secret removal after a malformed watcher event", () => {
+    const values = new Map<string, Uint8Array>();
+    let notifyRemoved: (() => void) | undefined;
+    const removed = new Promise<void>((resolve) => {
+      notifyRemoved = resolve;
+    });
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) => Effect.sync(() => values.get(name) ?? null),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, Uint8Array.from(value));
+        }),
+      remove: (name) =>
+        Effect.sync(() => {
+          values.delete(name);
+          notifyRemoved?.();
+        }),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const inlineSecret = "externally-edited-secret";
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `{
+  "providerInstances": {
+    "codex_personal": {
+      "driver": "codex",
+      "environment": [
+        {
+          "name": "OPENROUTER_API_KEY",
+          "value": "${inlineSecret}",
+          "sensitive": true,
+          "valueRedacted": true
+        }
+      ],
+      "config": {}
+    }
+  }
+}\n`,
+      );
+
+      yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
+
+      assert.equal(new TextDecoder().decode(Array.from(values.values())[0]), inlineSecret);
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSecret);
+
+      const malformed = "{ temporarily-malformed\n";
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, malformed);
+      yield* Effect.promise(() => sleep(250));
+
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), malformed);
+      assert.equal(
+        (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]?.value,
+        inlineSecret,
+      );
+
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, "{}\n");
+      yield* Effect.promise(() =>
+        Promise.race([
+          removed,
+          sleep(5_000).then(() => {
+            throw new Error("settings watcher did not reconcile secret removal");
+          }),
+        ]),
+      );
+
+      assert.equal(values.size, 0);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("does not overwrite a pre-existing legacy watcher sentinel", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const settingsDirectory = pathService.dirname(serverConfig.settingsPath);
+      const legacySentinelPath = pathService.join(
+        settingsDirectory,
+        ".cadsense-settings-watcher-ready",
+      );
+      yield* fileSystem.makeDirectory(settingsDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(legacySentinelPath, "user-owned contents");
+
+      yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
+
+      assert.equal(yield* fileSystem.readFileString(legacySentinelPath), "user-owned contents");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("does not overwrite a colliding randomized watcher probe", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const settingsDirectory = pathService.dirname(serverConfig.settingsPath);
+      const collisionUuid = "00000000-0000-4000-8000-000000000000";
+      const uniqueUuid = "11111111-1111-4111-8111-111111111111";
+      const collisionPath = pathService.join(
+        settingsDirectory,
+        `.cadsense-settings-watcher-ready-${collisionUuid}`,
+      );
+      const uniquePath = pathService.join(
+        settingsDirectory,
+        `.cadsense-settings-watcher-ready-${uniqueUuid}`,
+      );
+      yield* fileSystem.makeDirectory(settingsDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(collisionPath, "user-owned collision");
+      const randomUuid = vi
+        .spyOn(crypto, "randomUUID")
+        .mockReturnValueOnce(collisionUuid)
+        .mockReturnValue(uniqueUuid);
+
+      yield* serverSettings.start.pipe(
+        Effect.provideService(Clock.Clock, liveClock),
+        Effect.ensuring(Effect.sync(() => randomUuid.mockRestore())),
+      );
+
+      assert.equal(yield* fileSystem.readFileString(collisionPath), "user-owned collision");
+      assert.isFalse(yield* fileSystem.exists(uniquePath));
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("restarts periodic reconciliation without losing native wakeups", () =>
+    Effect.gen(function* () {
+      const liveFileSystem = yield* FileSystem.FileSystem;
+      let deliverSettingsEvents = true;
+      const readinessOnlyFileSystem: FileSystem.FileSystem = {
+        ...liveFileSystem,
+        watch: (directory) =>
+          liveFileSystem
+            .watch(directory)
+            .pipe(
+              Stream.filter(
+                (event) =>
+                  deliverSettingsEvents || event.path.includes(".cadsense-settings-watcher-ready-"),
+              ),
+            ),
+      };
+
+      yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsService;
+        const serverConfig = yield* ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        yield* serverSettings.start;
+        const nativeChange = yield* serverSettings.streamChanges.pipe(
+          Stream.filter((settings) => !settings.enableAssistantStreaming),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          '{ "enableAssistantStreaming": false }\n',
+        );
+        assert.isTrue(
+          Option.isSome(yield* Fiber.join(nativeChange).pipe(Effect.timeout(Duration.seconds(5)))),
+        );
+
+        deliverSettingsEvents = false;
+        const periodicChange = yield* serverSettings.streamChanges.pipe(
+          Stream.filter((settings) => settings.enableAssistantStreaming),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          '{ "enableAssistantStreaming": true }\n',
+        );
+        assert.isTrue(
+          Option.isSome(
+            yield* Fiber.join(periodicChange).pipe(Effect.timeout(Duration.seconds(5))),
+          ),
+        );
+        assert.isTrue((yield* serverSettings.getSettings).enableAssistantStreaming);
+      }).pipe(
+        Effect.provideService(Clock.Clock, liveClock),
+        Effect.provide(makeServerSettingsLayerWithFileSystem(readinessOnlyFileSystem)),
+      );
+    }),
+  );
+
+  it.effect("fails safely after exhausting watcher probe collisions", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const settingsDirectory = pathService.dirname(serverConfig.settingsPath);
+      const collisionUuid = "22222222-2222-4222-8222-222222222222";
+      const collisionPath = pathService.join(
+        settingsDirectory,
+        `.cadsense-settings-watcher-ready-${collisionUuid}`,
+      );
+      yield* fileSystem.makeDirectory(settingsDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(collisionPath, "user-owned collision");
+      const randomUuid = vi.spyOn(crypto, "randomUUID").mockReturnValue(collisionUuid);
+
+      const result = yield* serverSettings.start.pipe(
+        Effect.provideService(Clock.Clock, liveClock),
+        Effect.result,
+        Effect.ensuring(Effect.sync(() => randomUuid.mockRestore())),
+      );
+
+      assert.isTrue(result._tag === "Failure");
+      assert.equal(yield* fileSystem.readFileString(collisionPath), "user-owned collision");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("does not rewrite malformed settings while reconciling secrets at startup", () => {
+    let removeCalls = 0;
+    const secretStore: ServerSecretStoreShape = {
+      get: () => Effect.succeed(null),
+      set: () => Effect.void,
+      remove: () =>
+        Effect.sync(() => {
+          removeCalls += 1;
+        }),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const malformed = "{ definitely-not-json\n";
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, malformed);
+
+      yield* serverSettings.start;
+
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), malformed);
+      assert.equal(removeCalls, 0);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("does not loop on watcher events emitted by a failed secret rollback", () => {
+    let setCalls = 0;
+    const secretStore: ServerSecretStoreShape = {
+      get: () => Effect.succeed(null),
+      set: () =>
+        Effect.sync(() => {
+          setCalls += 1;
+        }).pipe(
+          Effect.andThen(
+            Effect.fail(new SecretStoreError({ message: "simulated secret persistence failure" })),
+          ),
+        ),
+      remove: () => Effect.void,
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const inlineSettings = `{
+  "providerInstances": {
+    "codex_personal": {
+      "driver": "codex",
+      "environment": [
+        {
+          "name": "OPENROUTER_API_KEY",
+          "value": "failed-inline-secret",
+          "sensitive": true
+        }
+      ],
+      "config": {}
+    }
+  }
+}\n`;
+
+      yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, inlineSettings);
+      yield* Effect.promise(() => sleep(3_500));
+
+      assert.isTrue(setCalls <= 3);
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSettings);
+      assert.deepEqual(yield* serverSettings.getSettings, DEFAULT_SERVER_SETTINGS);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("observes immediate edits and retries them after a transient secret failure", () => {
+    const values = new Map<string, Uint8Array>();
+    let allowSuccess = false;
+    let notifyReconciled: (() => void) | undefined;
+    const reconciled = new Promise<void>((resolve) => {
+      notifyReconciled = resolve;
+    });
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) => Effect.sync(() => values.get(name) ?? null),
+      set: (name, value) =>
+        Effect.suspend(() => {
+          if (!allowSuccess) {
+            return Effect.fail(
+              new SecretStoreError({ message: "simulated transient secret failure" }),
+            );
+          }
+          return Effect.sync(() => {
+            values.set(name, Uint8Array.from(value));
+            notifyReconciled?.();
+          });
+        }),
+      remove: (name) => Effect.sync(() => values.delete(name)).pipe(Effect.asVoid),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const inlineSettings = `{
+  "providerInstances": {
+    "codex_personal": {
+      "driver": "codex",
+      "environment": [{ "name": "TOKEN", "value": "recovered-secret", "sensitive": true }],
+      "config": {}
+    }
+  }
+}\n`;
+
+      yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, inlineSettings);
+      yield* Effect.promise(() => sleep(1_250));
+      allowSuccess = true;
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, inlineSettings);
+      yield* Effect.promise(() =>
+        Promise.race([
+          reconciled,
+          sleep(5_000).then(() => {
+            throw new Error("settings watcher did not retry identical recovered contents");
+          }),
+        ]),
+      );
+
+      assert.equal(new TextDecoder().decode(Array.from(values.values())[0]), "recovered-secret");
+      assert.notInclude(
+        yield* fileSystem.readFileString(serverConfig.settingsPath),
+        "recovered-secret",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("keeps active environment secrets when settings validation fails", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+
+      yield* serverSettings.updateSettings({
+        providerInstances: {
+          [instanceId]: {
+            driver: ProviderDriverKind.make("codex"),
+            environment: [
+              { name: "OPENROUTER_API_KEY", value: "sk-active-secret", sensitive: true },
+            ],
+            config: {},
+          },
+        },
+      });
+
+      const result = yield* serverSettings
+        .updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "", value: "", sensitive: false }],
+              config: {},
+            },
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.isTrue(result._tag === "Failure");
+      const current = yield* serverSettings.getSettings;
+      assert.equal(
+        current.providerInstances[instanceId]?.environment?.[0]?.value,
+        "sk-active-secret",
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("rolls back a committed update when secret materialization fails", () => {
+    const values = new Map<string, Uint8Array>();
+    let getCount = 0;
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) =>
+        Effect.suspend(() => {
+          getCount += 1;
+          return getCount === 2
+            ? Effect.fail(new SecretStoreError({ message: "decrypt failed" }))
+            : Effect.succeed(values.get(name) ?? null);
+        }),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, Uint8Array.from(value));
+        }),
+      remove: (name) =>
+        Effect.sync(() => {
+          values.delete(name);
+        }),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+
+      const result = yield* serverSettings
+        .updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [
+                { name: "OPENROUTER_API_KEY", value: "sk-new-secret", sensitive: true },
+              ],
+              config: {},
+            },
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.isTrue(result._tag === "Failure");
+      assert.equal(values.size, 0);
+      assert.isUndefined((yield* serverSettings.getSettings).providerInstances[instanceId]);
+      assert.isFalse(yield* fileSystem.exists(serverConfig.settingsPath));
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("does not expose partially updated secrets through concurrent reads", () =>
+    Effect.gen(function* () {
+      const values = new Map<string, Uint8Array>();
+      const firstNewSecretApplied = yield* Deferred.make<void>();
+      const releaseSecretUpdate = yield* Deferred.make<void>();
+      const readCompleted = yield* Deferred.make<void>();
+      const decoder = new TextDecoder();
+      const secretStore: ServerSecretStoreShape = {
+        get: (name) => Effect.sync(() => values.get(name) ?? null),
+        set: (name, value) =>
+          Effect.gen(function* () {
+            values.set(name, Uint8Array.from(value));
+            if (decoder.decode(value) === "new-a") {
+              yield* Deferred.succeed(firstNewSecretApplied, undefined);
+              yield* Deferred.await(releaseSecretUpdate);
+            }
+          }),
+        remove: (name) => Effect.sync(() => values.delete(name)).pipe(Effect.asVoid),
+        getOrCreateRandom: () =>
+          Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+      };
+
+      yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsService;
+        const instanceId = ProviderInstanceId.make("codex_personal");
+        const instance = (left: string, right: string) => ({
+          driver: ProviderDriverKind.make("codex"),
+          environment: [
+            { name: "SECRET_A", value: left, sensitive: true },
+            { name: "SECRET_B", value: right, sensitive: true },
+          ],
+          config: {},
+        });
+
+        yield* serverSettings.updateSettings({
+          providerInstances: { [instanceId]: instance("old-a", "old-b") },
+        });
+        const updateFiber = yield* serverSettings
+          .updateSettings({ providerInstances: { [instanceId]: instance("new-a", "new-b") } })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(firstNewSecretApplied);
+
+        const readFiber = yield* serverSettings.getSettings.pipe(
+          Effect.tap(() => Deferred.succeed(readCompleted, undefined)),
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isNone(yield* Deferred.poll(readCompleted)));
+
+        yield* Deferred.succeed(releaseSecretUpdate, undefined);
+        yield* Fiber.join(updateFiber);
+        const current = yield* Fiber.join(readFiber);
+        assert.deepEqual(
+          current.providerInstances[instanceId]?.environment?.map((variable) => variable.value),
+          ["new-a", "new-b"],
+        );
+      }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+    }),
+  );
+
+  it.effect("emits the materialized secret snapshot committed by each update", () => {
+    const values = new Map<string, Uint8Array>();
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) => Effect.sync(() => values.get(name) ?? null),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, Uint8Array.from(value));
+        }),
+      remove: (name) => Effect.sync(() => values.delete(name)).pipe(Effect.asVoid),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const updatesFiber = yield* serverSettings.streamChanges.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+
+      const instance = (value: string) => ({
+        driver: ProviderDriverKind.make("codex"),
+        environment: [{ name: "SECRET", value, sensitive: true }],
+        config: {},
+      });
+      yield* serverSettings.updateSettings({
+        providerInstances: { [instanceId]: instance("first-secret") },
+      });
+      yield* serverSettings.updateSettings({
+        providerInstances: { [instanceId]: instance("second-secret") },
+      });
+
+      const updates = Array.from(yield* Fiber.join(updatesFiber));
+      assert.deepEqual(
+        updates.map((settings) => settings.providerInstances[instanceId]?.environment?.[0]?.value),
+        ["first-secret", "second-secret"],
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
+  it.effect("restores the exact settings file when a secret write fails", () => {
+    const secretStore: ServerSecretStoreShape = {
+      get: () => Effect.succeed(null),
+      set: () => Effect.fail(new SecretStoreError({ message: "encrypt failed" })),
+      remove: () => Effect.void,
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const original = `{
+  "enableAssistantStreaming": false,
+  "futureSetting": { "preserve": true }
+}\n`;
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, original);
+
+      const result = yield* serverSettings
+        .updateSettings({
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("codex"),
+              environment: [{ name: "SECRET", value: "new-secret", sensitive: true }],
+              config: {},
+            },
+          },
+        })
+        .pipe(Effect.result);
+
+      assert.isTrue(result._tag === "Failure");
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), original);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
 });
