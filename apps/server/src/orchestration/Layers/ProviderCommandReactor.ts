@@ -32,6 +32,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
 import {
+  isCadThreadDeleted,
   registerCadProviderThreadAlias,
   unregisterCadProviderThreadAliases,
   unregisterCadThreadReferences,
@@ -435,6 +436,8 @@ const make = Effect.gen(function* () {
     const cadViewThreadId = readCadReviewParentThreadId(thread);
 
     const cadAliasThreadsAreActive = Effect.gen(function* () {
+      if (isCadThreadDeleted(threadId)) return false;
+      if (cadViewThreadId !== undefined && isCadThreadDeleted(cadViewThreadId)) return false;
       if (!(yield* resolveThread(threadId))) return false;
       return cadViewThreadId === undefined || (yield* resolveThread(cadViewThreadId)) !== undefined;
     }).pipe(Effect.catch(() => Effect.succeed(false)));

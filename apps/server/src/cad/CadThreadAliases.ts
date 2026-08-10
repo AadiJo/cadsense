@@ -7,6 +7,7 @@ interface CadThreadAlias {
 
 const aliasByProviderThreadId = new Map<string, CadThreadAlias>();
 const providerThreadIdsByOwnerThreadId = new Map<ThreadId, Set<string>>();
+const deletedThreadIds = new Set<ThreadId>();
 
 function deleteAlias(providerThreadId: string): void {
   const alias = aliasByProviderThreadId.get(providerThreadId);
@@ -65,6 +66,15 @@ export function unregisterCadThreadReferences(threadId: ThreadId): void {
   }
 }
 
+export function markCadThreadDeleted(threadId: ThreadId): void {
+  deletedThreadIds.add(threadId);
+  unregisterCadThreadReferences(threadId);
+}
+
+export function isCadThreadDeleted(threadId: ThreadId): boolean {
+  return deletedThreadIds.has(threadId);
+}
+
 export function resolveCadRequestThreadId(requestThreadId: ThreadId): ThreadId {
   return aliasByProviderThreadId.get(requestThreadId)?.cadThreadId ?? requestThreadId;
 }
@@ -72,4 +82,5 @@ export function resolveCadRequestThreadId(requestThreadId: ThreadId): ThreadId {
 export function clearCadProviderThreadAliasesForTests(): void {
   aliasByProviderThreadId.clear();
   providerThreadIdsByOwnerThreadId.clear();
+  deletedThreadIds.clear();
 }

@@ -1,7 +1,9 @@
 import { ThreadId } from "@cadsense/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -63,5 +65,32 @@ describe("cleanupDeletedThread", () => {
     );
 
     expect(resolveCadRequestThreadId(ThreadId.make("provider-thread"))).toBe("provider-thread");
+  });
+
+  it("releases CAD aliases before provider cleanup settles", async () => {
+    const threadId = ThreadId.make("deleted-thread");
+    registerCadProviderThreadAlias({
+      cadThreadId: threadId,
+      ownerThreadId: threadId,
+      resumeCursor: { threadId: "provider-thread" },
+    });
+
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const cleanupStarted = yield* Deferred.make<void>();
+        const releaseCleanup = yield* Deferred.make<void>();
+        const cleanupFiber = yield* cleanupDeletedThread({
+          stopProviderSession: Deferred.succeed(cleanupStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseCleanup)),
+          ),
+          threadId,
+        }).pipe(Effect.forkChild);
+
+        yield* Deferred.await(cleanupStarted);
+        expect(resolveCadRequestThreadId(ThreadId.make("provider-thread"))).toBe("provider-thread");
+        yield* Deferred.succeed(releaseCleanup, undefined);
+        yield* Fiber.join(cleanupFiber);
+      }),
+    );
   });
 });
