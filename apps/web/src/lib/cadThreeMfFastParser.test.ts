@@ -313,6 +313,22 @@ describe("cadThreeMfFastParser", () => {
     expect(parseThreeMfFast({ three: THREE, unzipped }).children).toHaveLength(1);
   });
 
+  it("resolves qualified package relationships without accepting nested namespace decoys", () => {
+    const rootModel = `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`;
+    const unzipped = unzipSync(
+      zipSync({
+        "_rels/.rels": textEncoder.encode(
+          `<r:Relationships xmlns:r="http://schemas.openxmlformats.org/package/2006/relationships" xmlns:ext="https://example.com/extension"><ext:wrapper xmlns="https://example.com/extension"><Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/Models/nested-decoy.model"/></ext:wrapper><r:Relationship xmlns:r="https://example.com/rebound" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/Models/rebound-decoy.model"/><r:Relationship Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel" Target="/Models/root.model"/></r:Relationships>`,
+        ),
+        "Models/root.model": textEncoder.encode(rootModel),
+        "Models/nested-decoy.model": textEncoder.encode("<not-a-model/>"),
+        "Models/rebound-decoy.model": textEncoder.encode("<not-a-model/>"),
+      }),
+    );
+
+    expect(parseThreeMfFast({ three: THREE, unzipped }).children).toHaveLength(1);
+  });
+
   it("rejects markup delimiters inside quoted attribute values", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0"?>
 <model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">

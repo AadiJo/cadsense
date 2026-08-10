@@ -99,6 +99,7 @@ const CORE_ELEMENT_PARENTS = new Map<string, string>([
   ["build", "model"],
   ["item", "build"],
 ]);
+const RELATIONSHIP_ELEMENT_PARENTS = new Map<string, string>([["Relationship", "Relationships"]]);
 
 function structuralXml(source: string): string {
   let structural = "";
@@ -253,7 +254,19 @@ interface NamespaceChange {
   readonly previousValue?: string;
 }
 
-function normalizeCoreModelElements(source: string): string {
+function normalizeNamespacedElements(input: {
+  readonly source: string;
+  readonly namespace: string;
+  readonly rootLocalName: string;
+  readonly elementParents: ReadonlyMap<string, string>;
+}): string {
+  const { source } = input;
+  const elementParentsByLowercase = new Map(
+    Array.from(input.elementParents, ([localName, parentName]) => [
+      localName.toLowerCase(),
+      { localName, parentName },
+    ]),
+  );
   let normalized = "";
   let cursor = 0;
   let sawRoot = false;
@@ -350,22 +363,26 @@ function normalizeCoreModelElements(source: string): string {
     const parentName = frames.at(-1)?.localName ?? null;
     if (!sawRoot) {
       sawRoot = true;
-      if (localName !== "model" || namespace !== CORE_MODEL_NAMESPACE) {
-        throw new Error("3MF root element is not in the supported core model namespace.");
+      if (localName !== input.rootLocalName || namespace !== input.namespace) {
+        throw new Error("3MF root element is not in the expected XML namespace.");
       }
     } else if (frames.length === 0) {
       throw new Error("3MF XML contains more than one document element.");
     }
 
-    const expectedParent = CORE_ELEMENT_PARENTS.get(localName);
-    const isCoreElement = namespace === CORE_MODEL_NAMESPACE;
-    const validCoreContext = expectedParent === undefined || parentName === expectedParent;
-    const emittedName =
-      isCoreElement && validCoreContext
+    const elementRule = elementParentsByLowercase.get(localName.toLowerCase());
+    const isExpectedElement = namespace === input.namespace;
+    const validContext =
+      elementRule !== undefined &&
+      localName === elementRule.localName &&
+      parentName === elementRule.parentName;
+    const emittedName = elementRule
+      ? isExpectedElement && validContext
         ? localName
-        : expectedParent === undefined
-          ? qualifiedName
-          : `ignored:${localName}`;
+        : `ignored:${localName}`
+      : isExpectedElement
+        ? localName
+        : qualifiedName;
     normalized += `<${emittedName}${attributesSource}${selfClosing ? "/" : ""}>`;
     if (selfClosing) {
       restoreNamespaces(namespaceChanges);
@@ -375,6 +392,24 @@ function normalizeCoreModelElements(source: string): string {
     cursor = tagEnd + 1;
   }
   return normalized;
+}
+
+function normalizeCoreModelElements(source: string): string {
+  return normalizeNamespacedElements({
+    source,
+    namespace: CORE_MODEL_NAMESPACE,
+    rootLocalName: "model",
+    elementParents: CORE_ELEMENT_PARENTS,
+  });
+}
+
+function normalizePackageRelationshipsElements(source: string): string {
+  return normalizeNamespacedElements({
+    source,
+    namespace: PACKAGE_RELATIONSHIPS_NAMESPACE,
+    rootLocalName: "Relationships",
+    elementParents: RELATIONSHIP_ELEMENT_PARENTS,
+  });
 }
 
 function decodeXmlAttributeValue(value: string): string {
@@ -692,34 +727,6 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   return { positions, indices };
 }
 
-function rootNamespaceDeclarations(xml: string, localName: string): Map<string, string> {
-  const rootPattern = new RegExp(
-    `<(?:[a-z_][\\w.-]*:)?${localName}\\b(${XML_ATTRIBUTE_TEXT})>`,
-    "iu",
-  );
-  const rootAttributes = rootPattern.exec(xml)?.[1] ?? "";
-  const declarations = new Map<string, string>();
-  const declarationPattern = /(?:^|\s)xmlns(?::([a-z_][\w.-]*))?\s*=\s*(?:"([^"]*)"|'([^']*)')/giu;
-  let match: RegExpExecArray | null;
-  while ((match = declarationPattern.exec(rootAttributes)) !== null) {
-    declarations.set(match[1]?.toLowerCase() ?? "", decodeXmlAttributeValue(match[2] ?? match[3]!));
-  }
-  return declarations;
-}
-
-function elementNamespace(
-  prefix: string | undefined,
-  attributes: string,
-  rootDeclarations: ReadonlyMap<string, string>,
-): string | null {
-  const namespaceAttribute = prefix ? `xmlns:${prefix}` : "xmlns";
-  return (
-    getAttribute(attributes, namespaceAttribute) ??
-    rootDeclarations.get(prefix?.toLowerCase() ?? "") ??
-    null
-  );
-}
-
 function geometryForParsedMesh(
   three: ThreeModule,
   mesh: Pick<CadThreeMfParsedMesh, "indices" | "positions">,
@@ -793,18 +800,16 @@ function findRootModelXml(unzipped: Record<string, Uint8Array>): Uint8Array {
     throw new Error("3MF archive did not contain package root relationships.");
   }
 
-  const relationshipsXml = structuralXml(new TextDecoder().decode(relationshipsBytes));
-  const relationshipNamespaces = rootNamespaceDeclarations(relationshipsXml, "relationships");
+  const relationshipsXml = normalizePackageRelationshipsElements(
+    structuralXml(new TextDecoder().decode(relationshipsBytes)),
+  );
   RELATIONSHIP_PATTERN.lastIndex = 0;
   let relationshipMatch: RegExpExecArray | null;
   let rootPartName: string | null = null;
   while ((relationshipMatch = RELATIONSHIP_PATTERN.exec(relationshipsXml)) !== null) {
     const prefix = relationshipMatch[1];
     const attributes = relationshipMatch[2]!;
-    if (
-      elementNamespace(prefix, attributes, relationshipNamespaces) !==
-      PACKAGE_RELATIONSHIPS_NAMESPACE
-    ) {
+    if (prefix !== undefined) {
       continue;
     }
     if (getAttribute(attributes, "Type") !== ROOT_MODEL_RELATIONSHIP_TYPE) {
