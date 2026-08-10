@@ -782,13 +782,22 @@ let localCadFileUrlRevocationScheduled = false;
 function mergeLocalCadFileLists(
   lists: readonly (readonly LocalCadFile[])[],
 ): readonly LocalCadFile[] {
-  const filesByUrl = new Map<string, LocalCadFile>();
+  const merged: LocalCadFile[] = [];
   for (const files of lists) {
     for (const file of files) {
-      filesByUrl.set(file.url, file);
+      const duplicate = merged.some(
+        (candidate) =>
+          candidate.url === file.url &&
+          candidate.relativePath === file.relativePath &&
+          candidate.isPreferred === file.isPreferred &&
+          candidate.sizeBytes === file.sizeBytes,
+      );
+      if (!duplicate) {
+        merged.push(file);
+      }
     }
   }
-  return [...filesByUrl.values()];
+  return merged;
 }
 
 function scheduleUnownedLocalCadFileUrlRevocations(
@@ -851,9 +860,16 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
       }
     }
     const activeScopeKeys = new Set(projects.map((project) => project.cadScopeKey));
+    const physicalMigrationSourceScopeKeys = new Set(
+      physicalMigrations.map(({ sourceScopeKey }) => sourceScopeKey),
+    );
     const legacyMigrationDestinationBySource = new Map<string, string>();
     for (const [legacyCadScopeKey, matchingProjects] of projectsByLegacyCadScopeKey) {
-      if (matchingProjects.length === 1 && !activeScopeKeys.has(legacyCadScopeKey)) {
+      if (
+        matchingProjects.length === 1 &&
+        !activeScopeKeys.has(legacyCadScopeKey) &&
+        !physicalMigrationSourceScopeKeys.has(legacyCadScopeKey)
+      ) {
         legacyMigrationDestinationBySource.set(legacyCadScopeKey, matchingProjects[0]!.cadScopeKey);
       }
     }
@@ -912,7 +928,10 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
         if (!sourceFiles) {
           continue;
         }
-        nextLocalCadFilesByScopeKey[destinationScopeKey] ??= sourceFiles;
+        nextLocalCadFilesByScopeKey[destinationScopeKey] = mergeLocalCadFileLists([
+          nextLocalCadFilesByScopeKey[destinationScopeKey] ?? [],
+          sourceFiles,
+        ]);
         delete nextLocalCadFilesByScopeKey[sourceScopeKey];
       }
       return {
