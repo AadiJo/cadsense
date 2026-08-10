@@ -145,3 +145,15 @@ export function assertCadModelBuffersWithinLimit(
     remainingBytes -= buffer.byteLength;
   }
 }
+
+export async function resolveCadModelBufferWithinLimit(input: {
+  readonly materializedBuffer?: ArrayBuffer;
+  readonly maximumBytes: number;
+  readonly load: (maximumBytes: number) => Promise<ArrayBuffer>;
+}): Promise<ArrayBuffer> {
+  if (input.materializedBuffer !== undefined) {
+    assertCadModelBuffersWithinLimit([input.materializedBuffer], input.maximumBytes);
+    return input.materializedBuffer;
+  }
+  return input.load(input.maximumBytes);
+}

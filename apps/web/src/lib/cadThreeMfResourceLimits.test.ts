@@ -8,6 +8,7 @@ import {
   MAX_3MF_ARCHIVE_ENTRIES,
   MAX_3MF_EXPANDED_ENTRY_BYTES,
   readResponseArrayBufferWithinLimit,
+  resolveCadModelBufferWithinLimit,
   unzipThreeMfWithinLimits,
 } from "./cadThreeMfResourceLimits";
 
@@ -138,5 +139,30 @@ describe("3MF resource limits", () => {
     expect(() =>
       assertCadModelBuffersWithinLimit([new ArrayBuffer(6), new ArrayBuffer(4)], 10),
     ).not.toThrow();
+  });
+
+  it("reuses a materialized CAD payload without loading a second full-size copy", async () => {
+    const materializedBuffer = new ArrayBuffer(10);
+    let loadCalls = 0;
+
+    await expect(
+      resolveCadModelBufferWithinLimit({
+        materializedBuffer,
+        maximumBytes: 10,
+        load: async () => {
+          loadCalls += 1;
+          return new ArrayBuffer(10);
+        },
+      }),
+    ).resolves.toBe(materializedBuffer);
+    expect(loadCalls).toBe(0);
+
+    await expect(
+      resolveCadModelBufferWithinLimit({
+        materializedBuffer: new ArrayBuffer(11),
+        maximumBytes: 10,
+        load: async () => new ArrayBuffer(0),
+      }),
+    ).rejects.toThrow(/model data.*safety limit/);
   });
 });

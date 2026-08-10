@@ -19,6 +19,7 @@ import {
   loadCadModelResourcesWithinLimit,
   MAX_CAD_MODEL_DOWNLOAD_BYTES,
   readResponseArrayBufferWithinLimit,
+  resolveCadModelBufferWithinLimit,
 } from "./lib/cadThreeMfResourceLimits";
 import {
   CAD_VIEWER_FRAME_SOURCE,
@@ -1397,6 +1398,7 @@ function parseThreeMfFastWithWorker(input: {
 async function loadFilesDirect3mfUrl(
   file: CadViewerFrameFileDescriptor,
   onStage?: (stage: CadViewerFrameLoadStage) => void,
+  materializedBuffer?: ArrayBuffer,
 ): Promise<void> {
   destroyViewer();
   const [threeModule, threeMfModule, orbitControlsModule] = await Promise.all([
@@ -1408,8 +1410,8 @@ async function loadFilesDirect3mfUrl(
   ]);
   onStage?.("direct-3mf-imports-loaded");
 
-  const cacheKey = descriptorCacheKey(file);
-  const cachedModel = threeModelCache.get(cacheKey);
+  const cacheKey = materializedBuffer === undefined ? descriptorCacheKey(file) : null;
+  const cachedModel = cacheKey === null ? undefined : threeModelCache.get(cacheKey);
   let model: CachedThreeModel;
   let ownsModelAssets = false;
   if (cachedModel) {
@@ -1421,11 +1423,19 @@ async function loadFilesDirect3mfUrl(
         `CAD model download exceeds the ${MAX_CAD_MODEL_DOWNLOAD_BYTES / (1024 * 1024)} MiB safety limit.`,
       );
     }
-    const response = await fetch(file.url, { credentials: "same-origin" });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch CAD model asset '${file.name}': HTTP ${response.status}`);
-    }
-    const buffer = await readResponseArrayBufferWithinLimit(response, MAX_CAD_MODEL_DOWNLOAD_BYTES);
+    const buffer = await resolveCadModelBufferWithinLimit({
+      ...(materializedBuffer === undefined ? {} : { materializedBuffer }),
+      maximumBytes: MAX_CAD_MODEL_DOWNLOAD_BYTES,
+      load: async (maximumBytes) => {
+        const response = await fetch(file.url, { credentials: "same-origin" });
+        if (!response.ok) {
+          throw new Error(
+            `Failed to fetch CAD model asset '${file.name}': HTTP ${response.status}`,
+          );
+        }
+        return readResponseArrayBufferWithinLimit(response, maximumBytes);
+      },
+    });
     onStage?.("direct-3mf-file-fetched");
     const archiveStats = inspectThreeMfArchive(new Uint8Array(buffer));
     let group: ThreeGroup | null = null;
@@ -1453,8 +1463,11 @@ async function loadFilesDirect3mfUrl(
     }
     prepareExplodedMeshes(group, threeModule, boundingSphere);
     model = { group, boundingSphere, bytes: buffer.byteLength };
-    rememberThreeModel(cacheKey, cloneCachedThreeModel(model));
-    ownsModelAssets = false;
+    if (cacheKey !== null) {
+      rememberThreeModel(cacheKey, cloneCachedThreeModel(model));
+    } else {
+      ownsModelAssets = true;
+    }
   }
 
   const largeModelRenderBudget = model.bytes >= 24 * 1024 * 1024;
@@ -1566,21 +1579,16 @@ async function loadFileDescriptors(
     (payloadFiles[0]!.buffer.byteLength >= DIRECT_3MF_THRESHOLD_BYTES ||
       payloadFiles[0]!.buffer.byteLength === 0)
   ) {
-    destroyViewer();
-    const objectUrl = URL.createObjectURL(makeFile(payloadFiles[0]!));
-    try {
-      await loadFilesDirect3mfUrl(
-        {
-          name: payloadFiles[0]!.name,
-          url: objectUrl,
-          sizeBytes: payloadFiles[0]!.buffer.byteLength,
-          ...(payloadFiles[0]!.type === undefined ? {} : { type: payloadFiles[0]!.type }),
-        },
-        onStage,
-      );
-    } finally {
-      URL.revokeObjectURL(objectUrl);
-    }
+    await loadFilesDirect3mfUrl(
+      {
+        name: payloadFiles[0]!.name,
+        url: "",
+        sizeBytes: payloadFiles[0]!.buffer.byteLength,
+        ...(payloadFiles[0]!.type === undefined ? {} : { type: payloadFiles[0]!.type }),
+      },
+      onStage,
+      payloadFiles[0]!.buffer,
+    );
     const totalMs = performance.now() - startedAt;
     return {
       strategy: "three-3mf-direct-url",
