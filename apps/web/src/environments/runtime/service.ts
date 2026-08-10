@@ -734,6 +734,7 @@ function syncProjectUiFromStore() {
     projects.map((project) => ({
       key: derivePhysicalProjectKey(project),
       cadScopeKey: scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+      legacyCadScopeKey: project.id,
       logicalKey: deriveLogicalProjectKeyFromSettings(project, clientSettings),
       cwd: project.cwd,
     })),
@@ -788,6 +789,7 @@ function applyRecoveredEventBatch(
       projects.map((project) => ({
         key: derivePhysicalProjectKey(project),
         cadScopeKey: scopedProjectKey(scopeProjectRef(project.environmentId, project.id)),
+        legacyCadScopeKey: project.id,
         logicalKey: deriveLogicalProjectKeyFromSettings(project, clientSettings),
         cwd: project.cwd,
       })),

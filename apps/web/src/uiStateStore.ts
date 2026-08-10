@@ -96,6 +96,7 @@ const persistedProjectOrderCwds: string[] = [];
 // one session after upgrade, until persistState rewrites in the new shape.
 let persistedProjectStateUsesLegacyShape = false;
 const currentProjectCwdById = new Map<string, string>();
+const currentCadScopeKeyByPhysicalKey = new Map<string, string>();
 const currentProjectCwdsByLogicalKey = new Map<string, string[]>();
 const currentLogicalKeyByPhysicalKey = new Map<string, string>();
 let legacyKeysCleanedUp = false;
@@ -751,6 +752,8 @@ interface UiStateStore extends UiState {
     projects: readonly (SyncProjectInput & {
       /** Project identity key (env + project id). Used for project-scoped ephemeral state. */
       cadScopeKey: string;
+      /** Pre-scoping project id, used only to migrate unambiguous live in-memory uploads. */
+      legacyCadScopeKey?: string;
     })[],
   ) => void;
   syncThreads: (threads: readonly SyncThreadInput[]) => void;
@@ -811,6 +814,29 @@ function scheduleUnownedLocalCadFileUrlRevocations(
 export const useUiStateStore = create<UiStateStore>((set, get) => ({
   ...readPersistedState(),
   syncProjects: (projects) => {
+    const previousCadScopeKeyByPhysicalKey = new Map(currentCadScopeKeyByPhysicalKey);
+    currentCadScopeKeyByPhysicalKey.clear();
+    const migrationDestinationBySource = new Map<string, string>();
+    const projectsByLegacyCadScopeKey = new Map<string, typeof projects>();
+    for (const project of projects) {
+      currentCadScopeKeyByPhysicalKey.set(project.key, project.cadScopeKey);
+      const previousCadScopeKey = previousCadScopeKeyByPhysicalKey.get(project.key);
+      if (previousCadScopeKey && previousCadScopeKey !== project.cadScopeKey) {
+        migrationDestinationBySource.set(previousCadScopeKey, project.cadScopeKey);
+      }
+      if (project.legacyCadScopeKey) {
+        const matchingProjects = projectsByLegacyCadScopeKey.get(project.legacyCadScopeKey);
+        projectsByLegacyCadScopeKey.set(project.legacyCadScopeKey, [
+          ...(matchingProjects ?? []),
+          project,
+        ]);
+      }
+    }
+    for (const [legacyCadScopeKey, matchingProjects] of projectsByLegacyCadScopeKey) {
+      if (matchingProjects.length === 1) {
+        migrationDestinationBySource.set(legacyCadScopeKey, matchingProjects[0]!.cadScopeKey);
+      }
+    }
     const activeScopeKeys = new Set(projects.map((project) => project.cadScopeKey));
     const staleScopeEntries = Object.entries(get().localCadFilesByScopeKey).filter(
       ([scopeKey]) => !activeScopeKeys.has(scopeKey),
@@ -820,10 +846,19 @@ export const useUiStateStore = create<UiStateStore>((set, get) => ({
       if (staleScopeEntries.length === 0) {
         return nextState;
       }
+      const nextLocalCadFilesByScopeKey = { ...state.localCadFilesByScopeKey };
+      for (const [sourceScopeKey, destinationScopeKey] of migrationDestinationBySource) {
+        const sourceFiles = nextLocalCadFilesByScopeKey[sourceScopeKey];
+        if (!sourceFiles) {
+          continue;
+        }
+        nextLocalCadFilesByScopeKey[destinationScopeKey] ??= sourceFiles;
+        delete nextLocalCadFilesByScopeKey[sourceScopeKey];
+      }
       return {
         ...nextState,
         localCadFilesByScopeKey: Object.fromEntries(
-          Object.entries(state.localCadFilesByScopeKey).filter(([scopeKey]) =>
+          Object.entries(nextLocalCadFilesByScopeKey).filter(([scopeKey]) =>
             activeScopeKeys.has(scopeKey),
           ),
         ),

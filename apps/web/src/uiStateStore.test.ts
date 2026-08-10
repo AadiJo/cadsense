@@ -611,6 +611,85 @@ describe("local CAD object URL ownership", () => {
     expect(revokeObjectUrl).not.toHaveBeenCalled();
   });
 
+  it("migrates an unambiguous bare project upload into its hydrated scope", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const files = [{ relativePath: "draft.3mf", url: "blob:draft", isPreferred: true }];
+    useUiStateStore.setState({ localCadFilesByScopeKey: { "draft-project": files } });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment:/draft-project",
+        cadScopeKey: "environment:draft-project",
+        legacyCadScopeKey: "draft-project",
+        logicalKey: "environment:draft-project",
+        cwd: "/draft-project",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "environment:draft-project": files,
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
+  it("does not migrate a bare project upload across colliding environments", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: {
+        "colliding-project": [
+          { relativePath: "ambiguous.3mf", url: "blob:ambiguous", isPreferred: true },
+        ],
+      },
+    });
+
+    useUiStateStore.getState().syncProjects([
+      {
+        key: "environment-a:/colliding-project",
+        cadScopeKey: "environment-a:colliding-project",
+        legacyCadScopeKey: "colliding-project",
+        logicalKey: "environment-a:colliding-project",
+        cwd: "/colliding-project",
+      },
+      {
+        key: "environment-b:/colliding-project",
+        cadScopeKey: "environment-b:colliding-project",
+        legacyCadScopeKey: "colliding-project",
+        logicalKey: "environment-b:colliding-project",
+        cwd: "/colliding-project",
+      },
+    ]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({});
+    expect(revokeObjectUrl).toHaveBeenCalledWith("blob:ambiguous");
+  });
+
+  it("transfers uploads when a physical project's scope identity changes", async () => {
+    const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
+    const files = [{ relativePath: "kept.3mf", url: "blob:scope-transfer", isPreferred: true }];
+    const initialProject = {
+      key: "environment:/scope-transfer",
+      cadScopeKey: "environment:provisional-project",
+      logicalKey: "environment:scope-transfer",
+      cwd: "/scope-transfer",
+    };
+    useUiStateStore.getState().syncProjects([initialProject]);
+    useUiStateStore.setState({
+      localCadFilesByScopeKey: { [initialProject.cadScopeKey]: files },
+    });
+
+    useUiStateStore
+      .getState()
+      .syncProjects([{ ...initialProject, cadScopeKey: "environment:hydrated-project" }]);
+    await Promise.resolve();
+
+    expect(useUiStateStore.getState().localCadFilesByScopeKey).toEqual({
+      "environment:hydrated-project": files,
+    });
+    expect(revokeObjectUrl).not.toHaveBeenCalled();
+  });
+
   it("revokes only the removed environment when project ids are shared", async () => {
     const revokeObjectUrl = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => undefined);
     const retainedFiles = [
