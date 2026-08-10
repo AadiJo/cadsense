@@ -1,4 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
   DEFAULT_SERVER_SETTINGS,
   ProviderDriverKind,
@@ -18,6 +19,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import {
   SecretStoreError,
   ServerSecretStore,
@@ -646,12 +648,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
   });
 
-  it.effect("reconciles externally inlined secrets at startup and later removals", () => {
+  it.effect("reconciles external secret removal after a malformed watcher event", () => {
     const values = new Map<string, Uint8Array>();
-    let notifyRemoved: (() => void) | undefined;
-    const removed = new Promise<void>((resolve) => {
-      notifyRemoved = resolve;
-    });
     const secretStore: ServerSecretStoreShape = {
       get: (name) => Effect.sync(() => values.get(name) ?? null),
       set: (name, value) =>
@@ -661,7 +659,6 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       remove: (name) =>
         Effect.sync(() => {
           values.delete(name);
-          notifyRemoved?.();
         }),
       getOrCreateRandom: () =>
         Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
@@ -671,6 +668,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const serverSettings = yield* ServerSettingsService;
       const serverConfig = yield* ServerConfig;
       const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
       const inlineSecret = "externally-edited-secret";
 
       yield* fileSystem.writeFileString(
@@ -698,8 +696,26 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(new TextDecoder().decode(Array.from(values.values())[0]), inlineSecret);
       assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSecret);
 
-      yield* serverSettings.updateSettings({ providerInstances: {} });
-      yield* Effect.promise(() => removed);
+      const malformed = "{ temporarily-malformed\n";
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, malformed);
+      for (let attempt = 0; attempt < 5; attempt++) {
+        yield* Effect.promise(() => sleep(50));
+        yield* TestClock.adjust(Duration.millis(150));
+        yield* Effect.yieldNow;
+      }
+
+      assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), malformed);
+      assert.equal(
+        (yield* serverSettings.getSettings).providerInstances[instanceId]?.environment?.[0]?.value,
+        inlineSecret,
+      );
+
+      yield* fileSystem.writeFileString(serverConfig.settingsPath, "{}\n");
+      for (let attempt = 0; attempt < 5; attempt++) {
+        yield* Effect.promise(() => sleep(50));
+        yield* TestClock.adjust(Duration.millis(150));
+        yield* Effect.yieldNow;
+      }
 
       assert.equal(values.size, 0);
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));

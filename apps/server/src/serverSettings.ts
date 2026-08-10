@@ -634,15 +634,16 @@ const makeServerSettings = Effect.gen(function* () {
       const settings = yield* getSettingsFromCache;
       const diskReadWasValid = yield* Ref.get(latestDiskReadWasValidRef);
       if (!diskReadWasValid) {
-        const materialized = yield* materializeProviderEnvironmentSecrets(settings);
-        yield* emitChange(materialized);
+        yield* Cache.set(settingsCache, cacheKey, previous);
         return;
       }
       const prepared = prepareProviderEnvironmentSecrets(previous, settings);
       const normalized = yield* normalizeServerSettings(prepared.settings);
       if (prepared.mutations.length === 0 && Equal.equals(normalized, settings)) {
-        const materialized = yield* materializeProviderEnvironmentSecrets(settings);
-        yield* emitChange(materialized);
+        if (!Equal.equals(previous, settings)) {
+          const materialized = yield* materializeProviderEnvironmentSecrets(settings);
+          yield* emitChange(materialized);
+        }
         return;
       }
       yield* commitPreparedSettings({ settings: normalized, mutations: prepared.mutations });
