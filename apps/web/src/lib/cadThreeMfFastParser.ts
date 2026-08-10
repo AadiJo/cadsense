@@ -62,19 +62,519 @@ interface ParsedBuildItem {
   readonly transform: readonly number[] | null;
 }
 
-const MODEL_ENTRY_PATTERN = /^3D\/[^/]*\.model$/u;
-const OBJECT_PATTERN = /<object\b([^>]*)>([\s\S]*?)<\/object>/giu;
-const COMPONENT_PATTERN = /<component\b([^>]*)\/?>/giu;
-const ITEM_PATTERN = /<item\b([^>]*)\/?>/giu;
-const COLOR_PATTERN = /<m:color\b[^>]*\bcolor="(#[0-9a-f]{6}(?:[0-9a-f]{2})?)"[^>]*\/?>/giu;
-const VERTEX_PATTERN =
-  /<vertex\b[^>]*\bx="([^"]+)"[^>]*\by="([^"]+)"[^>]*\bz="([^"]+)"[^>]*\/?>/giu;
-const TRIANGLE_PATTERN =
-  /<triangle\b[^>]*\bv1="(\d+)"[^>]*\bv2="(\d+)"[^>]*\bv3="(\d+)"[^>]*\/?>/giu;
+const ROOT_RELATIONSHIPS_ENTRY = "_rels/.rels";
+const ROOT_MODEL_RELATIONSHIP_TYPE = "http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel";
+const CORE_MODEL_NAMESPACE = "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
+const PACKAGE_RELATIONSHIPS_NAMESPACE =
+  "http://schemas.openxmlformats.org/package/2006/relationships";
+const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
+const XMLNS_NAMESPACE = "http://www.w3.org/2000/xmlns/";
+const XML_NCNAME_PATTERN =
+  /^[A-Z_a-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c-\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}][\-.0-9A-Z_a-z\u00b7\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u037d\u037f-\u1fff\u200c-\u200d\u203f-\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}]*$/u;
+const XML_NAME_PATTERN =
+  /^[:A-Z_a-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c-\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}][:\-.0-9A-Z_a-z\u00b7\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u037d\u037f-\u1fff\u200c-\u200d\u203f-\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}]*$/u;
+const XML_ATTRIBUTE_TEXT = String.raw`(?:"[^"]*"|'[^']*'|[^'">])*`;
+const RELATIONSHIP_PATTERN = new RegExp(
+  `<(?:([a-z_][\\w.-]*):)?relationship\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`,
+  "giu",
+);
+const OBJECT_PATTERN = new RegExp(
+  `<object\\b(${XML_ATTRIBUTE_TEXT})>([\\s\\S]*?)<\\/object>`,
+  "giu",
+);
+const COMPONENT_PATTERN = new RegExp(`<component\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
+const ITEM_PATTERN = new RegExp(`<item\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
+const COLOR_PATTERN = new RegExp(
+  `<(?:[a-z_][\\w.-]*:)?color\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`,
+  "giu",
+);
+const VERTEX_PATTERN = new RegExp(`<vertex\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
+const TRIANGLE_PATTERN = new RegExp(`<triangle\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`, "giu");
+const MAX_COMPONENT_NESTING_DEPTH = 512;
+const MAX_EXPANDED_NODE_COUNT = 100_000;
+const CORE_ELEMENT_PARENTS = new Map<string, string>([
+  ["resources", "model"],
+  ["object", "resources"],
+  ["mesh", "object"],
+  ["components", "object"],
+  ["vertices", "mesh"],
+  ["triangles", "mesh"],
+  ["vertex", "vertices"],
+  ["triangle", "triangles"],
+  ["component", "components"],
+  ["build", "model"],
+  ["item", "build"],
+]);
+const RELATIONSHIP_ELEMENT_PARENTS = new Map<string, string>([["Relationship", "Relationships"]]);
+const xmlTextDecoder = new TextDecoder("utf-8", { fatal: true });
+const XML_DECLARATION_PATTERN =
+  /^<\?xml[\t\n ]+version[\t\n ]*=[\t\n ]*(?:"1\.0"|'1\.0')(?:[\t\n ]+encoding[\t\n ]*=[\t\n ]*(?:"[Uu][Tt][Ff]-8"|'[Uu][Tt][Ff]-8'))?(?:[\t\n ]+standalone[\t\n ]*=[\t\n ]*(?:"(?:yes|no)"|'(?:yes|no)'))?[\t\n ]*\?>$/u;
+
+function isValidXmlCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint === 0x9 || codePoint === 0xa || codePoint === 0xd || codePoint >= 0x20) &&
+    codePoint <= 0x10ffff &&
+    !(codePoint >= 0xd800 && codePoint <= 0xdfff) &&
+    codePoint !== 0xfffe &&
+    codePoint !== 0xffff
+  );
+}
+
+function decodeXmlBytes(bytes: Uint8Array): string {
+  try {
+    return xmlTextDecoder.decode(bytes);
+  } catch {
+    throw new Error("3MF XML is not valid UTF-8.");
+  }
+}
+
+function structuralXml(source: string): string {
+  source = source.replace(/\r\n?/gu, "\n");
+  let xmlDeclarationEnd = -1;
+  if (/^<\?xml(?:[\t\n ]|\?>)/u.test(source)) {
+    xmlDeclarationEnd = source.indexOf("?>", 5);
+    if (
+      xmlDeclarationEnd < 0 ||
+      !XML_DECLARATION_PATTERN.test(source.slice(0, xmlDeclarationEnd + 2))
+    ) {
+      throw new Error("3MF XML contains an invalid or unsupported XML declaration.");
+    }
+    xmlDeclarationEnd += 2;
+  }
+  for (const character of source) {
+    const codePoint = character.codePointAt(0)!;
+    if (!isValidXmlCodePoint(codePoint)) {
+      throw new Error("3MF XML contains a character forbidden by XML 1.0.");
+    }
+  }
+  let structural = "";
+  let cursor = 0;
+  const openTags: string[] = [];
+  const appendCharacterData = (value: string): void => {
+    if (value.includes("]]>")) {
+      throw new Error("3MF XML contains an unterminated comment or CDATA section.");
+    }
+    decodeXmlAttributeValue(value);
+    if (openTags.length === 0 && /[^\t\n ]/u.test(value)) {
+      throw new Error("3MF XML contains character data outside the document element.");
+    }
+    structural += value;
+  };
+  while (cursor < source.length) {
+    const markupStart = source.indexOf("<", cursor);
+    if (markupStart < 0) {
+      appendCharacterData(source.slice(cursor));
+      break;
+    }
+    appendCharacterData(source.slice(cursor, markupStart));
+
+    if (source.startsWith("<!--", markupStart)) {
+      const end = source.indexOf("-->", markupStart + 4);
+      if (end < 0) {
+        throw new Error("3MF XML contains an unterminated comment or CDATA section.");
+      }
+      const body = source.slice(markupStart + 4, end);
+      if (body.includes("--") || body.endsWith("-")) {
+        throw new Error("3MF XML contains a malformed comment.");
+      }
+      cursor = end + 3;
+      continue;
+    }
+    if (source.startsWith("<![CDATA[", markupStart)) {
+      if (openTags.length === 0) {
+        throw new Error("3MF XML contains CDATA outside the document element.");
+      }
+      const end = source.indexOf("]]>", markupStart + 9);
+      if (end < 0) {
+        throw new Error("3MF XML contains an unterminated comment or CDATA section.");
+      }
+      cursor = end + 3;
+      continue;
+    }
+    if (source.startsWith("<?", markupStart)) {
+      const end = source.indexOf("?>", markupStart + 2);
+      if (end < 0) {
+        throw new Error("3MF XML contains an unterminated processing instruction.");
+      }
+      const target = /^<\?([^\t\n ?]+)(?:[\t\n ]|\?>)/u.exec(
+        source.slice(markupStart, end + 2),
+      )?.[1];
+      if (!target || !XML_NAME_PATTERN.test(target)) {
+        throw new Error("3MF XML contains a malformed processing instruction.");
+      }
+      if (target.toLowerCase() === "xml" && end + 2 !== xmlDeclarationEnd) {
+        throw new Error("3MF XML contains an XML declaration outside the document start.");
+      }
+      cursor = end + 2;
+      continue;
+    }
+    if (source.slice(markupStart).match(/^<!DOCTYPE\b/iu)) {
+      throw new Error("3MF XML document type declarations are not supported.");
+    }
+    if (source.startsWith("<!", markupStart)) {
+      throw new Error("3MF XML contains an unsupported markup declaration.");
+    }
+
+    let tagCursor = markupStart + 1;
+    let quote: '"' | "'" | null = null;
+    for (; tagCursor < source.length; tagCursor += 1) {
+      const character = source[tagCursor]!;
+      if (character === "<") {
+        throw new Error("3MF XML contains markup inside a tag or attribute value.");
+      }
+      if (quote !== null) {
+        if (character === quote) quote = null;
+        continue;
+      }
+      if (character === '"' || character === "'") {
+        quote = character;
+        continue;
+      }
+      if (character === ">") break;
+    }
+    if (tagCursor >= source.length || quote !== null) {
+      throw new Error("3MF XML contains an unterminated tag or attribute value.");
+    }
+    const tag = source.slice(markupStart, tagCursor + 1);
+    const tagBody = tag.slice(1, -1);
+    const closingMatch = /^\/([^\t\n /<>"'=]+)[\t\n ]*$/u.exec(tagBody);
+    if (closingMatch) {
+      const name = closingMatch[1]!;
+      if (openTags.pop() !== name) {
+        throw new Error("3MF XML contains mismatched element tags.");
+      }
+    } else {
+      const openingMatch = /^([^\t\n /<>"'=]+)(?:[\t\n ][\s\S]*|\/[\t\n ]*)?$/u.exec(tagBody);
+      if (!openingMatch) {
+        throw new Error("3MF XML contains a malformed element tag.");
+      }
+      if (!/\/[\t\n ]*$/u.test(tagBody)) {
+        openTags.push(openingMatch[1]!);
+      }
+    }
+    structural += tag;
+    cursor = tagCursor + 1;
+  }
+  if (openTags.length > 0) {
+    throw new Error("3MF XML contains an unterminated element tag.");
+  }
+  return structural;
+}
+
+interface XmlAttribute {
+  readonly name: string;
+  readonly value: string;
+}
+
+function parseXmlQualifiedName(
+  name: string,
+  kind: "attribute" | "element",
+): {
+  readonly prefix: string;
+  readonly localName: string;
+} {
+  const parts = name.split(":");
+  if (parts.length > 2 || parts.some((part) => !XML_NCNAME_PATTERN.test(part))) {
+    throw new Error(`3MF XML contains a malformed qualified ${kind} name.`);
+  }
+  return {
+    prefix: parts.length === 2 ? parts[0]! : "",
+    localName: parts.at(-1)!,
+  };
+}
+
+function parseXmlAttributes(source: string): XmlAttribute[] {
+  const attributes: XmlAttribute[] = [];
+  let cursor = 0;
+  while (cursor < source.length) {
+    while (/[\t\n ]/u.test(source[cursor] ?? "")) cursor += 1;
+    if (cursor >= source.length || source[cursor] === "/") break;
+
+    const nameStart = cursor;
+    while (cursor < source.length && !/[\t\n =]/u.test(source[cursor]!)) cursor += 1;
+    const name = source.slice(nameStart, cursor);
+    if (!name || /[\x2f<>'"]/u.test(name)) {
+      throw new Error("3MF XML contains a malformed attribute name.");
+    }
+    while (/[\t\n ]/u.test(source[cursor] ?? "")) cursor += 1;
+    if (source[cursor] !== "=") {
+      throw new Error("3MF XML contains an attribute without a value.");
+    }
+    cursor += 1;
+    while (/[\t\n ]/u.test(source[cursor] ?? "")) cursor += 1;
+    const quote = source[cursor];
+    if (quote !== '"' && quote !== "'") {
+      throw new Error("3MF XML contains an unquoted attribute value.");
+    }
+    cursor += 1;
+    const valueStart = cursor;
+    const valueEnd = source.indexOf(quote, valueStart);
+    if (valueEnd < 0) {
+      throw new Error("3MF XML contains an unterminated attribute value.");
+    }
+    attributes.push({ name, value: source.slice(valueStart, valueEnd) });
+    cursor = valueEnd + 1;
+    if (cursor < source.length && !/[\t\n /]/u.test(source[cursor]!)) {
+      throw new Error("3MF XML attributes must be separated by whitespace.");
+    }
+  }
+  return attributes;
+}
+
+interface ModelElementFrame {
+  readonly emittedName: string;
+  readonly localName: string;
+  readonly namespaceChanges: readonly NamespaceChange[];
+}
+
+interface NamespaceChange {
+  readonly prefix: string;
+  readonly previousValue?: string;
+}
+
+function normalizeNamespacedElements(input: {
+  readonly source: string;
+  readonly namespace: string;
+  readonly rootLocalName: string;
+  readonly elementParents: ReadonlyMap<string, string>;
+}): string {
+  const { source } = input;
+  const elementParentsByLowercase = new Map(
+    Array.from(input.elementParents, ([localName, parentName]) => [
+      localName.toLowerCase(),
+      { localName, parentName },
+    ]),
+  );
+  let normalized = "";
+  let cursor = 0;
+  let sawRoot = false;
+  const frames: ModelElementFrame[] = [];
+  const namespaces = new Map<string, string>([["xml", XML_NAMESPACE]]);
+  const restoreNamespaces = (changes: readonly NamespaceChange[]): void => {
+    for (let index = changes.length - 1; index >= 0; index -= 1) {
+      const change = changes[index]!;
+      if (change.previousValue === undefined) {
+        namespaces.delete(change.prefix);
+      } else {
+        namespaces.set(change.prefix, change.previousValue);
+      }
+    }
+  };
+
+  while (cursor < source.length) {
+    const tagStart = source.indexOf("<", cursor);
+    if (tagStart < 0) {
+      normalized += source.slice(cursor);
+      break;
+    }
+    normalized += source.slice(cursor, tagStart);
+    let tagEnd = tagStart + 1;
+    let quote: '"' | "'" | null = null;
+    for (; tagEnd < source.length; tagEnd += 1) {
+      const character = source[tagEnd]!;
+      if (quote !== null) {
+        if (character === quote) quote = null;
+      } else if (character === '"' || character === "'") {
+        quote = character;
+      } else if (character === ">") {
+        break;
+      }
+    }
+    if (tagEnd >= source.length) {
+      throw new Error("3MF XML contains an unterminated element tag.");
+    }
+
+    const tagBody = source.slice(tagStart + 1, tagEnd);
+    if (tagBody.startsWith("/")) {
+      const frame = frames.pop();
+      if (!frame) {
+        throw new Error("3MF XML contains mismatched element tags.");
+      }
+      normalized += `</${frame.emittedName}>`;
+      restoreNamespaces(frame.namespaceChanges);
+      cursor = tagEnd + 1;
+      continue;
+    }
+
+    const selfClosing = /\/[\t\n ]*$/u.test(tagBody);
+    const openingBody = selfClosing ? tagBody.replace(/\/[\t\n ]*$/u, "") : tagBody;
+    const openingMatch = /^([^\t\n /<>'"=]+)([\s\S]*)$/u.exec(openingBody);
+    if (!openingMatch) {
+      throw new Error("3MF XML contains a malformed element tag.");
+    }
+    const qualifiedName = openingMatch[1]!;
+    const { prefix, localName } = parseXmlQualifiedName(qualifiedName, "element");
+    const attributesSource = openingMatch[2]!;
+    const namespaceChanges: NamespaceChange[] = [];
+    const declaredPrefixes = new Set<string>();
+    const attributes = parseXmlAttributes(attributesSource);
+    for (const attribute of attributes) {
+      let declaredPrefix: string | null = null;
+      if (attribute.name === "xmlns") {
+        declaredPrefix = "";
+      } else if (attribute.name.startsWith("xmlns:")) {
+        declaredPrefix = attribute.name.slice("xmlns:".length);
+      }
+      if (declaredPrefix !== null) {
+        if (
+          (!declaredPrefix && attribute.name !== "xmlns") ||
+          (declaredPrefix && !XML_NCNAME_PATTERN.test(declaredPrefix))
+        ) {
+          throw new Error("3MF XML contains a malformed namespace prefix.");
+        }
+        if (declaredPrefixes.has(declaredPrefix)) {
+          throw new Error("3MF XML contains a duplicate namespace declaration.");
+        }
+        declaredPrefixes.add(declaredPrefix);
+        const namespaceValue = decodeXmlAttributeValue(attribute.value);
+        if (
+          declaredPrefix === "xmlns" ||
+          namespaceValue === XMLNS_NAMESPACE ||
+          (declaredPrefix === "xml" && namespaceValue !== XML_NAMESPACE) ||
+          (declaredPrefix !== "xml" && namespaceValue === XML_NAMESPACE) ||
+          (declaredPrefix !== "" && namespaceValue === "")
+        ) {
+          throw new Error("3MF XML contains an invalid reserved namespace declaration.");
+        }
+        namespaceChanges.push({
+          prefix: declaredPrefix,
+          ...(namespaces.has(declaredPrefix)
+            ? { previousValue: namespaces.get(declaredPrefix)! }
+            : {}),
+        });
+        if (namespaceValue === "") {
+          namespaces.delete(declaredPrefix);
+        } else {
+          namespaces.set(declaredPrefix, namespaceValue);
+        }
+      }
+    }
+    const expandedAttributeNames = new Set<string>();
+    for (const attribute of attributes) {
+      if (attribute.name === "xmlns" || attribute.name.startsWith("xmlns:")) {
+        continue;
+      }
+      decodeXmlAttributeValue(attribute.value);
+      const { prefix: attributePrefix, localName: attributeLocalName } = parseXmlQualifiedName(
+        attribute.name,
+        "attribute",
+      );
+      if (attributePrefix && !namespaces.has(attributePrefix)) {
+        throw new Error(
+          `3MF XML attribute '${attribute.name}' uses an undeclared namespace prefix.`,
+        );
+      }
+      const attributeNamespace = attributePrefix ? namespaces.get(attributePrefix)! : "";
+      const expandedName = `${attributeNamespace}\u0000${attributeLocalName}`;
+      if (expandedAttributeNames.has(expandedName)) {
+        throw new Error(
+          `3MF XML contains duplicate '${attribute.name}' attribute with the same expanded name.`,
+        );
+      }
+      expandedAttributeNames.add(expandedName);
+    }
+    const namespace = namespaces.get(prefix) ?? null;
+    if (prefix && namespace === null) {
+      throw new Error(`3MF XML element '${qualifiedName}' uses an undeclared namespace prefix.`);
+    }
+
+    const parentName = frames.at(-1)?.localName ?? null;
+    if (!sawRoot) {
+      sawRoot = true;
+      if (localName !== input.rootLocalName || namespace !== input.namespace) {
+        throw new Error("3MF root element is not in the expected XML namespace.");
+      }
+    } else if (frames.length === 0) {
+      throw new Error("3MF XML contains more than one document element.");
+    }
+
+    const elementRule = elementParentsByLowercase.get(localName.toLowerCase());
+    const isExpectedElement = namespace === input.namespace;
+    const validContext =
+      elementRule !== undefined &&
+      localName === elementRule.localName &&
+      parentName === elementRule.parentName;
+    const emittedName = elementRule
+      ? isExpectedElement && validContext
+        ? localName
+        : `ignored:${localName}`
+      : isExpectedElement
+        ? localName
+        : qualifiedName;
+    normalized += `<${emittedName}${attributesSource}${selfClosing ? "/" : ""}>`;
+    if (selfClosing) {
+      restoreNamespaces(namespaceChanges);
+    } else {
+      frames.push({ emittedName, localName: emittedName, namespaceChanges });
+    }
+    cursor = tagEnd + 1;
+  }
+  return normalized;
+}
+
+function normalizeCoreModelElements(source: string): string {
+  return normalizeNamespacedElements({
+    source,
+    namespace: CORE_MODEL_NAMESPACE,
+    rootLocalName: "model",
+    elementParents: CORE_ELEMENT_PARENTS,
+  });
+}
+
+function normalizePackageRelationshipsElements(source: string): string {
+  return normalizeNamespacedElements({
+    source,
+    namespace: PACKAGE_RELATIONSHIPS_NAMESPACE,
+    rootLocalName: "Relationships",
+    elementParents: RELATIONSHIP_ELEMENT_PARENTS,
+  });
+}
+
+function decodeXmlAttributeValue(value: string): string {
+  value = value.replace(/[\t\n]/gu, " ");
+  if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\dA-Fa-f]+);)/u.test(value)) {
+    throw new Error("3MF XML attribute contains an invalid character reference.");
+  }
+  return value.replace(
+    /&(amp|lt|gt|quot|apos|#(\d+)|#x([\dA-Fa-f]+));/gu,
+    (_reference, entity: string, decimal: string | undefined, hexadecimal: string | undefined) => {
+      if (decimal !== undefined || hexadecimal !== undefined) {
+        const codePoint = Number.parseInt(decimal ?? hexadecimal!, decimal === undefined ? 16 : 10);
+        if (!Number.isSafeInteger(codePoint) || !isValidXmlCodePoint(codePoint)) {
+          throw new Error("3MF XML attribute contains an invalid character reference.");
+        }
+        return String.fromCodePoint(codePoint);
+      }
+      switch (entity.toLowerCase()) {
+        case "amp":
+          return "&";
+        case "lt":
+          return "<";
+        case "gt":
+          return ">";
+        case "quot":
+          return '"';
+        case "apos":
+          return "'";
+        default:
+          return "";
+      }
+    },
+  );
+}
 
 function getAttribute(source: string, name: string): string | null {
-  const match = new RegExp(`\\b${name}="([^"]*)"`, "iu").exec(source);
-  return match?.[1] ?? null;
+  const expectedName = name.toLowerCase();
+  let matchedValue: string | undefined;
+  for (const attribute of parseXmlAttributes(source)) {
+    if (attribute.name.toLowerCase() === expectedName) {
+      if (matchedValue !== undefined) {
+        throw new Error(`3MF XML contains a duplicate '${name}' attribute.`);
+      }
+      matchedValue = decodeXmlAttributeValue(attribute.value);
+    }
+  }
+  return matchedValue ?? null;
 }
 
 function parseOptionalInteger(value: string | null): number | null {
@@ -95,14 +595,18 @@ function parseColor(value: string): ParsedColor {
 }
 
 function parseTransform(value: string | null): readonly number[] | null {
-  if (!value) {
+  if (value === null) {
     return null;
   }
-  const numbers = value
-    .trim()
-    .split(/\s+/u)
-    .map((part) => Number(part));
-  return numbers.length >= 12 && numbers.every(Number.isFinite) ? numbers.slice(0, 12) : null;
+  const parts = value.trim().split(/\s+/u);
+  const decimalPattern = /^[+-]?(?:(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)$/iu;
+  const numbers = parts.map((part) =>
+    decimalPattern.test(part) ? Math.fround(Number(part)) : NaN,
+  );
+  if (numbers.length !== 12 || !numbers.every(Number.isFinite)) {
+    throw new Error("3MF component or build item contains an invalid transform.");
+  }
+  return numbers;
 }
 
 function matrixFrom3mfTransform(
@@ -134,7 +638,24 @@ function matrixFrom3mfTransform(
   return matrix;
 }
 
-function countMatches(pattern: RegExp, source: string): number {
+function countParsedTags<T>(
+  pattern: RegExp,
+  source: string,
+  parse: (attributes: string) => T | null,
+): number {
+  pattern.lastIndex = 0;
+  let count = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(source)) !== null) {
+    if (parse(match[1]!) !== null) {
+      count += 1;
+    }
+  }
+  pattern.lastIndex = 0;
+  return count;
+}
+
+function countTags(pattern: RegExp, source: string): number {
   pattern.lastIndex = 0;
   let count = 0;
   while (pattern.exec(source) !== null) {
@@ -149,7 +670,10 @@ function parseColors(modelXml: string): ParsedColor[] {
   COLOR_PATTERN.lastIndex = 0;
   let match: RegExpExecArray | null;
   while ((match = COLOR_PATTERN.exec(modelXml)) !== null) {
-    colors.push(parseColor(match[1]!));
+    const value = getAttribute(match[1]!, "color");
+    if (value && /^#[0-9a-f]{6}(?:[0-9a-f]{2})?$/iu.test(value)) {
+      colors.push(parseColor(value));
+    }
   }
   COLOR_PATTERN.lastIndex = 0;
   return colors;
@@ -185,7 +709,12 @@ function parseObjects(modelXml: string): Map<string, ParsedObject> {
     if (!id) {
       continue;
     }
-    const meshMatch = /<mesh\b[^>]*>([\s\S]*?)<\/mesh>/iu.exec(body);
+    if (objects.has(id)) {
+      throw new Error(`3MF resources contain duplicate object id '${id}'.`);
+    }
+    const meshMatch = new RegExp(`<mesh\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/mesh>`, "iu").exec(
+      body,
+    );
     objects.set(id, {
       id,
       name: getAttribute(attributes, "name"),
@@ -199,7 +728,9 @@ function parseObjects(modelXml: string): Map<string, ParsedObject> {
 }
 
 function parseBuildItems(modelXml: string): ParsedBuildItem[] {
-  const buildMatch = /<build\b[^>]*>([\s\S]*?)<\/build>/iu.exec(modelXml);
+  const buildMatch = new RegExp(`<build\\b${XML_ATTRIBUTE_TEXT}>([\\s\\S]*?)<\\/build>`, "iu").exec(
+    modelXml,
+  );
   if (!buildMatch) {
     return [];
   }
@@ -224,8 +755,51 @@ function parseBuildItems(modelXml: string): ParsedBuildItem[] {
 }
 
 function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indices" | "positions"> {
-  const vertexCount = countMatches(VERTEX_PATTERN, meshBlock);
-  const triangleCount = countMatches(TRIANGLE_PATTERN, meshBlock);
+  const parseVertex = (attributes: string): readonly [number, number, number] | null => {
+    const parseCoordinate = (name: string): number => {
+      const value = getAttribute(attributes, name);
+      if (value === null || value.trim().length === 0) {
+        return Number.NaN;
+      }
+      const parsed = Number(value);
+      const stored = Math.fround(parsed);
+      return Number.isFinite(stored) ? stored : Number.NaN;
+    };
+    const x = parseCoordinate("x");
+    const y = parseCoordinate("y");
+    const z = parseCoordinate("z");
+    return Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(z) ? [x, y, z] : null;
+  };
+  const parseTriangle = (attributes: string): readonly [number, number, number] | null => {
+    const parseIndex = (name: string): number => {
+      const value = getAttribute(attributes, name);
+      return value !== null && /^\d+$/u.test(value) ? Number.parseInt(value, 10) : -1;
+    };
+    const v1 = parseIndex("v1");
+    const v2 = parseIndex("v2");
+    const v3 = parseIndex("v3");
+    return [v1, v2, v3].every((index) => Number.isSafeInteger(index) && index >= 0)
+      ? [v1, v2, v3]
+      : null;
+  };
+
+  const vertexCount = countParsedTags(VERTEX_PATTERN, meshBlock, parseVertex);
+  if (vertexCount !== countTags(VERTEX_PATTERN, meshBlock)) {
+    throw new Error("3MF mesh contains a vertex with invalid coordinates.");
+  }
+  const parseBoundedTriangle = (attributes: string): readonly [number, number, number] | null => {
+    const triangle = parseTriangle(attributes);
+    return triangle?.every((index) => index < vertexCount) && new Set(triangle).size === 3
+      ? triangle
+      : null;
+  };
+  const triangleCount = countParsedTags(TRIANGLE_PATTERN, meshBlock, parseBoundedTriangle);
+  if (triangleCount !== countTags(TRIANGLE_PATTERN, meshBlock)) {
+    throw new Error("3MF mesh contains a triangle that references an invalid vertex.");
+  }
+  if (vertexCount === 0 || triangleCount === 0) {
+    throw new Error("3MF mesh did not contain renderable triangle geometry.");
+  }
   const positions = new Float32Array(vertexCount * 3);
   const indices =
     vertexCount > 65_535 ? new Uint32Array(triangleCount * 3) : new Uint16Array(triangleCount * 3);
@@ -234,10 +808,14 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   let vertexIndex = 0;
   let vertexMatch: RegExpExecArray | null;
   while ((vertexMatch = VERTEX_PATTERN.exec(meshBlock)) !== null) {
+    const coordinates = parseVertex(vertexMatch[1]!);
+    if (!coordinates) {
+      continue;
+    }
     const base = vertexIndex * 3;
-    positions[base] = Number(vertexMatch[1]);
-    positions[base + 1] = Number(vertexMatch[2]);
-    positions[base + 2] = Number(vertexMatch[3]);
+    positions[base] = coordinates[0];
+    positions[base + 1] = coordinates[1];
+    positions[base + 2] = coordinates[2];
     vertexIndex += 1;
   }
   VERTEX_PATTERN.lastIndex = 0;
@@ -246,10 +824,14 @@ function parseGeometryData(meshBlock: string): Pick<CadThreeMfParsedMesh, "indic
   let triangleIndex = 0;
   let triangleMatch: RegExpExecArray | null;
   while ((triangleMatch = TRIANGLE_PATTERN.exec(meshBlock)) !== null) {
+    const triangle = parseBoundedTriangle(triangleMatch[1]!);
+    if (!triangle) {
+      continue;
+    }
     const base = triangleIndex * 3;
-    indices[base] = Number.parseInt(triangleMatch[1]!, 10);
-    indices[base + 1] = Number.parseInt(triangleMatch[2]!, 10);
-    indices[base + 2] = Number.parseInt(triangleMatch[3]!, 10);
+    indices[base] = triangle[0];
+    indices[base + 1] = triangle[1];
+    indices[base + 2] = triangle[2];
     triangleIndex += 1;
   }
   TRIANGLE_PATTERN.lastIndex = 0;
@@ -286,11 +868,84 @@ function materialForParsedMesh(
   });
 }
 
+function normalizeRootPartTarget(target: string): string {
+  const withoutQueryOrFragment = target.split(/[?#]/u, 1)[0] ?? "";
+  let decodedTarget: string;
+  try {
+    decodedTarget = decodeURIComponent(withoutQueryOrFragment);
+  } catch {
+    throw new Error("3MF root model relationship contains invalid percent encoding.");
+  }
+  if (/^[a-z][a-z\d+.-]*:/iu.test(decodedTarget) || decodedTarget.startsWith("//")) {
+    throw new Error("3MF root model relationship must target a package part.");
+  }
+  if (/[\\\u0000-\u001f\u007f]/u.test(decodedTarget)) {
+    throw new Error("3MF root model relationship contains invalid package path characters.");
+  }
+
+  const segments: string[] = [];
+  for (const segment of decodedTarget.replace(/^\/+/, "").split("/")) {
+    if (!segment || segment === ".") {
+      continue;
+    }
+    if (segment === "..") {
+      if (segments.length === 0) {
+        throw new Error("3MF root model relationship escapes the package root.");
+      }
+      segments.pop();
+      continue;
+    }
+    segments.push(segment);
+  }
+  if (segments.length === 0) {
+    throw new Error("3MF root model relationship did not name a model part.");
+  }
+  return segments.join("/");
+}
+
 function findRootModelXml(unzipped: Record<string, Uint8Array>): Uint8Array {
-  const entryName = Object.keys(unzipped).find((name) => MODEL_ENTRY_PATTERN.test(name));
+  const relationshipsEntryName = Object.keys(unzipped).find(
+    (name) => name.replace(/^\/+/, "").toLowerCase() === ROOT_RELATIONSHIPS_ENTRY,
+  );
+  const relationshipsBytes = relationshipsEntryName ? unzipped[relationshipsEntryName] : undefined;
+  if (!relationshipsBytes) {
+    throw new Error("3MF archive did not contain package root relationships.");
+  }
+
+  const relationshipsXml = normalizePackageRelationshipsElements(
+    structuralXml(decodeXmlBytes(relationshipsBytes)),
+  );
+  RELATIONSHIP_PATTERN.lastIndex = 0;
+  let relationshipMatch: RegExpExecArray | null;
+  let rootPartName: string | null = null;
+  while ((relationshipMatch = RELATIONSHIP_PATTERN.exec(relationshipsXml)) !== null) {
+    const prefix = relationshipMatch[1];
+    const attributes = relationshipMatch[2]!;
+    if (prefix !== undefined) {
+      continue;
+    }
+    if (getAttribute(attributes, "Type") !== ROOT_MODEL_RELATIONSHIP_TYPE) {
+      continue;
+    }
+    if (getAttribute(attributes, "TargetMode")?.toLowerCase() === "external") {
+      throw new Error("3MF root model relationship cannot target an external resource.");
+    }
+    const target = getAttribute(attributes, "Target");
+    if (!target) {
+      throw new Error("3MF root model relationship did not include a target.");
+    }
+    rootPartName = normalizeRootPartTarget(target);
+    break;
+  }
+  RELATIONSHIP_PATTERN.lastIndex = 0;
+  if (!rootPartName) {
+    throw new Error("3MF archive did not declare a root 3D model relationship.");
+  }
+
+  const entryName = Object.keys(unzipped).find((name) => name.replace(/^\/+/, "") === rootPartName);
   const entry = entryName ? unzipped[entryName] : undefined;
   if (!entry) {
-    throw new Error("3MF archive did not contain a root 3D model part.");
+    throw new Error(`3MF archive did not contain declared root model part '${rootPartName}'.`);
   }
   return entry;
 }
@@ -303,11 +958,12 @@ export function parseThreeMfFastModel(input: {
   readonly unzipped: Record<string, Uint8Array>;
 }): CadThreeMfParsedModel {
   const modelBytes = findRootModelXml(input.unzipped);
-  const modelXml = new TextDecoder().decode(modelBytes);
+  const modelXml = normalizeCoreModelElements(structuralXml(decodeXmlBytes(modelBytes)));
   const colors = parseColors(modelXml);
   const objects = parseObjects(modelXml);
   const buildItems = parseBuildItems(modelXml);
   const parsedMeshes = new Map<string, CadThreeMfParsedMesh>();
+  let expandedNodeCount = 0;
 
   const getParsedMesh = (object: ParsedObject): CadThreeMfParsedMesh | null => {
     if (!object.meshBlock) {
@@ -334,11 +990,18 @@ export function parseThreeMfFastModel(input: {
     stack: Set<string>,
   ): CadThreeMfParsedNode | null => {
     if (stack.has(objectId)) {
-      return null;
+      throw new Error("3MF component graph contains a cycle.");
     }
     const object = objects.get(objectId);
     if (!object) {
-      return null;
+      throw new Error(`3MF component or build item references missing object '${objectId}'.`);
+    }
+    if (stack.size >= MAX_COMPONENT_NESTING_DEPTH) {
+      throw new Error("3MF component graph exceeds the supported nesting depth.");
+    }
+    expandedNodeCount += 1;
+    if (expandedNodeCount > MAX_EXPANDED_NODE_COUNT) {
+      throw new Error("3MF component graph expands to too many scene nodes.");
     }
 
     const mesh = getParsedMesh(object);
