@@ -106,6 +106,16 @@ const CORE_ELEMENT_PARENTS = new Map<string, string>([
 const RELATIONSHIP_ELEMENT_PARENTS = new Map<string, string>([["Relationship", "Relationships"]]);
 
 function structuralXml(source: string): string {
+  for (const character of source) {
+    const codePoint = character.codePointAt(0)!;
+    if (
+      (codePoint < 0x20 && codePoint !== 0x9 && codePoint !== 0xa && codePoint !== 0xd) ||
+      codePoint === 0xfffe ||
+      codePoint === 0xffff
+    ) {
+      throw new Error("3MF XML contains a character forbidden by XML 1.0.");
+    }
+  }
   let structural = "";
   let cursor = 0;
   const openTags: string[] = [];
@@ -397,6 +407,7 @@ function normalizeNamespacedElements(input: {
       if (attribute.name === "xmlns" || attribute.name.startsWith("xmlns:")) {
         continue;
       }
+      decodeXmlAttributeValue(attribute.value);
       const { prefix: attributePrefix, localName: attributeLocalName } = parseXmlQualifiedName(
         attribute.name,
         "attribute",

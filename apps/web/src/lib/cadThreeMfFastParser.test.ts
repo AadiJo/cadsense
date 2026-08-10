@@ -81,11 +81,13 @@ describe("cadThreeMfFastParser", () => {
       `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:bad-prefix!="https://example.com/extension"/>`,
       `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:ext="https://example.com/extension"><resources xmlns:ext=""/></model>`,
       `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:a="https://example.com/shared" xmlns:b="https://example.com/shared" a:value="one" b:value="two"/>`,
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unused="&bogus;"/>`,
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unused="forbidden\u0000character"/>`,
     ];
 
     for (const modelXml of invalidModels) {
       expect(() => parseThreeMfFast({ three: THREE, unzipped: makeThreeMf(modelXml) })).toThrow(
-        /(?:qualified|namespace|expanded name)/i,
+        /(?:qualified|namespace|expanded name|character)/i,
       );
     }
   });
