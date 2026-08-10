@@ -819,7 +819,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
   });
 
-  it.effect("retries identical watcher contents after a transient secret failure", () => {
+  it.effect("observes immediate edits and retries them after a transient secret failure", () => {
     const values = new Map<string, Uint8Array>();
     let allowSuccess = false;
     let notifyReconciled: (() => void) | undefined;
