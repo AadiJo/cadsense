@@ -10,7 +10,11 @@
  * store.
  */
 import { useCallback, useMemo, useSyncExternalStore } from "react";
-import { ServerSettings, type ServerSettingsPatch } from "@cadsense/contracts";
+import {
+  ServerSettings,
+  type ServerSettings as ServerSettingsValue,
+  type ServerSettingsPatch,
+} from "@cadsense/contracts";
 import {
   type ClientSettingsPatch,
   type ClientSettings,
@@ -28,8 +32,24 @@ const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE = "[CLIENT_SETTINGS]";
 const clientSettingsListeners = new Set<() => void>();
 const clientSettingsHydrationListeners = new Set<() => void>();
 let clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+let persistedClientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+let clientSettingsPersistenceTail = Promise.resolve();
+let nextClientSettingsWriteId = 0;
+let pendingClientSettingsWrites: Array<{
+  id: number;
+  patch: ClientSettingsPatch;
+}> = [];
 let clientSettingsHydrated = false;
 let clientSettingsHydrationPromise: Promise<void> | null = null;
+let persistedServerSettingsSnapshot: ServerSettingsValue | null = null;
+let lastOptimisticServerSettingsSnapshot: ServerSettingsValue | null = null;
+let serverSettingsBaseHasExternalUpdate = false;
+let serverSettingsPersistenceTail = Promise.resolve();
+let nextServerSettingsWriteId = 0;
+let pendingServerSettingsWrites: Array<{
+  id: number;
+  patch: ServerSettingsPatch;
+}> = [];
 
 function emitClientSettingsChange() {
   for (const listener of clientSettingsListeners) {
@@ -50,6 +70,14 @@ function getClientSettingsSnapshot(): ClientSettings {
 function replaceClientSettingsSnapshot(settings: ClientSettings): void {
   clientSettingsSnapshot = settings;
   emitClientSettingsChange();
+}
+
+function refreshOptimisticClientSettingsSnapshot(): void {
+  let settings = persistedClientSettingsSnapshot;
+  for (const pendingWrite of pendingClientSettingsWrites) {
+    settings = { ...settings, ...pendingWrite.patch };
+  }
+  replaceClientSettingsSnapshot(settings);
 }
 
 function setClientSettingsHydrated(nextHydrated: boolean): void {
@@ -92,7 +120,9 @@ async function hydrateClientSettings(): Promise<void> {
     try {
       const persistedSettings = await ensureLocalApi().persistence.getClientSettings();
       if (persistedSettings) {
-        replaceClientSettingsSnapshot({ ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings });
+        const hydratedSettings = { ...DEFAULT_CLIENT_SETTINGS, ...persistedSettings };
+        persistedClientSettingsSnapshot = hydratedSettings;
+        refreshOptimisticClientSettingsSnapshot();
       }
     } catch (error) {
       console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} hydrate failed`, error);
@@ -111,13 +141,136 @@ async function hydrateClientSettings(): Promise<void> {
   return clientSettingsHydrationPromise;
 }
 
-function persistClientSettings(settings: ClientSettings): void {
-  replaceClientSettingsSnapshot(settings);
-  void ensureLocalApi()
-    .persistence.setClientSettings(settings)
-    .catch((error) => {
-      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, error);
-    });
+async function persistClientSettings(patch: ClientSettingsPatch): Promise<void> {
+  const pendingWrite = {
+    id: nextClientSettingsWriteId++,
+    patch,
+  };
+  pendingClientSettingsWrites.push(pendingWrite);
+  refreshOptimisticClientSettingsSnapshot();
+
+  const write = clientSettingsPersistenceTail.then(async () => {
+    await hydrateClientSettings();
+    const settings = { ...persistedClientSettingsSnapshot, ...patch };
+    await ensureLocalApi().persistence.setClientSettings(settings);
+    persistedClientSettingsSnapshot = settings;
+  });
+  clientSettingsPersistenceTail = write.catch(() => undefined);
+  try {
+    await write;
+  } finally {
+    pendingClientSettingsWrites = pendingClientSettingsWrites.filter(
+      (candidate) => candidate.id !== pendingWrite.id,
+    );
+    refreshOptimisticClientSettingsSnapshot();
+  }
+}
+
+function refreshOptimisticServerSettingsSnapshot(): void {
+  if (!persistedServerSettingsSnapshot) {
+    return;
+  }
+  let settings = persistedServerSettingsSnapshot;
+  for (const pendingWrite of pendingServerSettingsWrites) {
+    settings = applyServerSettingsPatch(settings, pendingWrite.patch);
+  }
+  lastOptimisticServerSettingsSnapshot = settings;
+  applySettingsUpdated(settings);
+}
+
+function settingsValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => settingsValuesEqual(value, right[index]))
+    );
+  }
+  if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) {
+    return false;
+  }
+  const leftRecord = left as Readonly<Record<string, unknown>>;
+  const rightRecord = right as Readonly<Record<string, unknown>>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) && settingsValuesEqual(leftRecord[key], rightRecord[key]),
+    )
+  );
+}
+
+function applyNonConflictingServerSettingsPatch(
+  base: ServerSettingsValue,
+  current: ServerSettingsValue,
+  patch: ServerSettingsPatch,
+): ServerSettingsValue {
+  const nonConflictingPatch = Object.fromEntries(
+    Object.entries(patch).filter(([key]) =>
+      settingsValuesEqual(
+        base[key as keyof ServerSettingsValue],
+        current[key as keyof ServerSettingsValue],
+      ),
+    ),
+  ) as ServerSettingsPatch;
+  return applyServerSettingsPatch(current, nonConflictingPatch);
+}
+
+async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> {
+  const currentSettings = getServerConfig()?.settings;
+  if (currentSettings && currentSettings !== lastOptimisticServerSettingsSnapshot) {
+    if (pendingServerSettingsWrites.length > 0) {
+      serverSettingsBaseHasExternalUpdate = true;
+    }
+    persistedServerSettingsSnapshot = currentSettings;
+  }
+  const pendingWrite = {
+    id: nextServerSettingsWriteId++,
+    patch,
+  };
+  pendingServerSettingsWrites.push(pendingWrite);
+  refreshOptimisticServerSettingsSnapshot();
+
+  let writeBase: ServerSettingsValue | null = null;
+  const write = serverSettingsPersistenceTail.then(async () => {
+    writeBase = persistedServerSettingsSnapshot;
+    const settings = await ensureLocalApi().server.updateSettings(patch);
+    persistedServerSettingsSnapshot =
+      !serverSettingsBaseHasExternalUpdate &&
+      (persistedServerSettingsSnapshot === writeBase || persistedServerSettingsSnapshot === null)
+        ? settings
+        : applyServerSettingsPatch(persistedServerSettingsSnapshot ?? settings, patch);
+  });
+  serverSettingsPersistenceTail = write.catch(() => undefined);
+  let succeeded = false;
+  try {
+    await write;
+    succeeded = true;
+  } finally {
+    const currentSettings = getServerConfig()?.settings;
+    if (currentSettings && currentSettings !== lastOptimisticServerSettingsSnapshot) {
+      serverSettingsBaseHasExternalUpdate = true;
+      persistedServerSettingsSnapshot =
+        succeeded && writeBase
+          ? applyNonConflictingServerSettingsPatch(writeBase, currentSettings, patch)
+          : currentSettings;
+    }
+    pendingServerSettingsWrites = pendingServerSettingsWrites.filter(
+      (candidate) => candidate.id !== pendingWrite.id,
+    );
+    refreshOptimisticServerSettingsSnapshot();
+    if (pendingServerSettingsWrites.length === 0) {
+      persistedServerSettingsSnapshot = null;
+      lastOptimisticServerSettingsSnapshot = null;
+      serverSettingsBaseHasExternalUpdate = false;
+    }
+  }
 }
 
 // ── Key sets for routing patches ─────────────────────────────────────
@@ -186,6 +339,25 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
   return useMemo(() => (selector ? selector(merged) : (merged as T)), [merged, selector]);
 }
 
+export async function updateSettingsAndWait(patch: Partial<UnifiedSettings>): Promise<void> {
+  const { serverPatch, clientPatch } = splitPatch(patch);
+  const writes: Promise<void>[] = [];
+
+  if (Object.keys(serverPatch).length > 0) {
+    writes.push(persistServerSettings(serverPatch));
+  }
+
+  if (Object.keys(clientPatch).length > 0) {
+    writes.push(persistClientSettings(clientPatch));
+  }
+
+  const results = await Promise.allSettled(writes);
+  const failure = results.find((result) => result.status === "rejected");
+  if (failure?.status === "rejected") {
+    throw failure.reason;
+  }
+}
+
 /**
  * Returns an updater that routes each key to the correct backing store.
  *
@@ -193,24 +365,10 @@ export function useSettings<T = UnifiedSettings>(selector?: (s: UnifiedSettings)
  * persisted via RPC. Client keys go through client persistence.
  */
 export function useUpdateSettings() {
-  const updateSettings = useCallback((patch: Partial<UnifiedSettings>) => {
-    const { serverPatch, clientPatch } = splitPatch(patch);
-
-    if (Object.keys(serverPatch).length > 0) {
-      const currentServerConfig = getServerConfig();
-      if (currentServerConfig) {
-        applySettingsUpdated(applyServerSettingsPatch(currentServerConfig.settings, serverPatch));
-      }
-      // Fire-and-forget RPC — push will reconcile on success
-      void ensureLocalApi().server.updateSettings(serverPatch);
-    }
-
-    if (Object.keys(clientPatch).length > 0) {
-      persistClientSettings({
-        ...getClientSettingsSnapshot(),
-        ...clientPatch,
-      });
-    }
+  const updateSettings = useCallback((patch: Partial<UnifiedSettings>): void => {
+    void updateSettingsAndWait(patch).catch((error) => {
+      console.error(`${CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE} persist failed`, error);
+    });
   }, []);
 
   const resetSettings = useCallback(() => {
@@ -219,14 +377,25 @@ export function useUpdateSettings() {
 
   return {
     updateSettings,
+    updateSettingsAndWait,
     resetSettings,
   };
 }
 
 export function __resetClientSettingsPersistenceForTests(): void {
   clientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  persistedClientSettingsSnapshot = DEFAULT_CLIENT_SETTINGS;
+  clientSettingsPersistenceTail = Promise.resolve();
+  nextClientSettingsWriteId = 0;
+  pendingClientSettingsWrites = [];
   clientSettingsHydrated = false;
   clientSettingsHydrationPromise = null;
+  persistedServerSettingsSnapshot = null;
+  lastOptimisticServerSettingsSnapshot = null;
+  serverSettingsBaseHasExternalUpdate = false;
+  serverSettingsPersistenceTail = Promise.resolve();
+  nextServerSettingsWriteId = 0;
+  pendingServerSettingsWrites = [];
   clientSettingsListeners.clear();
   clientSettingsHydrationListeners.clear();
 }
