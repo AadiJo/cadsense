@@ -31,6 +31,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -708,7 +709,7 @@ const makeServerSettings = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
     const settingsFile = pathService.basename(settingsPath);
     const settingsPathResolved = pathService.resolve(settingsPath);
-    const watcherReadyFile = ".cadsense-settings-watcher-ready";
+    const watcherReadyFile = `.cadsense-settings-watcher-ready-${crypto.randomUUID()}`;
     const watcherReadyPath = pathService.resolve(settingsDir, watcherReadyFile);
     const watcherReady = yield* Deferred.make<void, ServerSettingsError>();
 
@@ -745,10 +746,10 @@ const makeServerSettings = Effect.gen(function* () {
       Stream.debounce(Duration.millis(100)),
     );
 
-    yield* Stream.runForEach(debouncedSettingsEvents, () => revalidateAndEmitSafely).pipe(
-      Effect.ignoreCause({ log: true }),
-      Effect.forkIn(watcherScope),
-    );
+    const watcherFiber = yield* Stream.runForEach(
+      debouncedSettingsEvents,
+      () => revalidateAndEmitSafely,
+    ).pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(watcherScope));
 
     // `FileSystem.watch` is a lazy stream. Confirm that its native subscription is
     // active before `start` reports readiness, otherwise an edit made immediately
@@ -774,7 +775,10 @@ const makeServerSettings = Effect.gen(function* () {
         settingsPath,
         detail: "settings file watcher did not become ready",
       });
-    }).pipe(Effect.ensuring(fs.remove(watcherReadyPath, { force: true }).pipe(Effect.ignore)));
+    }).pipe(
+      Effect.onError(() => Fiber.interrupt(watcherFiber).pipe(Effect.asVoid)),
+      Effect.ensuring(fs.remove(watcherReadyPath, { force: true }).pipe(Effect.ignore)),
+    );
   });
 
   const start = Effect.gen(function* () {

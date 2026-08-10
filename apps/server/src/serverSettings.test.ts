@@ -17,6 +17,7 @@ import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -744,6 +745,26 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(values.size, 0);
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
   });
+
+  it.effect("does not overwrite a pre-existing legacy watcher sentinel", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pathService = yield* Path.Path;
+      const settingsDirectory = pathService.dirname(serverConfig.settingsPath);
+      const legacySentinelPath = pathService.join(
+        settingsDirectory,
+        ".cadsense-settings-watcher-ready",
+      );
+      yield* fileSystem.makeDirectory(settingsDirectory, { recursive: true });
+      yield* fileSystem.writeFileString(legacySentinelPath, "user-owned contents");
+
+      yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
+
+      assert.equal(yield* fileSystem.readFileString(legacySentinelPath), "user-owned contents");
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
 
   it.effect("does not rewrite malformed settings while reconciling secrets at startup", () => {
     let removeCalls = 0;
