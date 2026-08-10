@@ -2,7 +2,7 @@
 
 import { CheckIcon } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ProviderInstanceId,
   ProviderDriverKind,
@@ -115,7 +115,7 @@ interface AddProviderInstanceDialogProps {
 
 export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderInstanceDialogProps) {
   const settings = useSettings();
-  const { updateSettings } = useUpdateSettings();
+  const { updateSettingsAndWait } = useUpdateSettings();
 
   const [wizardStep, setWizardStep] = useState(0);
   const [driver, setDriver] = useState<ProviderDriverKind>(DEFAULT_DRIVER_KIND);
@@ -129,6 +129,20 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   // Errors are suppressed until the user has tried to submit once. After that
   // they update live so fixing the problem clears the message in place.
   const [hasAttemptedSubmit, setHasAttemptedSubmit] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const dialogSessionRef = useRef(0);
+  const openRef = useRef(open);
+  openRef.current = open;
+
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (nextOpen !== openRef.current) {
+        dialogSessionRef.current += 1;
+      }
+      onOpenChange(nextOpen);
+    },
+    [onOpenChange],
+  );
 
   const existingIds = useMemo(
     () => new Set(Object.keys(settings.providerInstances ?? {})),
@@ -138,6 +152,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
   // Reset the form every time the dialog opens so each creation starts
   // from a clean slate.
   useEffect(() => {
+    dialogSessionRef.current += 1;
     if (!open) return;
     setDriver(DEFAULT_DRIVER_KIND);
     setLabel("");
@@ -147,7 +162,16 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     setInstanceIdDirty(false);
     setConfigByDriver({});
     setHasAttemptedSubmit(false);
+    setIsSaving(false);
   }, [open]);
+
+  useEffect(
+    () => () => {
+      openRef.current = false;
+      dialogSessionRef.current += 1;
+    },
+    [],
+  );
 
   // Auto-derive the instance id from driver + label until the user types
   // in the Instance ID field directly (after which they own its value).
@@ -183,9 +207,9 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     [driver],
   );
 
-  const handleSave = useCallback(() => {
+  const handleSave = useCallback(async () => {
     setHasAttemptedSubmit(true);
-    if (instanceIdError !== null) return;
+    if (instanceIdError !== null || isSaving) return;
 
     const config = configByDriver[driver] ?? {};
     const hasConfig = Object.keys(config).length > 0;
@@ -207,20 +231,28 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
       ...settings.providerInstances,
       [brandedId]: nextInstance,
     };
+    setIsSaving(true);
+    const dialogSession = dialogSessionRef.current;
     try {
-      updateSettings({ providerInstances: nextMap });
+      await updateSettingsAndWait({ providerInstances: nextMap });
+      if (!openRef.current || dialogSessionRef.current !== dialogSession) return;
       toastManager.add({
         type: "success",
         title: "Provider instance added",
         description: `${driverOption.label} instance '${instanceId}' was added.`,
       });
-      onOpenChange(false);
+      handleOpenChange(false);
     } catch (error) {
+      if (!openRef.current || dialogSessionRef.current !== dialogSession) return;
       toastManager.add({
         type: "error",
         title: "Could not add provider instance",
         description: error instanceof Error ? error.message : "Update failed.",
       });
+    } finally {
+      if (openRef.current && dialogSessionRef.current === dialogSession) {
+        setIsSaving(false);
+      }
     }
   }, [
     driver,
@@ -230,13 +262,14 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
     instanceIdError,
     label,
     accentColor,
-    onOpenChange,
+    handleOpenChange,
     settings.providerInstances,
-    updateSettings,
+    isSaving,
+    updateSettingsAndWait,
   ]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogPopup className="max-w-xl overflow-hidden">
         <div className="flex min-h-0 flex-col overflow-hidden border-foreground/10 bg-background shadow-2xl">
           <DialogHeader className="border-b border-border/70 bg-background">
@@ -466,7 +499,7 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
               size="sm"
               onClick={() => {
                 if (wizardStep === 0) {
-                  onOpenChange(false);
+                  handleOpenChange(false);
                   return;
                 }
                 setWizardStep((step) => Math.max(0, step - 1));
@@ -479,8 +512,8 @@ export function AddProviderInstanceDialog({ open, onOpenChange }: AddProviderIns
                 Next
               </Button>
             ) : (
-              <Button size="sm" onClick={handleSave}>
-                Add instance
+              <Button size="sm" disabled={isSaving} onClick={() => void handleSave()}>
+                {isSaving ? "Adding…" : "Add instance"}
               </Button>
             )}
           </DialogFooter>

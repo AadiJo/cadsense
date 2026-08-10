@@ -1,10 +1,9 @@
-import { unzipSync } from "three/examples/jsm/libs/fflate.module.js";
-
 import {
   parseThreeMfFastModel,
   type CadThreeMfParsedMesh,
   type CadThreeMfParsedModel,
 } from "./cadThreeMfFastParser";
+import { unzipThreeMfWithinLimits } from "./cadThreeMfResourceLimits";
 
 type ParseRequest = {
   readonly id: number;
@@ -40,7 +39,7 @@ function collectTransferables(model: CadThreeMfParsedModel): Transferable[] {
 
 workerSelf.addEventListener("message", (event) => {
   try {
-    const unzipped = unzipSync(new Uint8Array(event.data.buffer));
+    const unzipped = unzipThreeMfWithinLimits(new Uint8Array(event.data.buffer));
     const model = parseThreeMfFastModel({ unzipped });
     const response: ParseResponse = {
       id: event.data.id,
