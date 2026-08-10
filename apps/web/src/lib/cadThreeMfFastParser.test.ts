@@ -75,6 +75,35 @@ describe("cadThreeMfFastParser", () => {
     }
   });
 
+  it("validates XML characters and references in attributes and text nodes", () => {
+    const invalidModels = [
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unused="&#xFFFE;"/>`,
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" unused="${String.fromCodePoint(0xfffe)}"/>`,
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata>&bogus;</metadata></model>`,
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><metadata>&#xFFFE;</metadata></model>`,
+    ];
+
+    for (const modelXml of invalidModels) {
+      expect(() => parseThreeMfFast({ three: THREE, unzipped: makeThreeMf(modelXml) })).toThrow(
+        /character|XML 1\.0/i,
+      );
+    }
+
+    const invalidUtf8 = makeThreeMf(
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"/>`,
+    );
+    invalidUtf8["3D/3dmodel.model"] = Uint8Array.from([0x3c, 0x6d, 0x6f, 0x64, 0xc0, 0xaf, 0x3e]);
+    expect(() => parseThreeMfFast({ three: THREE, unzipped: invalidUtf8 })).toThrow(/UTF-8/i);
+  });
+
+  it("normalizes raw XML line endings and attribute whitespace", () => {
+    const unzipped = makeThreeMf(
+      `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" name="line\r\nbreak"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources><build><item objectid="1"/></build></model>`,
+    );
+
+    expect(parseThreeMfFast({ three: THREE, unzipped }).children[0]!.name).toBe("line break");
+  });
+
   it("rejects invalid QNames, prefixed undeclaration, and duplicate expanded attributes", () => {
     const invalidModels = [
       `<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><1object/></resources></model>`,

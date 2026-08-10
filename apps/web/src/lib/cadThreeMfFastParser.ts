@@ -104,15 +104,31 @@ const CORE_ELEMENT_PARENTS = new Map<string, string>([
   ["item", "build"],
 ]);
 const RELATIONSHIP_ELEMENT_PARENTS = new Map<string, string>([["Relationship", "Relationships"]]);
+const xmlTextDecoder = new TextDecoder("utf-8", { fatal: true });
+
+function isValidXmlCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint === 0x9 || codePoint === 0xa || codePoint === 0xd || codePoint >= 0x20) &&
+    codePoint <= 0x10ffff &&
+    !(codePoint >= 0xd800 && codePoint <= 0xdfff) &&
+    codePoint !== 0xfffe &&
+    codePoint !== 0xffff
+  );
+}
+
+function decodeXmlBytes(bytes: Uint8Array): string {
+  try {
+    return xmlTextDecoder.decode(bytes);
+  } catch {
+    throw new Error("3MF XML is not valid UTF-8.");
+  }
+}
 
 function structuralXml(source: string): string {
+  source = source.replace(/\r\n?/gu, "\n");
   for (const character of source) {
     const codePoint = character.codePointAt(0)!;
-    if (
-      (codePoint < 0x20 && codePoint !== 0x9 && codePoint !== 0xa && codePoint !== 0xd) ||
-      codePoint === 0xfffe ||
-      codePoint === 0xffff
-    ) {
+    if (!isValidXmlCodePoint(codePoint)) {
       throw new Error("3MF XML contains a character forbidden by XML 1.0.");
     }
   }
@@ -123,6 +139,7 @@ function structuralXml(source: string): string {
     if (value.includes("]]>")) {
       throw new Error("3MF XML contains an unterminated comment or CDATA section.");
     }
+    decodeXmlAttributeValue(value);
     structural += value;
   };
   while (cursor < source.length) {
@@ -484,6 +501,7 @@ function normalizePackageRelationshipsElements(source: string): string {
 }
 
 function decodeXmlAttributeValue(value: string): string {
+  value = value.replace(/[\t\n]/gu, " ");
   if (/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[\dA-Fa-f]+);)/u.test(value)) {
     throw new Error("3MF XML attribute contains an invalid character reference.");
   }
@@ -492,14 +510,7 @@ function decodeXmlAttributeValue(value: string): string {
     (_reference, entity: string, decimal: string | undefined, hexadecimal: string | undefined) => {
       if (decimal !== undefined || hexadecimal !== undefined) {
         const codePoint = Number.parseInt(decimal ?? hexadecimal!, decimal === undefined ? 16 : 10);
-        if (
-          !Number.isSafeInteger(codePoint) ||
-          (codePoint !== 0x9 && codePoint !== 0xa && codePoint !== 0xd && codePoint < 0x20) ||
-          codePoint > 0x10ffff ||
-          (codePoint >= 0xd800 && codePoint <= 0xdfff) ||
-          codePoint === 0xfffe ||
-          codePoint === 0xffff
-        ) {
+        if (!Number.isSafeInteger(codePoint) || !isValidXmlCodePoint(codePoint)) {
           throw new Error("3MF XML attribute contains an invalid character reference.");
         }
         return String.fromCodePoint(codePoint);
@@ -872,7 +883,7 @@ function findRootModelXml(unzipped: Record<string, Uint8Array>): Uint8Array {
   }
 
   const relationshipsXml = normalizePackageRelationshipsElements(
-    structuralXml(new TextDecoder().decode(relationshipsBytes)),
+    structuralXml(decodeXmlBytes(relationshipsBytes)),
   );
   RELATIONSHIP_PATTERN.lastIndex = 0;
   let relationshipMatch: RegExpExecArray | null;
@@ -917,7 +928,7 @@ export function parseThreeMfFastModel(input: {
   readonly unzipped: Record<string, Uint8Array>;
 }): CadThreeMfParsedModel {
   const modelBytes = findRootModelXml(input.unzipped);
-  const modelXml = normalizeCoreModelElements(structuralXml(new TextDecoder().decode(modelBytes)));
+  const modelXml = normalizeCoreModelElements(structuralXml(decodeXmlBytes(modelBytes)));
   const colors = parseColors(modelXml);
   const objects = parseObjects(modelXml);
   const buildItems = parseBuildItems(modelXml);
