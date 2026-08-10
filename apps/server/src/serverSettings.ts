@@ -421,7 +421,7 @@ const makeServerSettings = Effect.gen(function* () {
         }
 
         nextSecretKeys.add(secretName);
-        if (!variable.valueRedacted) {
+        if (!variable.valueRedacted || variable.value.length > 0) {
           if (variable.value.length > 0) {
             mutations.set(secretName, {
               type: "set",

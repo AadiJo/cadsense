@@ -598,6 +598,54 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("migrates inline redacted secrets before unrelated settings updates", () => {
+    const values = new Map<string, Uint8Array>();
+    const secretStore: ServerSecretStoreShape = {
+      get: (name) => Effect.sync(() => values.get(name) ?? null),
+      set: (name, value) =>
+        Effect.sync(() => {
+          values.set(name, Uint8Array.from(value));
+        }),
+      remove: (name) => Effect.sync(() => values.delete(name)).pipe(Effect.asVoid),
+      getOrCreateRandom: () =>
+        Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
+    };
+
+    return Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsService;
+      const serverConfig = yield* ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const instanceId = ProviderInstanceId.make("codex_personal");
+      const inlineSecret = "externally-managed-secret";
+
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        `{
+  "providerInstances": {
+    "codex_personal": {
+      "driver": "codex",
+      "environment": [
+        {
+          "name": "OPENROUTER_API_KEY",
+          "value": "${inlineSecret}",
+          "sensitive": true,
+          "valueRedacted": true
+        }
+      ],
+      "config": {}
+    }
+  }
+}\n`,
+      );
+
+      const next = yield* serverSettings.updateSettings({ enableAssistantStreaming: false });
+
+      assert.equal(next.providerInstances[instanceId]?.environment?.[0]?.value, inlineSecret);
+      assert.notInclude(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSecret);
+      assert.equal(new TextDecoder().decode(Array.from(values.values())[0]), inlineSecret);
+    }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
+  });
+
   it.effect("keeps active environment secrets when settings validation fails", () =>
     Effect.gen(function* () {
       const serverSettings = yield* ServerSettingsService;
