@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   clearCadProviderThreadAliasesForTests,
+  isCadThreadDeleted,
+  markCadThreadCreated,
+  markCadThreadDeleted,
   registerCadProviderThreadAlias,
   readProviderResumeThreadId,
   resolveCadRequestThreadId,
@@ -106,5 +109,15 @@ describe("CadThreadAliases", () => {
     unregisterCadThreadReferences(parentThreadId);
 
     expect(resolveCadRequestThreadId(ThreadId.make("provider-thread"))).toBe("provider-thread");
+  });
+
+  it("allows a newly created thread to reuse a deleted thread id", () => {
+    const reusedThreadId = ThreadId.make("reused-thread");
+
+    markCadThreadDeleted(reusedThreadId);
+    expect(isCadThreadDeleted(reusedThreadId)).toBe(true);
+
+    markCadThreadCreated(reusedThreadId);
+    expect(isCadThreadDeleted(reusedThreadId)).toBe(false);
   });
 });

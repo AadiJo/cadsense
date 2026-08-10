@@ -71,6 +71,10 @@ export function markCadThreadDeleted(threadId: ThreadId): void {
   unregisterCadThreadReferences(threadId);
 }
 
+export function markCadThreadCreated(threadId: ThreadId): void {
+  deletedThreadIds.delete(threadId);
+}
+
 export function isCadThreadDeleted(threadId: ThreadId): boolean {
   return deletedThreadIds.has(threadId);
 }
