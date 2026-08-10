@@ -650,6 +650,10 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
   it.effect("reconciles external secret removal after a malformed watcher event", () => {
     const values = new Map<string, Uint8Array>();
+    let notifyRemoved: (() => void) | undefined;
+    const removed = new Promise<void>((resolve) => {
+      notifyRemoved = resolve;
+    });
     const secretStore: ServerSecretStoreShape = {
       get: (name) => Effect.sync(() => values.get(name) ?? null),
       set: (name, value) =>
@@ -659,6 +663,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       remove: (name) =>
         Effect.sync(() => {
           values.delete(name);
+          notifyRemoved?.();
         }),
       getOrCreateRandom: () =>
         Effect.fail(new SecretStoreError({ message: "not used in settings test" })),
@@ -711,11 +716,12 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       );
 
       yield* fileSystem.writeFileString(serverConfig.settingsPath, "{}\n");
-      for (let attempt = 0; attempt < 5; attempt++) {
+      for (let attempt = 0; attempt < 100 && values.size > 0; attempt++) {
         yield* Effect.promise(() => sleep(50));
         yield* TestClock.adjust(Duration.millis(150));
         yield* Effect.yieldNow;
       }
+      yield* Effect.promise(() => removed);
 
       assert.equal(values.size, 0);
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
