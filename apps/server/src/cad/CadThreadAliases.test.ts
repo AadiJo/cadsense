@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import {
   CAD_THREAD_TOMBSTONE_CAPACITY,
+  acquireCadThreadLifecycleGuard,
   clearCadProviderThreadAliasesForTests,
   isCadThreadDeleted,
   markCadThreadCreated,
@@ -132,5 +133,32 @@ describe("CadThreadAliases", () => {
     expect(
       isCadThreadDeleted(ThreadId.make(`deleted-thread-${CAD_THREAD_TOMBSTONE_CAPACITY}`)),
     ).toBe(true);
+  });
+
+  it("keeps deleted state pinned for an in-flight session after tombstone eviction", () => {
+    const delayedThreadId = ThreadId.make("delayed-thread");
+    const guard = acquireCadThreadLifecycleGuard(delayedThreadId);
+    markCadThreadDeleted(delayedThreadId);
+    for (let index = 0; index < CAD_THREAD_TOMBSTONE_CAPACITY; index += 1) {
+      markCadThreadDeleted(ThreadId.make(`newer-deleted-thread-${index}`));
+    }
+
+    expect(isCadThreadDeleted(delayedThreadId)).toBe(false);
+    expect(guard.isDeleted()).toBe(true);
+    guard.release();
+  });
+
+  it("isolates recreated threads from guards captured by the deleted generation", () => {
+    const reusedThreadId = ThreadId.make("reused-while-starting");
+    const deletedGeneration = acquireCadThreadLifecycleGuard(reusedThreadId);
+    markCadThreadDeleted(reusedThreadId);
+    markCadThreadCreated(reusedThreadId);
+    const recreatedGeneration = acquireCadThreadLifecycleGuard(reusedThreadId);
+
+    expect(deletedGeneration.isDeleted()).toBe(true);
+    expect(recreatedGeneration.isDeleted()).toBe(false);
+
+    deletedGeneration.release();
+    recreatedGeneration.release();
   });
 });

@@ -8,6 +8,7 @@ interface CadThreadAlias {
 const aliasByProviderThreadId = new Map<string, CadThreadAlias>();
 const providerThreadIdsByOwnerThreadId = new Map<ThreadId, Set<string>>();
 const deletedThreadIds = new Set<ThreadId>();
+const activeLifecycleGuardsByThreadId = new Map<ThreadId, Set<{ deleted: boolean }>>();
 export const CAD_THREAD_TOMBSTONE_CAPACITY = 10_000;
 
 function deleteAlias(providerThreadId: string): void {
@@ -68,6 +69,9 @@ export function unregisterCadThreadReferences(threadId: ThreadId): void {
 }
 
 export function markCadThreadDeleted(threadId: ThreadId): void {
+  for (const guard of activeLifecycleGuardsByThreadId.get(threadId) ?? []) {
+    guard.deleted = true;
+  }
   deletedThreadIds.delete(threadId);
   deletedThreadIds.add(threadId);
   if (deletedThreadIds.size > CAD_THREAD_TOMBSTONE_CAPACITY) {
@@ -87,6 +91,25 @@ export function isCadThreadDeleted(threadId: ThreadId): boolean {
   return deletedThreadIds.has(threadId);
 }
 
+export function acquireCadThreadLifecycleGuard(threadId: ThreadId): {
+  readonly isDeleted: () => boolean;
+  readonly release: () => void;
+} {
+  const guard = { deleted: deletedThreadIds.has(threadId) };
+  const guards = activeLifecycleGuardsByThreadId.get(threadId) ?? new Set();
+  guards.add(guard);
+  activeLifecycleGuardsByThreadId.set(threadId, guards);
+  return {
+    isDeleted: () => guard.deleted,
+    release: () => {
+      guards.delete(guard);
+      if (guards.size === 0) {
+        activeLifecycleGuardsByThreadId.delete(threadId);
+      }
+    },
+  };
+}
+
 export function resolveCadRequestThreadId(requestThreadId: ThreadId): ThreadId {
   return aliasByProviderThreadId.get(requestThreadId)?.cadThreadId ?? requestThreadId;
 }
@@ -95,4 +118,5 @@ export function clearCadProviderThreadAliasesForTests(): void {
   aliasByProviderThreadId.clear();
   providerThreadIdsByOwnerThreadId.clear();
   deletedThreadIds.clear();
+  activeLifecycleGuardsByThreadId.clear();
 }
