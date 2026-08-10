@@ -251,6 +251,18 @@ describe("cadThreeMfFastParser", () => {
     expect(parseThreeMfFast({ three: THREE, unzipped }).children[0]?.name).toBe("root");
   });
 
+  it("does not interpret comment markers inside processing instructions", () => {
+    const unzipped = makeThreeMf(`<?xml version="1.0"?>
+<?decoy <!-- ?>
+<!-- an ordinary comment after the processing instruction -->
+<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">
+  <resources><object id="1"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object></resources>
+  <build><item objectid="1"/></build>
+</model>`);
+
+    expect(parseThreeMfFast({ three: THREE, unzipped }).children).toHaveLength(1);
+  });
+
   it("rejects DTD declarations rather than interpreting custom entity markup", () => {
     const unzipped = makeThreeMf(`<?xml version="1.0"?>
 <!DOCTYPE model [<!ENTITY decoy "<vertex x='0' y='0' z='0'/>">]>

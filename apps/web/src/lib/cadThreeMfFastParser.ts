@@ -87,27 +87,61 @@ const MAX_COMPONENT_NESTING_DEPTH = 512;
 const MAX_EXPANDED_NODE_COUNT = 100_000;
 
 function structuralXml(source: string): string {
-  const withoutComments = source.replace(/<!--([\s\S]*?)-->/gu, (_comment, body: string) => {
-    if (body.includes("--") || body.endsWith("-")) {
-      throw new Error("3MF XML contains a malformed comment.");
+  let structural = "";
+  let cursor = 0;
+  const appendCharacterData = (value: string): void => {
+    if (value.includes("]]>")) {
+      throw new Error("3MF XML contains an unterminated comment or CDATA section.");
     }
-    return "";
-  });
-  const withoutCdata = withoutComments.replace(/<!\[CDATA\[[\s\S]*?\]\]>/gu, "");
-  if (/<!--|-->|<!\[CDATA\[|\]\]>/u.test(withoutCdata)) {
-    throw new Error("3MF XML contains an unterminated comment or CDATA section.");
+    structural += value;
+  };
+  while (cursor < source.length) {
+    const markupStart = source.indexOf("<", cursor);
+    if (markupStart < 0) {
+      appendCharacterData(source.slice(cursor));
+      break;
+    }
+    appendCharacterData(source.slice(cursor, markupStart));
+
+    if (source.startsWith("<!--", markupStart)) {
+      const end = source.indexOf("-->", markupStart + 4);
+      if (end < 0) {
+        throw new Error("3MF XML contains an unterminated comment or CDATA section.");
+      }
+      const body = source.slice(markupStart + 4, end);
+      if (body.includes("--") || body.endsWith("-")) {
+        throw new Error("3MF XML contains a malformed comment.");
+      }
+      cursor = end + 3;
+      continue;
+    }
+    if (source.startsWith("<![CDATA[", markupStart)) {
+      const end = source.indexOf("]]>", markupStart + 9);
+      if (end < 0) {
+        throw new Error("3MF XML contains an unterminated comment or CDATA section.");
+      }
+      cursor = end + 3;
+      continue;
+    }
+    if (source.startsWith("<?", markupStart)) {
+      const end = source.indexOf("?>", markupStart + 2);
+      if (end < 0) {
+        throw new Error("3MF XML contains an unterminated processing instruction.");
+      }
+      cursor = end + 2;
+      continue;
+    }
+    if (source.slice(markupStart).match(/^<!DOCTYPE\b/iu)) {
+      throw new Error("3MF XML document type declarations are not supported.");
+    }
+    if (source.startsWith("<!", markupStart)) {
+      throw new Error("3MF XML contains an unsupported markup declaration.");
+    }
+
+    structural += "<";
+    cursor = markupStart + 1;
   }
-  const withoutProcessingInstructions = withoutCdata.replace(/<\?[\s\S]*?\?>/gu, "");
-  if (/<\?/u.test(withoutProcessingInstructions)) {
-    throw new Error("3MF XML contains an unterminated processing instruction.");
-  }
-  if (/<!DOCTYPE\b/iu.test(withoutProcessingInstructions)) {
-    throw new Error("3MF XML document type declarations are not supported.");
-  }
-  if (/<!/u.test(withoutProcessingInstructions)) {
-    throw new Error("3MF XML contains an unsupported markup declaration.");
-  }
-  return withoutProcessingInstructions;
+  return structural;
 }
 
 function decodeXmlAttributeValue(value: string): string {
