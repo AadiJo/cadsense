@@ -158,6 +158,33 @@ describe("updateSettingsAndWait", () => {
     );
   });
 
+  it("does not overwrite a newer external change to the same server setting", async () => {
+    const initialSettings = DEFAULT_SERVER_SETTINGS;
+    const externalSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      addProjectBaseDirectory: "/external-projects",
+    };
+    const confirmedSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      addProjectBaseDirectory: "/local-projects",
+    };
+    mocks.getServerConfig.mockReturnValue({ settings: initialSettings });
+    let finishWrite: ((settings: typeof confirmedSettings) => void) | undefined;
+    mocks.updateServerSettings.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finishWrite = resolve;
+      }),
+    );
+
+    const write = updateSettingsAndWait({ addProjectBaseDirectory: "/local-projects" });
+    await vi.waitFor(() => expect(mocks.updateServerSettings).toHaveBeenCalledTimes(1));
+    mocks.getServerConfig.mockReturnValue({ settings: externalSettings });
+    finishWrite?.(confirmedSettings);
+
+    await write;
+    expect(mocks.applySettingsUpdated).toHaveBeenLastCalledWith(externalSettings);
+  });
+
   it("preserves an external snapshot captured by a later queued server write", async () => {
     const initialSettings = DEFAULT_SERVER_SETTINGS;
     const externalSettings = {

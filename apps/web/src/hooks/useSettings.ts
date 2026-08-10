@@ -178,6 +178,50 @@ function refreshOptimisticServerSettingsSnapshot(): void {
   applySettingsUpdated(settings);
 }
 
+function settingsValuesEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true;
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return (
+      Array.isArray(left) &&
+      Array.isArray(right) &&
+      left.length === right.length &&
+      left.every((value, index) => settingsValuesEqual(value, right[index]))
+    );
+  }
+  if (typeof left !== "object" || left === null || typeof right !== "object" || right === null) {
+    return false;
+  }
+  const leftRecord = left as Readonly<Record<string, unknown>>;
+  const rightRecord = right as Readonly<Record<string, unknown>>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return (
+    leftKeys.length === rightKeys.length &&
+    leftKeys.every(
+      (key) =>
+        Object.hasOwn(rightRecord, key) && settingsValuesEqual(leftRecord[key], rightRecord[key]),
+    )
+  );
+}
+
+function applyNonConflictingServerSettingsPatch(
+  base: ServerSettingsValue,
+  current: ServerSettingsValue,
+  patch: ServerSettingsPatch,
+): ServerSettingsValue {
+  const nonConflictingPatch = Object.fromEntries(
+    Object.entries(patch).filter(([key]) =>
+      settingsValuesEqual(
+        base[key as keyof ServerSettingsValue],
+        current[key as keyof ServerSettingsValue],
+      ),
+    ),
+  ) as ServerSettingsPatch;
+  return applyServerSettingsPatch(current, nonConflictingPatch);
+}
+
 async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> {
   const currentSettings = getServerConfig()?.settings;
   if (currentSettings && currentSettings !== lastOptimisticServerSettingsSnapshot) {
@@ -193,8 +237,9 @@ async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> 
   pendingServerSettingsWrites.push(pendingWrite);
   refreshOptimisticServerSettingsSnapshot();
 
+  let writeBase: ServerSettingsValue | null = null;
   const write = serverSettingsPersistenceTail.then(async () => {
-    const writeBase = persistedServerSettingsSnapshot;
+    writeBase = persistedServerSettingsSnapshot;
     const settings = await ensureLocalApi().server.updateSettings(patch);
     persistedServerSettingsSnapshot =
       !serverSettingsBaseHasExternalUpdate &&
@@ -211,9 +256,10 @@ async function persistServerSettings(patch: ServerSettingsPatch): Promise<void> 
     const currentSettings = getServerConfig()?.settings;
     if (currentSettings && currentSettings !== lastOptimisticServerSettingsSnapshot) {
       serverSettingsBaseHasExternalUpdate = true;
-      persistedServerSettingsSnapshot = succeeded
-        ? applyServerSettingsPatch(currentSettings, patch)
-        : currentSettings;
+      persistedServerSettingsSnapshot =
+        succeeded && writeBase
+          ? applyNonConflictingServerSettingsPatch(writeBase, currentSettings, patch)
+          : currentSettings;
     }
     pendingServerSettingsWrites = pendingServerSettingsWrites.filter(
       (candidate) => candidate.id !== pendingWrite.id,
