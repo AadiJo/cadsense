@@ -62,6 +62,7 @@ const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const FAILED_RECONCILIATION_SUPPRESSION_WINDOW_NANOS = 1_000_000_000n;
+const SETTINGS_RECONCILIATION_INTERVAL = Duration.seconds(1);
 
 export function shouldSuppressFailedSettingsContents(input: {
   readonly failedContents: string | null;
@@ -884,6 +885,16 @@ const makeServerSettings = Effect.gen(function* () {
             detail: "settings file watcher did not become ready",
           });
         }).pipe(Effect.onError(() => Fiber.interrupt(watcherFiber).pipe(Effect.asVoid)));
+
+        // Native file watchers can drop or coalesce notifications (for example when an
+        // inotify queue is under load). Periodically re-read the file so a missed event
+        // cannot leave the cache and secret store stale indefinitely. The write semaphore
+        // serializes this with watcher callbacks and explicit settings updates.
+        yield* Effect.forever(
+          Effect.sleep(SETTINGS_RECONCILIATION_INTERVAL).pipe(
+            Effect.andThen(revalidateAndEmitSafely),
+          ),
+        ).pipe(Effect.forkIn(watcherScope));
       }).pipe(Effect.ensuring(cleanupOwnedProbe)),
     ).pipe(Effect.ensuring(cleanupOwnedProbe));
   });

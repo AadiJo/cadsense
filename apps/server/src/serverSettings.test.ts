@@ -48,6 +48,18 @@ const makeServerSettingsLayer = () =>
     ),
   );
 
+const makeServerSettingsLayerWithFileSystem = (fileSystem: FileSystem.FileSystem) =>
+  ServerSettingsLive.pipe(
+    Layer.provide(Layer.succeed(FileSystem.FileSystem, fileSystem)),
+    Layer.provideMerge(
+      Layer.fresh(
+        ServerConfig.layerTest(process.cwd(), {
+          prefix: "cadsense-server-settings-watch-fallback-test-",
+        }),
+      ),
+    ),
+  );
+
 const liveClock = Effect.runSync(Effect.service(Clock.Clock));
 
 it("bounds failed settings content suppression by a strict monotonic deadline", () => {
@@ -799,6 +811,47 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       assert.equal(yield* fileSystem.readFileString(collisionPath), "user-owned collision");
       assert.isFalse(yield* fileSystem.exists(uniquePath));
     }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("reconciles settings when the native watcher drops an edit", () =>
+    Effect.gen(function* () {
+      const liveFileSystem = yield* FileSystem.FileSystem;
+      const readinessOnlyFileSystem: FileSystem.FileSystem = {
+        ...liveFileSystem,
+        watch: (directory) =>
+          liveFileSystem
+            .watch(directory)
+            .pipe(
+              Stream.filter((event) => event.path.includes(".cadsense-settings-watcher-ready-")),
+            ),
+      };
+
+      yield* Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsService;
+        const serverConfig = yield* ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+
+        yield* serverSettings.start;
+        const changed = yield* serverSettings.streamChanges.pipe(
+          Stream.filter((settings) => !settings.enableAssistantStreaming),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* Effect.yieldNow;
+        yield* fileSystem.writeFileString(
+          serverConfig.settingsPath,
+          '{ "enableAssistantStreaming": false }\n',
+        );
+
+        assert.isTrue(
+          Option.isSome(yield* Fiber.join(changed).pipe(Effect.timeout(Duration.seconds(5)))),
+        );
+        assert.isFalse((yield* serverSettings.getSettings).enableAssistantStreaming);
+      }).pipe(
+        Effect.provideService(Clock.Clock, liveClock),
+        Effect.provide(makeServerSettingsLayerWithFileSystem(readinessOnlyFileSystem)),
+      );
+    }),
   );
 
   it.effect("fails safely after exhausting watcher probe collisions", () =>
