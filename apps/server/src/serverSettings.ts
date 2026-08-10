@@ -671,7 +671,7 @@ const makeServerSettings = Effect.gen(function* () {
       if (!diskReadWasValid) {
         yield* Ref.set(failedReconciliationContentsRef, Option.none());
         yield* Cache.set(settingsCache, cacheKey, previous);
-        return;
+        return true;
       }
       const diskContents = yield* Ref.get(latestDiskContentsRef);
       const failedContents = yield* Ref.get(failedReconciliationContentsRef);
@@ -686,7 +686,7 @@ const makeServerSettings = Effect.gen(function* () {
         })
       ) {
         yield* Cache.set(settingsCache, cacheKey, previous);
-        return;
+        return false;
       }
       if (Option.isSome(failedContents)) {
         yield* Ref.set(failedReconciliationContentsRef, Option.none());
@@ -698,7 +698,7 @@ const makeServerSettings = Effect.gen(function* () {
           const materialized = yield* materializeProviderEnvironmentSecrets(settings);
           yield* emitChange(materialized);
         }
-        return;
+        return true;
       }
       const commitExit = yield* commitPreparedSettings({
         settings: normalized,
@@ -716,6 +716,7 @@ const makeServerSettings = Effect.gen(function* () {
         yield* Cache.set(settingsCache, cacheKey, previous);
         return yield* Effect.failCause(commitExit.cause);
       }
+      return true;
     }),
   );
 
@@ -838,16 +839,22 @@ const makeServerSettings = Effect.gen(function* () {
           eventPath === resolvedPath ||
           pathService.resolve(settingsDir, eventPath) === resolvedPath;
 
-        const periodicFailureCount = yield* Ref.make(0);
         const initialPeriodicWakeup = yield* Deferred.make<void>();
-        const periodicWakeupRef = yield* Ref.make(initialPeriodicWakeup);
+        const periodicStateRef = yield* Ref.make({
+          failures: 0,
+          generation: 0n,
+          wakeup: initialPeriodicWakeup,
+        });
         const resetPeriodicBackoff = Effect.gen(function* () {
-          yield* Ref.set(periodicFailureCount, 0);
-          const wakeup = yield* Ref.get(periodicWakeupRef);
+          const wakeup = yield* Ref.modify(periodicStateRef, (state) => [
+            state.wakeup,
+            { failures: 0, generation: state.generation + 1n, wakeup: state.wakeup },
+          ]);
           yield* Deferred.succeed(wakeup, undefined).pipe(Effect.asVoid);
         });
         const revalidateAndEmitSafely = revalidateAndEmit.pipe(
-          Effect.tap(() => resetPeriodicBackoff),
+          Effect.tap((reconciled) => (reconciled ? resetPeriodicBackoff : Effect.void)),
+          Effect.asVoid,
           Effect.ignoreCause({ log: true }),
         );
 
@@ -913,25 +920,35 @@ const makeServerSettings = Effect.gen(function* () {
         // cannot leave the cache and secret store stale indefinitely. The write semaphore
         // serializes this with watcher callbacks and explicit settings updates.
         const periodicReconciliation = Effect.gen(function* () {
-          const failures = yield* Ref.get(periodicFailureCount);
           const wakeup = yield* Deferred.make<void>();
-          yield* Ref.set(periodicWakeupRef, wakeup);
+          const installed = yield* Ref.modify(periodicStateRef, (state) => [
+            { failures: state.failures, generation: state.generation },
+            { ...state, wakeup },
+          ]);
           const timerElapsed = yield* Effect.race(
             Effect.sleep(
-              failures === 0
+              installed.failures === 0
                 ? SETTINGS_RECONCILIATION_INTERVAL
-                : Duration.millis(settingsReconciliationRetryDelayMillis(failures)),
+                : Duration.millis(settingsReconciliationRetryDelayMillis(installed.failures)),
             ).pipe(Effect.as(true)),
             Deferred.await(wakeup).pipe(Effect.as(false)),
           );
           if (!timerElapsed) return;
           const result = yield* revalidateAndEmit.pipe(Effect.exit);
           if (result._tag === "Success") {
-            yield* Ref.set(periodicFailureCount, 0);
+            if (!result.value) return;
+            yield* Ref.update(periodicStateRef, (state) =>
+              state.generation === installed.generation ? { ...state, failures: 0 } : state,
+            );
             return;
           }
-          const nextFailures = failures + 1;
-          yield* Ref.set(periodicFailureCount, nextFailures);
+          const nextFailures = installed.failures + 1;
+          const failureIsCurrent = yield* Ref.modify(periodicStateRef, (state) =>
+            state.generation === installed.generation
+              ? [true, { ...state, failures: nextFailures }]
+              : [false, state],
+          );
+          if (!failureIsCurrent) return;
           yield* Effect.logWarning("periodic settings reconciliation failed", {
             retryDelayMs: settingsReconciliationRetryDelayMillis(nextFailures),
             cause: Cause.pretty(result.cause),

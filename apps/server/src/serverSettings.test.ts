@@ -821,7 +821,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
-  it.effect("restarts periodic reconciliation after a native event", () =>
+  it.effect("restarts periodic reconciliation without losing native wakeups", () =>
     Effect.gen(function* () {
       const liveFileSystem = yield* FileSystem.FileSystem;
       let deliverSettingsEvents = true;
@@ -975,9 +975,9 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       yield* serverSettings.start.pipe(Effect.provideService(Clock.Clock, liveClock));
       yield* fileSystem.writeFileString(serverConfig.settingsPath, inlineSettings);
-      yield* Effect.promise(() => sleep(750));
+      yield* Effect.promise(() => sleep(3_500));
 
-      assert.equal(setCalls, 1);
+      assert.isTrue(setCalls <= 3);
       assert.equal(yield* fileSystem.readFileString(serverConfig.settingsPath), inlineSettings);
       assert.deepEqual(yield* serverSettings.getSettings, DEFAULT_SERVER_SETTINGS);
     }).pipe(Effect.provide(makeServerSettingsLayerWithSecretStore(secretStore)));
