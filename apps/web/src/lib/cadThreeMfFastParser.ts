@@ -69,6 +69,8 @@ const PACKAGE_RELATIONSHIPS_NAMESPACE =
   "http://schemas.openxmlformats.org/package/2006/relationships";
 const XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 const XMLNS_NAMESPACE = "http://www.w3.org/2000/xmlns/";
+const XML_NCNAME_PATTERN =
+  /^[A-Z_a-z\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02ff\u0370-\u037d\u037f-\u1fff\u200c-\u200d\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}][\-.0-9A-Z_a-z\u00b7\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u037d\u037f-\u1fff\u200c-\u200d\u203f-\u2040\u2070-\u218f\u2c00-\u2fef\u3001-\ud7ff\uf900-\ufdcf\ufdf0-\ufffd\u{10000}-\u{effff}]*$/u;
 const XML_ATTRIBUTE_TEXT = String.raw`(?:"[^"]*"|'[^']*'|[^'">])*`;
 const RELATIONSHIP_PATTERN = new RegExp(
   `<(?:([a-z_][\\w.-]*):)?relationship\\b(${XML_ATTRIBUTE_TEXT})\\s*/?>`,
@@ -207,6 +209,23 @@ interface XmlAttribute {
   readonly value: string;
 }
 
+function parseXmlQualifiedName(
+  name: string,
+  kind: "attribute" | "element",
+): {
+  readonly prefix: string;
+  readonly localName: string;
+} {
+  const parts = name.split(":");
+  if (parts.length > 2 || parts.some((part) => !XML_NCNAME_PATTERN.test(part))) {
+    throw new Error(`3MF XML contains a malformed qualified ${kind} name.`);
+  }
+  return {
+    prefix: parts.length === 2 ? parts[0]! : "",
+    localName: parts.at(-1)!,
+  };
+}
+
 function parseXmlAttributes(source: string): XmlAttribute[] {
   const attributes: XmlAttribute[] = [];
   let cursor = 0;
@@ -327,12 +346,7 @@ function normalizeNamespacedElements(input: {
       throw new Error("3MF XML contains a malformed element tag.");
     }
     const qualifiedName = openingMatch[1]!;
-    const nameParts = qualifiedName.split(":");
-    if (nameParts.length > 2 || nameParts.some((part) => part.length === 0)) {
-      throw new Error("3MF XML contains a malformed qualified element name.");
-    }
-    const prefix = nameParts.length === 2 ? nameParts[0]! : "";
-    const localName = nameParts.at(-1)!;
+    const { prefix, localName } = parseXmlQualifiedName(qualifiedName, "element");
     const attributesSource = openingMatch[2]!;
     const namespaceChanges: NamespaceChange[] = [];
     const declaredPrefixes = new Set<string>();
@@ -345,10 +359,10 @@ function normalizeNamespacedElements(input: {
         declaredPrefix = attribute.name.slice("xmlns:".length);
       }
       if (declaredPrefix !== null) {
-        if (!declaredPrefix && attribute.name !== "xmlns") {
-          throw new Error("3MF XML contains a malformed namespace declaration.");
-        }
-        if (declaredPrefix.includes(":")) {
+        if (
+          (!declaredPrefix && attribute.name !== "xmlns") ||
+          (declaredPrefix && !XML_NCNAME_PATTERN.test(declaredPrefix))
+        ) {
           throw new Error("3MF XML contains a malformed namespace prefix.");
         }
         if (declaredPrefixes.has(declaredPrefix)) {
@@ -360,7 +374,8 @@ function normalizeNamespacedElements(input: {
           declaredPrefix === "xmlns" ||
           namespaceValue === XMLNS_NAMESPACE ||
           (declaredPrefix === "xml" && namespaceValue !== XML_NAMESPACE) ||
-          (declaredPrefix !== "xml" && namespaceValue === XML_NAMESPACE)
+          (declaredPrefix !== "xml" && namespaceValue === XML_NAMESPACE) ||
+          (declaredPrefix !== "" && namespaceValue === "")
         ) {
           throw new Error("3MF XML contains an invalid reserved namespace declaration.");
         }
@@ -377,20 +392,28 @@ function normalizeNamespacedElements(input: {
         }
       }
     }
+    const expandedAttributeNames = new Set<string>();
     for (const attribute of attributes) {
       if (attribute.name === "xmlns" || attribute.name.startsWith("xmlns:")) {
         continue;
       }
-      const attributeNameParts = attribute.name.split(":");
-      if (attributeNameParts.length > 2 || attributeNameParts.some((part) => part.length === 0)) {
-        throw new Error("3MF XML contains a malformed qualified attribute name.");
-      }
-      const attributePrefix = attributeNameParts.length === 2 ? attributeNameParts[0]! : "";
+      const { prefix: attributePrefix, localName: attributeLocalName } = parseXmlQualifiedName(
+        attribute.name,
+        "attribute",
+      );
       if (attributePrefix && !namespaces.has(attributePrefix)) {
         throw new Error(
           `3MF XML attribute '${attribute.name}' uses an undeclared namespace prefix.`,
         );
       }
+      const attributeNamespace = attributePrefix ? namespaces.get(attributePrefix)! : "";
+      const expandedName = `${attributeNamespace}\u0000${attributeLocalName}`;
+      if (expandedAttributeNames.has(expandedName)) {
+        throw new Error(
+          `3MF XML contains duplicate '${attribute.name}' attribute with the same expanded name.`,
+        );
+      }
+      expandedAttributeNames.add(expandedName);
     }
     const namespace = namespaces.get(prefix) ?? null;
     if (prefix && namespace === null) {
